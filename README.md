@@ -1,6 +1,7 @@
 # DePix MVP
 
-MVP `DePix-first` para venda automatizada via `Telegram`, cobranca Pix pela API da Eulen/DePix e operacao enxuta na Cloudflare.
+MVP `DePix-first` para venda automatizada via `Telegram`, cobranca Pix pela API
+da Eulen/DePix e operacao enxuta na Cloudflare.
 
 ## Objetivo
 
@@ -42,16 +43,24 @@ Fora do MVP:
 - painel operacional avancado
 - IA de suporte
 
-## Estrutura inicial do repositório
+## Estrutura atual do repositorio
 
 - `src/`
-  Runtime inicial do Worker.
-- `wrangler.toml`
-  Configuracao base do projeto Cloudflare.
-- `package.json`
-  Scripts de desenvolvimento e deploy.
+  runtime do Worker em modulos pequenos e comentados
+- `src/lib/http/`
+  respostas JSON e roteamento simples
+- `src/lib/telegram/`
+  estados e fluxo inicial da conversa
+- `src/lib/data/`
+  binding `D1`, schema e repositorios base
+- `src/lib/observability/`
+  logger estruturado minimo
+- `migrations/`
+  schema versionado inicial do `D1`
 - `docs/`
-  Convencoes e documentacao tecnica do repositorio.
+  convencoes e documentacao tecnica do repositorio
+- `wrangler.toml`
+  configuracao base do projeto Cloudflare
 
 ## Convencao de documentacao no codigo
 
@@ -64,16 +73,15 @@ Este projeto segue uma regra de documentacao mais forte que o usual:
 - quando isso ajudar entendimento de devs e outras IAs, o codigo deve apontar para esses `.md` por comentario
 - a base do projeto e `100% JavaScript`
 
-O objetivo e deixar a documentacao distribuida entre:
+## Documentacao recomendada
 
-- contexto tecnico mais amplo em `.md`
-- explicacao operacional diretamente no codigo
+- `docs/IMPLEMENTATION-CONVENTIONS.md`
+- `docs/ARCHITECTURE-FOUNDATION.md`
+- `migrations/0001_initial_schema.sql`
 
-## Documentacao de planejamento
+No vault do Obsidian, o planejamento principal vive em:
 
-O planejamento principal do MVP foi estruturado no vault do Obsidian do projeto, incluindo:
-
-- `Misc/DePix/Faturamento Automações.md`
+- `Misc/DePix/Faturamento Automacoes.md`
 - `Misc/DePix/Arquitetura Tecnica do MVP.md`
 - `Misc/DePix/Docs/Cloudflare para o MVP - Free Tier e Arquitetura Simples.md`
 - `Misc/DePix/Docs/Pix2DePix API - Documentacao Completa.md`
@@ -86,10 +94,20 @@ npm install
 npm run dev
 ```
 
-## Proximos passos
+## Estado atual
 
-- conectar o bot do Telegram
+Ja pronto:
+
+- bootstrap modular do Worker
+- estados iniciais da conversa
+- fluxo inicial `DePix-first`
+- schema inicial de `D1`
+- repositorios base para pedidos, sessoes e eventos externos
+
+Proximos passos:
+
+- conectar o adaptador real do Telegram
+- configurar bindings reais de `D1`
 - configurar `Cloudflare Secrets`
-- criar schema inicial do `D1`
 - implementar client Eulen
 - subir webhook e reconciliacao
