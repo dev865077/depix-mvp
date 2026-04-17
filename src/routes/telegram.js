@@ -7,6 +7,7 @@
 import { Hono } from "hono";
 
 import { jsonNotImplemented } from "../lib/http.js";
+import { getTelegramRuntime } from "../telegram/runtime.js";
 
 export const telegramRouter = new Hono();
 
@@ -17,14 +18,20 @@ export const telegramRouter = new Hono();
  * futura do bot nao precise redescobrir de qual parceiro veio a chamada.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
+ * Nesta issue o webhook ainda nao processa updates. Mesmo assim, ele ja
+ * materializa o runtime do `grammY` para o tenant atual, deixando a proxima
+ * issue livre para focar apenas na execucao do webhook real.
+ *
  * @returns {Response} Resposta 501 padronizada.
  */
 export function handleTelegramWebhook(c) {
   const tenant = c.get("tenant");
+  const telegramRuntime = tenant ? getTelegramRuntime(tenant) : undefined;
 
   return jsonNotImplemented(c, "Telegram webhook", {
     tenantId: tenant?.tenantId,
     tenantDisplayName: tenant?.displayName,
+    telegramRuntime: telegramRuntime?.engine,
   });
 }
 
