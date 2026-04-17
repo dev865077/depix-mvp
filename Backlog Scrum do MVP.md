@@ -1,5 +1,8 @@
 # Backlog Scrum do MVP
 
+> [!note]
+> Navegacao portavel atual: [Contexto.md](./Contexto.md), [Faturamento Automações.md](./Faturamento%20Automações.md) e [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md).
+
 Documento mestre: [[Misc/DePix/Contexto|Contexto]]
 
 > [!tip]

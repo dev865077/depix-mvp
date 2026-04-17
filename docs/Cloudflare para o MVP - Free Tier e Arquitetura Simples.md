@@ -1,5 +1,8 @@
 # Cloudflare para o MVP - Free Tier e Arquitetura Simples
 
+> [!note]
+> Navegacao portavel relacionada: [docs/README.md](./README.md), [Faturamento Automações.md](../Faturamento%20Automações.md) e [Arquitetura Tecnica do MVP.md](../Arquitetura%20Tecnica%20do%20MVP.md).
+
 > [!tip]
 > Documento complementar a [[Misc/DePix/Faturamento Automações|Faturamento e Automações]] e [[Misc/DePix/Arquitetura Tecnica do MVP|Arquitetura Tecnica do MVP]].
 

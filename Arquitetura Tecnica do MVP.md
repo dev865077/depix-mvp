@@ -1,11 +1,11 @@
 # Arquitetura Tecnica do MVP
 
 > [!tip]
-> Documento mestre: [[Misc/DePix/Contexto|Contexto]]
+> Documento mestre: [Contexto.md](./Contexto.md)
 >
-> Fluxo funcional: [[Misc/DePix/Faturamento Automações|Faturamento Automacoes]]
+> Fluxo funcional: [Faturamento Automações.md](./Faturamento%20Automações.md)
 >
-> Backlog: [[Misc/DePix/Backlog Scrum do MVP|Backlog Scrum do MVP]]
+> Backlog: [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
 
 ## Objetivo
 
@@ -58,9 +58,9 @@ Camada unica de entrada HTTP do MVP.
 Rotas minimas:
 
 - `GET /health`
-- `POST /telegram/webhook`
-- `POST /webhooks/eulen/deposit`
-- `POST /ops/recheck/deposit`
+- `POST /telegram/:tenantId/webhook`
+- `POST /webhooks/eulen/:tenantId/deposit`
+- `POST /ops/:tenantId/recheck/deposit`
 
 ### 2. `grammY`
 
@@ -92,6 +92,7 @@ Responsabilidades:
 - controlar transicoes validas do pedido
 - evitar `if/else` espalhado entre bot, servicos e webhook
 - deixar os eventos principais claros no codigo
+
 ### 5. `Cloudflare D1`
 
 Persistencia unica do MVP com SQL cru parametrizado usando a API nativa do `D1`.
