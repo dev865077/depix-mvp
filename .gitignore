@@ -1,10 +1,15 @@
+# Arquivos locais e artefatos gerados durante desenvolvimento e testes.
 node_modules/
 .wrangler/
+coverage/
 dist/
+*.log
+.wrangler-dev.out.log
+.wrangler-dev.err.log
+.DS_Store
 .dev.vars
+.dev.vars.*
+!.dev.vars.example
 .env
 .env.*
-coverage/
-*.log
-.DS_Store
-Thumbs.db
+!.env.example

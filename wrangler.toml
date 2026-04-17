@@ -1,7 +1,0 @@
-name = "depix-mvp"
-main = "src/index.js"
-compatibility_date = "2026-04-11"
-
-# Bindings como D1, cron e secrets serao adicionados conforme a implementacao
-# do MVP avancar. O repositorio nasce com o minimo necessario para publicar
-# o Worker e comecar o desenvolvimento.
