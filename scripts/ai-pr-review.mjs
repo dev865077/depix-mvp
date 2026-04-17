@@ -13,10 +13,11 @@
 import fs from "node:fs/promises";
 
 const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
-const MAX_FILES = 20;
-const MAX_PATCH_CHARS_PER_FILE = 6000;
-const MAX_PR_BODY_CHARS = 4000;
-const MAX_REVIEW_INPUT_CHARS = 30000;
+const MAX_FILES = 12;
+const MAX_PATCH_CHARS_PER_FILE = 3000;
+const MAX_PR_BODY_CHARS = 3000;
+const MAX_REVIEW_INPUT_CHARS = 18000;
+const MAX_OUTPUT_TOKENS = 4000;
 
 /**
  * Assert that an environment variable exists.
@@ -206,10 +207,13 @@ function extractContentItemText(contentItem) {
  */
 function summarizeOpenAIResponse(responseJson) {
   const summary = {
+    status: responseJson?.status ?? null,
+    incompleteReason: responseJson?.incomplete_details?.reason ?? null,
     hasOutputText: typeof responseJson?.output_text === "string" && responseJson.output_text.trim().length > 0,
     outputItems: Array.isArray(responseJson?.output)
       ? responseJson.output.map((outputItem) => ({
         type: outputItem?.type ?? null,
+        status: outputItem?.status ?? null,
         contentTypes: Array.isArray(outputItem?.content)
           ? outputItem.content.map((contentItem) => contentItem?.type ?? null)
           : [],
@@ -269,7 +273,7 @@ async function generateReview(systemPrompt, userPrompt, model) {
     },
     body: JSON.stringify({
       model,
-      max_output_tokens: 2200,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
       input: [
         {
           role: "system",
@@ -302,7 +306,13 @@ async function generateReview(systemPrompt, userPrompt, model) {
   const reviewText = readOpenAIText(responseJson);
 
   if (!reviewText) {
-    throw new Error(`OpenAI returned an empty review. Response summary: ${summarizeOpenAIResponse(responseJson)}`);
+    const responseSummary = summarizeOpenAIResponse(responseJson);
+
+    if (responseJson?.status === "incomplete" && responseJson?.incomplete_details?.reason === "max_output_tokens") {
+      throw new Error(`OpenAI exhausted max_output_tokens before producing review text. Response summary: ${responseSummary}`);
+    }
+
+    throw new Error(`OpenAI returned an empty review. Response summary: ${responseSummary}`);
   }
 
   return reviewText;
