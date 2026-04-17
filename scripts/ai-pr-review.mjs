@@ -168,11 +168,11 @@ function readOpenAIText(responseJson) {
  *
  * @param {string} systemPrompt Repository-specific review prompt.
  * @param {string} userPrompt PR review payload.
+ * @param {string} model Explicit model configured for the workflow.
  * @returns {Promise<string>} Markdown review body.
  */
-async function generateReview(systemPrompt, userPrompt) {
+async function generateReview(systemPrompt, userPrompt, model) {
   const apiKey = readRequiredEnv("OPENAI_API_KEY");
-  const model = process.env.OPENAI_MODEL?.trim() || "gpt-5";
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -279,6 +279,7 @@ async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
   const promptPath = process.env.AI_REVIEW_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-review.md";
+  const model = readRequiredEnv("OPENAI_PR_REVIEW_MODEL");
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const pullRequest = event.pull_request;
 
@@ -304,12 +305,12 @@ async function main() {
     buildFilesReviewPayload(files),
   ].join("\n");
 
-  const review = await generateReview(systemPrompt, userPrompt);
+  const review = await generateReview(systemPrompt, userPrompt, model);
   const commentBody = [
     REVIEW_MARKER,
     "## AI PR Review",
     "",
-    `Model: \`${process.env.OPENAI_MODEL?.trim() || "gpt-5"}\``,
+    `Model: \`${model}\``,
     "",
     review,
   ].join("\n");
