@@ -1,5 +1,8 @@
 # Prompt inicial
 
+> [!note]
+> Documento historico. A navegacao canonica agora comeca em [README.md](./README.md), [docs/README.md](./docs/README.md) e na [Wiki do projeto](https://github.com/dev865077/depix-mvp/wiki).
+
 Use este prompt no inicio de toda sessao profissional sobre este projeto.
 
 ## Nome operacional
@@ -40,6 +43,18 @@ Leia estes arquivos primeiro e siga os links relevantes para entender a versao a
 - [Contribuicao e PRs.md](</C:/Users/poske/Documents/Obsidian/obsidian/Misc/DePix/Contribuicao e PRs.md>)
 - [Open-Source para Reduzir Complexidade no MVP.md](</C:/Users/poske/Documents/Obsidian/obsidian/Misc/DePix/Open-Source para Reduzir Complexidade no MVP.md>)
 - [Contexto Consolidado.md](</C:/Users/poske/Desktop/DePix MVP/Contexto Consolidado.md>)
+
+Leitura portavel equivalente no repo atual:
+
+- [Contexto.md](./Contexto.md)
+- [Faturamento Automações.md](./Faturamento%20Automações.md)
+- [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md)
+- [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
+- [KANBAN.md](./KANBAN.md)
+- [Mapa de Uso da API.md](./Mapa%20de%20Uso%20da%20API.md)
+- [Pix2DePix API - Documentacao Completa.md](./docs/Pix2DePix%20API%20-%20Documentacao%20Completa.md)
+- [Contribuicao e PRs](https://github.com/dev865077/depix-mvp/wiki/Contribuicao-e-PRs)
+- [Contexto Consolidado.md](./Contexto%20Consolidado.md)
 
 Depois disso:
 

@@ -1,5 +1,8 @@
 # Contexto Consolidado
 
+> [!note]
+> Documento historico de baixa entropia. A navegacao canonica agora comeca em [README.md](./README.md), [docs/README.md](./docs/README.md) e na [Wiki do projeto](https://github.com/dev865077/depix-mvp/wiki).
+
 Este arquivo resume, em baixa entropia, a versao atual do sistema descrita nos documentos do Obsidian. Ele existe para reduzir consumo de tokens nas proximas sessoes sem perder as decisoes estruturais do projeto.
 
 ## Escopo atual
@@ -85,3 +88,14 @@ Todas precisam de isolamento por `tenant_id`.
 - [Pix2DePix API - Documentacao Completa.md](</C:/Users/poske/Documents/Obsidian/obsidian/Misc/DePix/Docs/Pix2DePix API - Documentacao Completa.md>)
 - [Contribuicao e PRs.md](</C:/Users/poske/Documents/Obsidian/obsidian/Misc/DePix/Contribuicao e PRs.md>)
 - [Open-Source para Reduzir Complexidade no MVP.md](</C:/Users/poske/Documents/Obsidian/obsidian/Misc/DePix/Open-Source para Reduzir Complexidade no MVP.md>)
+
+Versao portavel no repo atual:
+
+- [Contexto.md](./Contexto.md)
+- [Faturamento Automações.md](./Faturamento%20Automações.md)
+- [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md)
+- [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
+- [KANBAN.md](./KANBAN.md)
+- [Mapa de Uso da API.md](./Mapa%20de%20Uso%20da%20API.md)
+- [Pix2DePix API - Documentacao Completa.md](./docs/Pix2DePix%20API%20-%20Documentacao%20Completa.md)
+- [Contribuicao e PRs](https://github.com/dev865077/depix-mvp/wiki/Contribuicao-e-PRs)

@@ -1,11 +1,14 @@
 # Faturamento e Automacoes do MVP
 
 > [!tip]
-> Documento mestre: [[Misc/DePix/Contexto|Contexto]]
+> Documento mestre: [Contexto.md](./Contexto.md)
 >
-> Arquitetura: [[Misc/DePix/Arquitetura Tecnica do MVP|Arquitetura Tecnica do MVP]]
+> Arquitetura: [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md)
 >
-> Backlog: [[Misc/DePix/Backlog Scrum do MVP|Backlog Scrum do MVP]]
+> Backlog: [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
+
+> [!note]
+> A referencia canonica de integracao agora fica em [docs/Pix2DePix API - Documentacao Completa.md](./docs/Pix2DePix%20API%20-%20Documentacao%20Completa.md).
 
 ## Objetivo
 
@@ -48,15 +51,15 @@ flowchart LR
 
 ## O que usamos da API no MVP
 
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#🔑 Authentication|Authentication]] para token
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Ping|Ping]] para validar ambiente
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Deposit (PIX ➔ DePix)|Deposit (PIX ➔ DePix)]] para criar a cobranca
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#DepositRequest|DepositRequest]] para o request
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#🪝 Webhook|Webhook]] para confirmacao principal
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Deposit Status|Deposit Status]] para fallback por deposito
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Deposits|Deposits]] para fallback por janela
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#🎲 Nonce|Nonce]] para idempotencia
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#🔄 Sync / Async call|Sync / Async call]] para retry controlado
+- `Authentication` para token
+- `Ping` para validar ambiente
+- `Deposit (PIX -> DePix)` para criar a cobranca
+- `DepositRequest` para o request
+- `Webhook` para confirmacao principal
+- `Deposit Status` para fallback por deposito
+- `Deposits` para fallback por janela
+- `Nonce` para idempotencia
+- `Sync / Async call` para retry controlado
 
 ## Request real do `deposit` no MVP
 
@@ -99,16 +102,16 @@ flowchart LR
 
 ## Fallback
 
-- usar [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Deposit Status|Deposit Status]] para um deposito especifico
-- usar [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Deposits|Deposits]] para reconciliar por janela
+- usar `Deposit Status` para um deposito especifico
+- usar `Deposits` para reconciliar por janela
 - manter webhook como caminho principal; fallback entra so quando houver falha ou duvida
 
 ## Fora do MVP
 
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Pix2FA|Pix2FA]]
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#💬 Pix Messaging|Pix Messaging]]
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#⏱️ QR Delay|QR Delay]]
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#User Info|User Info]]
-- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa#Withdraw|Withdraw]]
+- `Pix2FA`
+- `Pix Messaging`
+- `QR Delay`
+- `User Info`
+- `Withdraw`
 - fila dedicada
 - painel interno
