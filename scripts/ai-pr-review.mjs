@@ -182,7 +182,13 @@ async function generateReview(systemPrompt, userPrompt) {
     },
     body: JSON.stringify({
       model,
-      max_output_tokens: 1200,
+      max_output_tokens: 2200,
+      reasoning: {
+        effort: "low",
+      },
+      text: {
+        verbosity: "low",
+      },
       input: [
         {
           role: "system",
