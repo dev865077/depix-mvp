@@ -1,13 +1,29 @@
 {
   "name": "depix-mvp",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "MVP base do bot DePix rodando em Cloudflare Workers com Hono.",
   "private": true,
   "type": "module",
+  "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "test": "vitest --run",
+    "obsidian:export": "node scripts/exportar-repositorio-para-obsidian-md.js",
+    "cf:types": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:query:local": "wrangler d1 execute DB --local",
+    "deploy:test": "wrangler deploy --env test",
+    "deploy:production": "wrangler deploy --env production"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "hono": "4.12.12"
   },
   "devDependencies": {
-    "wrangler": "^4.11.1"
+    "@cloudflare/vitest-pool-workers": "0.14.6",
+    "vitest": "4.1.4",
+    "wrangler": "4.82.2"
   }
 }
