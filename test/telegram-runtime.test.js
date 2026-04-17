@@ -51,6 +51,21 @@ describe("telegram runtime bootstrap", () => {
     expect(bot.botInfo?.username).toBe("alpha_bootstrap_bot");
   });
 
+  it("normalizes the synthetic username when the tenant id has operational characters", function assertBootstrapUsernameNormalization() {
+    const runtime = getTelegramRuntime({
+      tenantId: "alpha-prod.internal",
+      displayName: "Alpha Prod",
+      secretBindings: {
+        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+      },
+    });
+
+    expect(runtime.botInfo.username).toBe("alpha_prod_internal_bootstrap_bot");
+  });
+
   it("reuses the same runtime instance for repeated access", function assertTelegramRuntimeReuse() {
     const tenants = readTenantRegistry(TEST_ENV);
     const firstRuntime = getTelegramRuntime(tenants.alpha);

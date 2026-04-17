@@ -17,6 +17,25 @@ import { Bot } from "grammy";
 const telegramRuntimeCache = new Map();
 
 /**
+ * Gera um username sintetico seguro para o bot bootstrapado.
+ *
+ * O tenantId pode ganhar hifens ou outros caracteres operacionais ao longo do
+ * tempo. Como o `botInfo.username` deve continuar parecendo um username valido
+ * do Telegram, normalizamos a string para manter apenas caracteres seguros.
+ *
+ * @param {string} tenantId Identificador interno do tenant.
+ * @returns {string} Username sintetico e estavel para o bootstrap.
+ */
+function buildBootstrapUsername(tenantId) {
+  const normalizedTenantId = tenantId
+    .replace(/[^a-zA-Z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return `${normalizedTenantId || "tenant"}_bootstrap_bot`;
+}
+
+/**
  * Monta um botInfo sintetico para o bootstrap do grammY.
  *
  * O bot real ainda nao esta fazendo `getMe()` nem processando updates nesta
@@ -31,7 +50,7 @@ function buildBootstrapBotInfo(tenantConfig) {
     id: 0,
     is_bot: true,
     first_name: `${tenantConfig.displayName} Runtime`,
-    username: `${tenantConfig.tenantId}_bootstrap_bot`,
+    username: buildBootstrapUsername(tenantConfig.tenantId),
     can_join_groups: true,
     can_read_all_group_messages: false,
     supports_inline_queries: false,
@@ -74,7 +93,7 @@ export function createTelegramRuntime(tenantConfig) {
     tenantId: tenantConfig.tenantId,
     botInfo,
     createBot(telegramBotToken) {
-      return new Bot(telegramBotToken, { botInfo });
+      return createTelegramBot(tenantConfig, telegramBotToken);
     },
   };
 }
