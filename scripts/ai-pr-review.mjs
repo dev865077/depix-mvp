@@ -168,6 +168,59 @@ function buildFilesReviewPayload(files) {
 }
 
 /**
+ * Extract a textual value from one content item returned by OpenAI.
+ *
+ * @param {any} contentItem One content item inside an output message.
+ * @returns {string} Extracted text or an empty string.
+ */
+function extractContentItemText(contentItem) {
+  if (!contentItem || typeof contentItem !== "object") {
+    return "";
+  }
+
+  if (typeof contentItem.text === "string" && contentItem.text.trim().length > 0) {
+    return contentItem.text.trim();
+  }
+
+  if (
+    contentItem.text &&
+    typeof contentItem.text === "object" &&
+    typeof contentItem.text.value === "string" &&
+    contentItem.text.value.trim().length > 0
+  ) {
+    return contentItem.text.value.trim();
+  }
+
+  if (typeof contentItem.output_text === "string" && contentItem.output_text.trim().length > 0) {
+    return contentItem.output_text.trim();
+  }
+
+  return "";
+}
+
+/**
+ * Build a safe summary of the OpenAI response shape for diagnostics.
+ *
+ * @param {any} responseJson Raw OpenAI response JSON.
+ * @returns {string} Compact JSON summary without prompt/review content.
+ */
+function summarizeOpenAIResponse(responseJson) {
+  const summary = {
+    hasOutputText: typeof responseJson?.output_text === "string" && responseJson.output_text.trim().length > 0,
+    outputItems: Array.isArray(responseJson?.output)
+      ? responseJson.output.map((outputItem) => ({
+        type: outputItem?.type ?? null,
+        contentTypes: Array.isArray(outputItem?.content)
+          ? outputItem.content.map((contentItem) => contentItem?.type ?? null)
+          : [],
+      }))
+      : [],
+  };
+
+  return JSON.stringify(summary);
+}
+
+/**
  * Extract the plain text result from a Responses API payload.
  *
  * @param {any} responseJson Raw OpenAI response JSON.
@@ -186,8 +239,10 @@ function readOpenAIText(responseJson) {
     }
 
     for (const contentItem of outputItem.content ?? []) {
-      if (typeof contentItem.text === "string" && contentItem.text.trim().length > 0) {
-        textParts.push(contentItem.text.trim());
+      const extractedText = extractContentItemText(contentItem);
+
+      if (extractedText) {
+        textParts.push(extractedText);
       }
     }
   }
@@ -247,7 +302,7 @@ async function generateReview(systemPrompt, userPrompt, model) {
   const reviewText = readOpenAIText(responseJson);
 
   if (!reviewText) {
-    throw new Error("OpenAI returned an empty review.");
+    throw new Error(`OpenAI returned an empty review. Response summary: ${summarizeOpenAIResponse(responseJson)}`);
   }
 
   return reviewText;
