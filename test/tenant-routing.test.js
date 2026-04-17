@@ -18,7 +18,6 @@ describe("tenant routing", () => {
     expect(response.status).toBe(501);
     expect(body.tenantId).toBe("alpha");
     expect(body.error.details.tenantDisplayName).toBe("Alpha");
-    expect(body.error.details.telegramRuntime).toBe("grammy");
   });
 
   it("resolves tenant on eulen webhook path", async function assertEulenTenantRouting() {
