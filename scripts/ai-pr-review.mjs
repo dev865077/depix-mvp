@@ -16,6 +16,7 @@ const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
 const MAX_FILES = 20;
 const MAX_PATCH_CHARS_PER_FILE = 6000;
 const MAX_PR_BODY_CHARS = 4000;
+const MAX_REVIEW_INPUT_CHARS = 30000;
 
 /**
  * Assert that an environment variable exists.
@@ -30,7 +31,22 @@ function readRequiredEnv(key) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
 
-  return value;
+  return value.trim();
+}
+
+/**
+ * Read the configured model name and fail clearly on malformed values.
+ *
+ * @returns {string} Explicit model configured for this workflow.
+ */
+function readConfiguredModel() {
+  const model = readRequiredEnv("OPENAI_PR_REVIEW_MODEL");
+
+  if (/\s/.test(model)) {
+    throw new Error("Invalid OPENAI_PR_REVIEW_MODEL: model name cannot contain whitespace.");
+  }
+
+  return model;
 }
 
 /**
@@ -50,6 +66,22 @@ function truncateText(value, maxLength) {
   }
 
   return `${value.slice(0, maxLength)}\n... [truncated]`;
+}
+
+/**
+ * Read the repository-owned review prompt with a clear error when missing.
+ *
+ * @param {string} promptPath Path to the prompt file.
+ * @returns {Promise<string>} Prompt content.
+ */
+async function readReviewPrompt(promptPath) {
+  try {
+    return await fs.readFile(promptPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `Unable to read AI review prompt file at ${promptPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
@@ -132,7 +164,7 @@ function buildFilesReviewPayload(files) {
     sections.push(`### Additional files omitted\nOnly the first ${MAX_FILES} changed files were sent to the model.`);
   }
 
-  return sections.join("\n\n");
+  return truncateText(sections.join("\n\n"), MAX_REVIEW_INPUT_CHARS);
 }
 
 /**
@@ -183,12 +215,6 @@ async function generateReview(systemPrompt, userPrompt, model) {
     body: JSON.stringify({
       model,
       max_output_tokens: 2200,
-      reasoning: {
-        effort: "low",
-      },
-      text: {
-        verbosity: "low",
-      },
       input: [
         {
           role: "system",
@@ -214,7 +240,7 @@ async function generateReview(systemPrompt, userPrompt, model) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenAI request failed (${response.status}): ${body}`);
+    throw new Error(`OpenAI request failed for model ${model} (${response.status}): ${body}`);
   }
 
   const responseJson = await response.json();
@@ -279,7 +305,7 @@ async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
   const promptPath = process.env.AI_REVIEW_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-review.md";
-  const model = readRequiredEnv("OPENAI_PR_REVIEW_MODEL");
+  const model = readConfiguredModel();
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const pullRequest = event.pull_request;
 
@@ -288,11 +314,11 @@ async function main() {
   }
 
   const [systemPrompt, files] = await Promise.all([
-    fs.readFile(promptPath, "utf8"),
+    readReviewPrompt(promptPath),
     fetchPullRequestFiles(repository, pullRequest.number),
   ]);
 
-  const userPrompt = [
+  const userPrompt = truncateText([
     `Repository: ${repository}`,
     `PR: #${pullRequest.number} - ${pullRequest.title}`,
     `Base branch: ${pullRequest.base.ref}`,
@@ -303,7 +329,7 @@ async function main() {
     "",
     "## Changed files",
     buildFilesReviewPayload(files),
-  ].join("\n");
+  ].join("\n"), MAX_REVIEW_INPUT_CHARS);
 
   const review = await generateReview(systemPrompt, userPrompt, model);
   const commentBody = [
