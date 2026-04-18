@@ -18,6 +18,7 @@
 - issue pequena, clara e de baixo impacto pode seguir direto para branch e PR
 - issue com impacto `medio` ou `alto` deve passar por Discussion curta antes da PR
 - a triagem automatica registra justificativa, debate resumido e proximo passo na propria issue
+- quando a issue cair em Discussion, o implementador deve responder ali com a decisao operacional, a ordem de execucao, o escopo da primeira PR e os riscos ou pendencias que ficam fora dela antes de abrir branch ou PR
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 
 ## Corpo obrigatorio da PR
@@ -58,6 +59,7 @@ Explicitar:
 - a automacao nao fecha Discussions via API; o fechamento operacional e o comentario final append-only de status
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional
+- quando a triagem exigir Discussion, a issue deve trazer o acknowledgement operacional antes de qualquer branch ou PR
 
 ## Fluxo de documentacao da wiki
 
