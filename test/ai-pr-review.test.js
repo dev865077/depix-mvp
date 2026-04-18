@@ -19,6 +19,7 @@ import {
   getReviewGateFailure,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
+  sortFilesForReview,
   summarizePullRequestScope,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -361,6 +362,37 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("Base branch: main");
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
     expect(body).toContain("scripts/ai-pr-review.mjs");
+  });
+
+  it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {
+    const files = [
+      { filename: "docs/wiki/A.md", status: "modified", additions: 1, deletions: 0, patch: "@@\n+docs" },
+      { filename: "docs/wiki/B.md", status: "modified", additions: 1, deletions: 0, patch: "@@\n+docs" },
+      { filename: "src/routes/health.js", status: "modified", additions: 1, deletions: 0, patch: "@@\n+tenantOverrides" },
+      { filename: "test/health.test.js", status: "modified", additions: 1, deletions: 0, patch: "@@\n+tenantOverrides" },
+    ];
+
+    expect(sortFilesForReview(files).slice(0, 2).map((file) => file.filename)).toEqual([
+      "src/routes/health.js",
+      "test/health.test.js",
+    ]);
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      files,
+      gate,
+    );
+
+    expect(body.indexOf("### src/routes/health.js")).toBeLessThan(body.indexOf("### docs/wiki/A.md"));
+    expect(body).toContain("+tenantOverrides");
   });
 
   it("builds the sticky comment with a discussion link when present", () => {
