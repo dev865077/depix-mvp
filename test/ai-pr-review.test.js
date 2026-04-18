@@ -88,8 +88,23 @@ describe("ai pr review recommendation parser", () => {
 
     expect(unanimous.recommendation).toBe("Approve");
     expect(unanimous.blockingRoles).toEqual([]);
+    expect(unanimous.synthesisMatchesSpecialists).toBe(true);
     expect(blocked.recommendation).toBe("Request changes");
     expect(blocked.blockingRoles).toEqual(["technical"]);
+  });
+
+  it("treats synthesis as summary-only when specialists are unanimously approved", () => {
+    const evaluation = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Request changes\n\n## Findings\n- Summary drift.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(evaluation.recommendation).toBe("Approve");
+    expect(evaluation.blockingRoles).toEqual([]);
+    expect(evaluation.synthesisRecommendation).toBe("Request changes");
+    expect(evaluation.synthesisMatchesSpecialists).toBe(false);
   });
 });
 
@@ -334,10 +349,11 @@ describe("ai pr review discussion rendering", () => {
     expect(approved).toContain("Discussion concluded");
     expect(approved).toContain("Final recommendation: `Approve`");
     expect(approved).toContain("visible closure marker");
-    expect(approved).toContain("all automated reviewer roles returned `Approve`");
+    expect(approved).toContain("all specialist reviewer roles returned `Approve`");
+    expect(approved).toContain("`synthesis` is summary-only");
     expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
     expect(blocked).toContain("Final recommendation: `Request changes`");
-    expect(blocked).toContain("unanimous approval was not reached");
+    expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
     expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
   });
@@ -421,8 +437,35 @@ describe("ai pr review discussion rendering", () => {
     );
 
     expect(assertValidReviewRecommendation(review)).toBe("Request changes");
-    expect(review).toContain("requires unanimous `Approve`");
+    expect(review).toContain("requires unanimous `Approve` from Product, Technical, and Risk");
     expect(review).toContain("`technical`");
+  });
+
+  it("renders an approve gate summary when specialists approve and synthesis drifts", () => {
+    const review = buildDiscussionGateReview(
+      {
+        product: "## Recommendation\nApprove",
+        technical: "## Recommendation\nApprove",
+        risk: "## Recommendation\nApprove",
+        synthesis: "Request changes\n\n## Findings\n- Summary drift.\n\n## Recommendation\nRequest changes",
+      },
+      {
+        recommendations: {
+          product: "Approve",
+          technical: "Approve",
+          risk: "Approve",
+          synthesis: "Request changes",
+        },
+        blockingRoles: [],
+        synthesisRecommendation: "Request changes",
+        synthesisMatchesSpecialists: false,
+        recommendation: "Approve",
+      },
+    );
+
+    expect(assertValidReviewRecommendation(review)).toBe("Approve");
+    expect(review).toContain("`synthesis` diverged");
+    expect(review).toContain("summary-only");
   });
 
   it("sanitizes model-authored mentions, images, and markdown links", () => {

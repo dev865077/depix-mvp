@@ -1188,6 +1188,8 @@ export function getReviewGateFailure(recommendation) {
  * @returns {{
  *   recommendations: Record<string, string>,
  *   blockingRoles: string[],
+ *   synthesisRecommendation: string,
+ *   synthesisMatchesSpecialists: boolean,
  *   recommendation: "Approve" | "Request changes"
  * }} Unanimity result.
  */
@@ -1198,14 +1200,21 @@ export function evaluateDiscussionRecommendation(debate) {
     risk: assertValidReviewRecommendation(debate.risk),
     synthesis: assertValidReviewRecommendation(debate.synthesis),
   };
-  const blockingRoles = Object.entries(recommendations)
+  const blockingRoles = Object.entries({
+    product: recommendations.product,
+    technical: recommendations.technical,
+    risk: recommendations.risk,
+  })
     .filter(([, recommendation]) => recommendation !== "Approve")
     .map(([role]) => role);
+  const recommendation = blockingRoles.length === 0 ? "Approve" : "Request changes";
 
   return {
     recommendations,
     blockingRoles,
-    recommendation: blockingRoles.length === 0 ? "Approve" : "Request changes",
+    synthesisRecommendation: recommendations.synthesis,
+    synthesisMatchesSpecialists: recommendations.synthesis === recommendation,
+    recommendation,
   };
 }
 
@@ -1529,16 +1538,18 @@ export function buildDiscussionReviewComments(debate) {
 export function buildDiscussionCompletionComment(recommendation, blockingRoles = []) {
   const isApproved = recommendation === "Approve";
   const statusLine = isApproved
-    ? "Discussion concluded: all automated reviewer roles returned `Approve`."
-    : "Discussion concluded: unanimous approval was not reached across the automated reviewer roles.";
+    ? "Discussion concluded: all specialist reviewer roles returned `Approve`."
+    : "Discussion concluded: unanimous approval was not reached across the specialist reviewer roles.";
   const closeLine = isApproved
     ? "This append-only comment is the visible closure marker for the automated review."
-    : "The Discussion remains open because at least one automated reviewer role still requests changes.";
+    : "The Discussion remains open because at least one specialist reviewer role still requests changes.";
   const canonicalLine =
     "Because this workflow is append-only, this newest final-status comment supersedes earlier automated final-status comments in this Discussion.";
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
+  const policyLine =
+    "Merge approval in the discussion lane requires unanimous `Approve` from `product`, `technical`, and `risk`. `synthesis` is summary-only.";
 
   return [
     DISCUSSION_FINAL_COMMENT_MARKER,
@@ -1547,6 +1558,7 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
     statusLine,
     closeLine,
     ...(blockerLine ? [blockerLine] : []),
+    policyLine,
     canonicalLine,
     "",
     `Final recommendation: \`${recommendation}\``,
@@ -1565,15 +1577,28 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
  * @returns {string} PR-visible verdict body.
  */
 export function buildDiscussionGateReview(debate, evaluation) {
-  if (evaluation.recommendation === "Approve") {
+  if (evaluation.recommendation === "Approve" && evaluation.synthesisMatchesSpecialists) {
     return debate.synthesis;
+  }
+
+  if (evaluation.recommendation === "Approve") {
+    return [
+      "Approve",
+      "",
+      "## Findings",
+      "- Specialist reviewers reached unanimous `Approve`.",
+      "- `synthesis` diverged in this run and was treated as summary-only, not as a blocking vote.",
+      "",
+      "## Recommendation",
+      "Approve",
+    ].join("\n");
   }
 
   return [
     "Request changes",
     "",
     "## Findings",
-    "- The discussion lane requires unanimous `Approve` from Product, Technical, Risk, and Synthesis.",
+    "- The discussion lane requires unanimous `Approve` from Product, Technical, and Risk.",
     `- Blocking reviewer roles in this run: ${evaluation.blockingRoles.map((role) => `\`${role}\``).join(", ")}.`,
     "- See the linked Discussion for the role-specific comments and the latest closure status.",
     "",
