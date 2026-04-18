@@ -33,6 +33,7 @@ function cleanRecommendationCandidate(value) {
     .replace(/^[\s>*`#-]+/, "")
     .replace(/[*`]+/g, "")
     .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
     .replace(/\s*:+\s*$/, "")
     .trim();
 }

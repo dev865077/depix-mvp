@@ -47,6 +47,20 @@ describe("ai pr review recommendation parser", () => {
     expect(assertValidReviewRecommendation(review)).toBe("Request changes");
   });
 
+  it("accepts benign trailing punctuation in the recommendation", () => {
+    const review = [
+      "Approve.",
+      "",
+      "## Findings",
+      "- No material findings.",
+      "",
+      "## Recommendation",
+      "Approve.",
+    ].join("\n");
+
+    expect(assertValidReviewRecommendation(review)).toBe("Approve");
+  });
+
   it("falls back to the first non-empty verdict line when needed", () => {
     const review = [
       "Approve",
