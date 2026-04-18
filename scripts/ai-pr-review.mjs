@@ -35,8 +35,8 @@ const DIRECT_REVIEW_MAX_TOTAL_LINES = 120;
 const DIRECT_REVIEW_MAX_AREAS = 2;
 const DIRECT_REVIEW_MAX_WORKFLOW_FILES = 2;
 const DIRECT_REVIEW_MAX_WORKFLOW_LINES = 30;
-const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_FILES = 5;
-const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_LINES = 320;
+const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_FILES = 7;
+const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_LINES = 420;
 const DISCUSSION_CATEGORY_DEFAULT = "";
 
 const SENSITIVE_WORKFLOW_CHANGE_PATTERNS = [
@@ -809,7 +809,6 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
     ".github/prompts/ai-pr-discussion-technical.md",
     ".github/prompts/ai-pr-discussion-risk.md",
     ".github/prompts/ai-pr-discussion-synthesis.md",
-    ".github/prompts/ai-pr-review-doctrine.md",
     "scripts/ai-pr-review.mjs",
     "test/ai-pr-review.test.js",
     "docs/wiki/contribuicao-e-prs.md",

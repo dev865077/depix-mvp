@@ -50,7 +50,8 @@ Explicitar:
 - a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
 - comentarios antigos nunca devem ser editados ou removidos; o comentario final de status mais recente e sempre o estado canonico da automacao
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
-- a PR so fica pronta para merge quando a sintese final for `Approve`; `Request changes` sempre falha o check, mesmo quando todos os comentarios publicos foram escritos corretamente
+- na lane de Discussion, a PR so fica pronta para merge quando `product`, `technical` e `risk` retornarem `Approve`; `Request changes` em qualquer um deles sempre falha o check
+- `synthesis` continua obrigatoria para visibilidade e fechamento operacional da Discussion, mas e resumo: ela nao vira um quarto voto de bloqueio por drift de redacao
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
 - se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
 - timeout do modelo publica sintese `Request changes` e falha o check; o mantenedor pode rerodar o check ou aceitar explicitamente o risco em um fluxo manual separado

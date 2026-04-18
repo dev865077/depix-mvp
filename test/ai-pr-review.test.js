@@ -106,6 +106,17 @@ describe("ai pr review recommendation parser", () => {
     expect(evaluation.synthesisRecommendation).toBe("Request changes");
     expect(evaluation.synthesisMatchesSpecialists).toBe(false);
   });
+
+  it("fails closed when a specialist omits the canonical recommendation", () => {
+    expect(() =>
+      evaluateDiscussionRecommendation({
+        product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.",
+        technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      }),
+    ).toThrow(/missing the ## Recommendation section/i);
+  });
 });
 
 describe("ai pr review discussion gate", () => {
@@ -240,6 +251,25 @@ describe("ai pr review discussion gate", () => {
           "+- In `## Recommendation`, say exactly one of:",
           "+  - `Approve`",
           "+  - `Request changes`",
+        ].join("\n"),
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-synthesis.md",
+        additions: 3,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+- Always include the final `## Recommendation` section exactly once.",
+        ].join("\n"),
+      },
+      {
+        filename: "docs/wiki/Contribuicao-e-PRs.md",
+        additions: 11,
+        deletions: 1,
+        patch: [
+          "@@",
+          "+- na lane de Discussion, a PR so fica pronta para merge quando `product`, `technical` e `risk` retornarem `Approve`",
+          "+- `synthesis` continua obrigatoria para visibilidade, mas e resumo",
         ].join("\n"),
       },
     ]);
