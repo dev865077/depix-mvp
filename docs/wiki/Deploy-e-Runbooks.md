@@ -35,7 +35,7 @@
 - pre-condicao de rollout: `ENABLE_OPS_DEPOSIT_RECHECK=true`
 - payload minimo: `{ "depositEntryId": "..." }`
 - header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
-- opcional com menor blast radius: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN_<TENANT>>`
+- opcional com menor blast radius: `Authorization: Bearer <binding declarado em opsBindings.depositRecheckBearerToken>`
 - ancora local: `depositEntryId`
 - fonte de verdade remota: `deposit-status`
 - trilha local: evento `deposit_events.source = "recheck_deposit_status"`
@@ -45,8 +45,8 @@
 ## Contrato operacional do recheck
 
 - sem `ENABLE_OPS_DEPOSIT_RECHECK=true`, responde `503 ops_route_disabled`
-- a rota so opera quando `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
-- quando existir `OPS_ROUTE_BEARER_TOKEN_<TENANT>`, esse token tenant-scoped tem precedencia sobre o token global
+- a rota so fica globalmente pronta quando `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
+- quando o tenant declarar `opsBindings.depositRecheckBearerToken`, esse token tenant-scoped tem precedencia sobre o token global
 - sem esse binding, `POST /ops/:tenantId/recheck/deposit` responde `503 ops_route_disabled`
 - sem header Bearer, responde `401 ops_authorization_required`
 - com token invalido, responde `403 ops_authorization_invalid`
@@ -80,7 +80,7 @@
 
 ## Rollout e rollback
 
-- rollout: provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
+- rollout: provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
 - rollout atual esperado: `test` e `production` so ficam operacionalmente ativos depois da provisao explicita desses bindings; sem isso, a rota permanece escura por desenho
 - rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` para `false`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
 - rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
@@ -90,9 +90,8 @@
 
 - `test` habilitado e validado antes de qualquer uso em `production`
 - `production` habilitado so depois do smoke test autenticado em `test`
-- `/health` confirma `configuration.operations.depositRecheck.enabled`
-- `/health` expõe se a flag foi reconhecida e quais tenants ja possuem binding tenant-scoped declarado
-- operadores sabem se o tenant usa token global herdado ou override tenant-scoped
+- `/health` confirma apenas `configuration.operations.depositRecheck.ready` como sinal redigido de prontidao global
+- operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
 - rollback rapido documentado por flag e por rotacao/remoção do segredo
 
 ## Verificacao minima

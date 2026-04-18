@@ -70,29 +70,6 @@ export function describeBooleanFlagState(value) {
 }
 
 /**
- * Converte um tenantId em sufixo seguro para bindings operacionais.
- *
- * @param {string} tenantId Tenant atual.
- * @returns {string} Sufixo seguro.
- */
-function normalizeTenantIdForOpsBinding(tenantId) {
-  return tenantId.trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
-}
-
-/**
- * Lista quais tenants ja possuem binding tenant-scoped para a rota operacional.
- *
- * @param {Record<string, string | undefined>} env Runtime atual.
- * @param {Record<string, { tenantId: string }>} tenants Tenants registrados.
- * @returns {string[]} IDs de tenant com binding declarado.
- */
-function listTenantScopedOpsBindings(env, tenants) {
-  return Object.values(tenants)
-    .filter((tenant) => Boolean(env[`OPS_ROUTE_BEARER_TOKEN_${normalizeTenantIdForOpsBinding(tenant.tenantId)}`]))
-    .map((tenant) => tenant.tenantId);
-}
-
-/**
  * Garante que um binding textual obrigatorio exista e tenha conteudo.
  *
  * @param {string | undefined} value Valor bruto vindo do runtime.
@@ -151,6 +128,9 @@ export function assertPositiveInteger(value, key) {
  *       depixSplitAddress: string,
  *       splitFee: string
  *     },
+ *     opsBindings: {
+ *       depositRecheckBearerToken?: string
+ *     },
  *     secretBindings: Record<string, string>
  *   }>,
  *   secrets: {
@@ -165,8 +145,8 @@ export function assertPositiveInteger(value, key) {
  *         recognized: boolean,
  *         rawValue: string | null
  *       },
- *       globalBearerBindingConfigured: boolean,
- *       tenantScopedBearerBindings: string[]
+ *       ready: boolean,
+ *       globalBearerBindingConfigured: boolean
  *     }
  *   }
  * }} Configuracao consolidada do runtime.
@@ -193,7 +173,7 @@ export function readRuntimeConfig(env) {
   ));
   const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
   const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
-  const tenantScopedOpsBindings = listTenantScopedOpsBindings(env, tenants);
+  const globalBearerBindingConfigured = Boolean(env.OPS_ROUTE_BEARER_TOKEN);
 
   return {
     appName,
@@ -213,8 +193,8 @@ export function readRuntimeConfig(env) {
       depositRecheck: {
         enabled: depositRecheckEnabled,
         featureFlag: depositRecheckFlagState,
-        globalBearerBindingConfigured: Boolean(env.OPS_ROUTE_BEARER_TOKEN),
-        tenantScopedBearerBindings: tenantScopedOpsBindings,
+        ready: depositRecheckEnabled && globalBearerBindingConfigured,
+        globalBearerBindingConfigured,
       },
     },
   };

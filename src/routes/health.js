@@ -17,9 +17,16 @@ export function handleHealth(c) {
     configuration: {
       eulenApiBaseUrl: runtimeConfig.eulenApiBaseUrl,
       database: runtimeConfig.database,
-      tenants: runtimeConfig.tenants,
+      tenants: {
+        configured: Object.keys(runtimeConfig.tenants).length > 0,
+        count: Object.keys(runtimeConfig.tenants).length,
+      },
       secrets: runtimeConfig.secrets,
-      operations: runtimeConfig.operations,
+      operations: {
+        depositRecheck: {
+          ready: runtimeConfig.operations.depositRecheck.ready,
+        },
+      },
     },
   });
 }

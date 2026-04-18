@@ -44,28 +44,24 @@ Os valores reais desses bindings ficam no Cloudflare Secrets Store em `test` e `
 
 O mesmo principio vale para `OPS_ROUTE_BEARER_TOKEN`: ele nao deve entrar em `vars` versionadas nem em codigo. Em ambientes publicados, a recomendacao e materializa-lo como secret do Worker ou via Secrets Store.
 
-Quando o time quiser reduzir blast radius por tenant, o runtime tambem aceita um binding tenant-scoped com precedencia sobre o token global:
+Quando o time quiser reduzir blast radius por tenant, o binding tenant-scoped deixa de ser derivado do `tenantId` e passa a ser declarado explicitamente no `TENANT_REGISTRY`:
 
-- `OPS_ROUTE_BEARER_TOKEN_<TENANT_NORMALIZADO>`
+```json
+{
+  "opsBindings": {
+    "depositRecheckBearerToken": "NOME_DO_BINDING_SECRETO"
+  }
+}
+```
 
-Normalizacao atual:
-
-- converte para maiusculas
-- troca caracteres fora de `[A-Z0-9]` por `_`
-
-Exemplo:
-
-- `alpha` -> `OPS_ROUTE_BEARER_TOKEN_ALPHA`
-- `cliente-beta` -> `OPS_ROUTE_BEARER_TOKEN_CLIENTE_BETA`
-
-Se o binding tenant-scoped existir, ele vale apenas para o `tenantId` correspondente e substitui o fallback global naquela rota.
+Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para aquele tenant e substitui o fallback global naquela rota.
 
 ## Contrato de habilitacao
 
 - `ENABLE_OPS_DEPOSIT_RECHECK=false` ou ausente: a rota operacional responde `503 ops_route_disabled`
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` sem token configurado: a rota continua desabilitada com `503 ops_route_disabled`
-- `ENABLE_OPS_DEPOSIT_RECHECK=true` com token global: a rota fica habilitada para o fluxo atual
-- `ENABLE_OPS_DEPOSIT_RECHECK=true` com token tenant-scoped: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` com `OPS_ROUTE_BEARER_TOKEN` configurado: a rota fica operacionalmente pronta
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` com `opsBindings.depositRecheckBearerToken`: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
 
 ## Ambientes de lancamento
 
@@ -78,7 +74,7 @@ Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel p
 ## Onboarding de novo tenant
 
 - por padrao, novo tenant continua herdando o token global `OPS_ROUTE_BEARER_TOKEN`
-- quando o time quiser isolar esse tenant, provisiona `OPS_ROUTE_BEARER_TOKEN_<TENANT_NORMALIZADO>`
+- quando o time quiser isolar esse tenant, declara `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY` e provisiona esse binding secreto no ambiente
 - se o binding tenant-scoped estiver declarado e invalido, a rota falha fechada com `503 ops_route_disabled` ate a configuracao ser corrigida
 
 ## Regra operacional

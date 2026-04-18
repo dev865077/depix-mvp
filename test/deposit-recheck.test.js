@@ -69,6 +69,42 @@ function createWorkerEnv(overrides = {}) {
   };
 }
 
+function createTenantScopedAlphaRegistry() {
+  return JSON.stringify({
+    alpha: {
+      displayName: "Alpha",
+      eulenPartnerId: "partner-alpha",
+      opsBindings: {
+        depositRecheckBearerToken: "ALPHA_OPS_ROUTE_BEARER_TOKEN",
+      },
+      splitConfigBindings: {
+        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+    beta: {
+      displayName: "Beta",
+      eulenPartnerId: "partner-beta",
+      splitConfigBindings: {
+        depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "BETA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "BETA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+  });
+}
+
 async function seedDepositAggregate(input = {}) {
   await resetDatabaseSchema();
 
@@ -386,6 +422,7 @@ describe("deposit recheck route", () => {
 
   it("keeps the worker up and leaves the route disabled when the feature flag value is unknown", async function assertUnknownFeatureFlagIsSafe() {
     await seedDepositAggregate();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen when feature flag is invalid"));
 
@@ -399,6 +436,11 @@ describe("deposit recheck route", () => {
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("ops_route_disabled");
     expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
+    expect(consoleSpy.mock.calls.some(([entry]) => (
+      typeof entry === "string"
+      && entry.includes("\"message\":\"config.invalid_boolean_flag\"")
+      && entry.includes("\"bindingName\":\"ENABLE_OPS_DEPOSIT_RECHECK\"")
+    ))).toBe(true);
   });
 
   it("disables the route when the operator bearer token binding is absent", async function assertRouteDisabledWithoutSecret() {
@@ -437,14 +479,16 @@ describe("deposit recheck route", () => {
     const forbiddenResponse = await requestDepositRecheck({
       authorizationHeader: "Bearer ops-route-test-token",
       envOverrides: {
-        OPS_ROUTE_BEARER_TOKEN_ALPHA: "alpha-ops-token",
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-token",
       },
     });
     const forbiddenBody = await forbiddenResponse.json();
     const allowedResponse = await requestDepositRecheck({
       authorizationHeader: "Bearer alpha-ops-token",
       envOverrides: {
-        OPS_ROUTE_BEARER_TOKEN_ALPHA: "alpha-ops-token",
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-token",
       },
     });
 
@@ -461,14 +505,126 @@ describe("deposit recheck route", () => {
     const response = await requestDepositRecheck({
       authorizationHeader: "Bearer ops-route-test-token",
       envOverrides: {
-        OPS_ROUTE_BEARER_TOKEN_ALPHA: "",
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "",
       },
     });
     const body = await response.json();
 
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("ops_route_disabled");
-    expect(body.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN_ALPHA");
+    expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+  });
+
+  it("uses exact tenant binding names from the registry without collapsing similar tenant ids", async function assertExactTenantScopedBindingMapping() {
+    await resetDatabaseSchema();
+
+    const collisionRegistry = JSON.stringify({
+      "a-b": {
+        displayName: "Tenant A-B",
+        eulenPartnerId: "partner-ab",
+        opsBindings: {
+          depositRecheckBearerToken: "OPS_ROUTE_BEARER_TOKEN_A_DASH_B",
+        },
+        splitConfigBindings: {
+          depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+          splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+        },
+        secretBindings: {
+          telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+          telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+          eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+          eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+        },
+      },
+      a_b: {
+        displayName: "Tenant A_B",
+        eulenPartnerId: "partner-a_b",
+        opsBindings: {
+          depositRecheckBearerToken: "OPS_ROUTE_BEARER_TOKEN_A_UNDERSCORE_B",
+        },
+        splitConfigBindings: {
+          depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+          splitFee: "BETA_DEPIX_SPLIT_FEE",
+        },
+        secretBindings: {
+          telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
+          telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
+          eulenApiToken: "BETA_EULEN_API_TOKEN",
+          eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
+        },
+      },
+    });
+    const db = getDatabase(env);
+
+    await createOrder(db, {
+      tenantId: "a-b",
+      orderId: "order_ab_001",
+      userId: "tenant_ab_user_001",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_ab",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_ab",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "a-b",
+      depositEntryId: "deposit_entry_ab_001",
+      qrId: "qr_ab_001",
+      orderId: "order_ab_001",
+      nonce: "nonce_ab_001",
+      qrCopyPaste: "0002010102122688qr-ab-001",
+      qrImageUrl: "https://example.com/qr/ab.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_ab_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const wrongTenantScopedResponse = await requestDepositRecheck({
+      url: "https://example.com/ops/a-b/recheck/deposit",
+      authorizationHeader: "Bearer underscore-token",
+      body: {
+        depositEntryId: "deposit_entry_ab_001",
+      },
+      envOverrides: {
+        TENANT_REGISTRY: collisionRegistry,
+        OPS_ROUTE_BEARER_TOKEN_A_DASH_B: "dash-token",
+        OPS_ROUTE_BEARER_TOKEN_A_UNDERSCORE_B: "underscore-token",
+      },
+    });
+    const wrongTenantScopedBody = await wrongTenantScopedResponse.json();
+    const correctTenantScopedResponse = await requestDepositRecheck({
+      url: "https://example.com/ops/a-b/recheck/deposit",
+      authorizationHeader: "Bearer dash-token",
+      body: {
+        depositEntryId: "deposit_entry_ab_001",
+      },
+      envOverrides: {
+        TENANT_REGISTRY: collisionRegistry,
+        OPS_ROUTE_BEARER_TOKEN_A_DASH_B: "dash-token",
+        OPS_ROUTE_BEARER_TOKEN_A_UNDERSCORE_B: "underscore-token",
+      },
+    });
+
+    expect(wrongTenantScopedResponse.status).toBe(403);
+    expect(wrongTenantScopedBody.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN_A_DASH_B");
+    expect(correctTenantScopedResponse.status).toBe(200);
   });
 
   it("fails explicitly when deposit-status points to a qrId already owned by another deposit", async function assertQrIdConflict() {
@@ -642,9 +798,16 @@ describe("deposit recheck route", () => {
 
     const response = await requestDepositRecheck();
     const body = await response.json();
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
 
     expect(response.status).toBe(500);
     expect(body.error.code).toBe("deposit_recheck_persistence_incomplete");
+    expect(currentDeposit?.externalStatus).toBe("pending");
+    expect(currentOrder?.status).toBe("pending");
+    expect(currentOrder?.currentStep).toBe("awaiting_payment");
+    expect(savedEvents).toHaveLength(0);
 
     batchSpy.mockRestore();
   });

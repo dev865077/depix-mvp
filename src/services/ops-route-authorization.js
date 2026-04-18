@@ -9,7 +9,7 @@
  * - a rota so fica habilitada quando `ENABLE_OPS_DEPOSIT_RECHECK=true`
  * - a rota so fica habilitada quando `OPS_ROUTE_BEARER_TOKEN` existe
  * - o operador precisa enviar `Authorization: Bearer <token>`
- * - quando existir `OPS_ROUTE_BEARER_TOKEN_<TENANT>`, ele tem precedencia
+ * - quando o tenant declarar `opsBindings.depositRecheckBearerToken`, ele tem precedencia
  * - remover ou rotacionar o binding desabilita a operacao sem redeploy de codigo
  */
 import { readSecretBindingValue } from "../config/tenants.js";
@@ -17,7 +17,6 @@ import { log } from "../lib/logger.js";
 
 export const ENABLE_OPS_DEPOSIT_RECHECK_BINDING = "ENABLE_OPS_DEPOSIT_RECHECK";
 export const OPS_ROUTE_BEARER_TOKEN_BINDING = "OPS_ROUTE_BEARER_TOKEN";
-export const OPS_ROUTE_BEARER_TOKEN_TENANT_PREFIX = "OPS_ROUTE_BEARER_TOKEN_";
 
 /**
  * Erro controlado de autorizacao de rota operacional.
@@ -40,66 +39,28 @@ export class OpsRouteAuthorizationError extends Error {
 }
 
 /**
- * Converte o tenant em um sufixo seguro para bindings operacionais.
- *
- * Exemplo:
- * - `alpha` -> `ALPHA`
- * - `cliente-beta` -> `CLIENTE_BETA`
- *
- * @param {string | undefined} tenantId Tenant atual.
- * @returns {string | undefined} Sufixo seguro para o binding.
- */
-export function normalizeTenantIdForOpsBinding(tenantId) {
-  if (typeof tenantId !== "string" || tenantId.trim().length === 0) {
-    return undefined;
-  }
-
-  return tenantId.trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
-}
-
-/**
- * Resolve o nome do binding de token tenant-scoped quando houver tenant.
- *
- * @param {string | undefined} tenantId Tenant atual.
- * @returns {string | undefined} Nome do binding esperado.
- */
-export function resolveTenantScopedOpsBearerBindingName(tenantId) {
-  const normalizedTenantId = normalizeTenantIdForOpsBinding(tenantId);
-
-  if (!normalizedTenantId) {
-    return undefined;
-  }
-
-  return `${OPS_ROUTE_BEARER_TOKEN_TENANT_PREFIX}${normalizedTenantId}`;
-}
-
-/**
  * Le o token esperado para a rota operacional.
  *
  * Ordem de precedencia:
- * 1. token tenant-scoped (`OPS_ROUTE_BEARER_TOKEN_<TENANT>`)
+ * 1. token tenant-scoped declarado no `TENANT_REGISTRY`
  * 2. token global (`OPS_ROUTE_BEARER_TOKEN`)
  *
  * Isso reduz blast radius quando o time decidir operar com segredos por tenant
  * sem quebrar o contrato ja publicado do token global.
  *
  * @param {Record<string, unknown>} env Bindings do Worker.
- * @param {string | undefined} tenantId Tenant atual.
+ * @param {{ tenantId: string, opsBindings?: { depositRecheckBearerToken?: string } } | undefined} tenant Tenant atual.
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global", token: string }>} Segredo esperado.
  */
-async function readExpectedOpsBearerToken(env, tenantId) {
-  const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(tenantId);
+async function readExpectedOpsBearerToken(env, tenant) {
+  const tenantScopedBindingName = tenant?.opsBindings?.depositRecheckBearerToken;
 
   if (tenantScopedBindingName) {
-    const tenantScopedBindingDeclared = Object.prototype.hasOwnProperty.call(env, tenantScopedBindingName);
-
-    if (tenantScopedBindingDeclared) {
-      return {
-        bindingName: tenantScopedBindingName,
-        authScope: "tenant",
-        token: await readSecretBindingValue(env, tenantScopedBindingName),
-      };
-    }
+    return {
+      bindingName: tenantScopedBindingName,
+      authScope: "tenant",
+      token: await readSecretBindingValue(env, tenantScopedBindingName),
+    };
   }
 
   return {
@@ -159,6 +120,7 @@ export function constantTimeStringEquals(left, right) {
  *   runtimeConfig: { environment: string, operations?: { depositRecheck?: { enabled?: boolean } } },
  *   authorizationHeader?: string,
  *   requestId?: string,
+ *   tenant?: { tenantId: string, opsBindings?: { depositRecheckBearerToken?: string } },
  *   tenantId?: string,
  *   path?: string
  * }} input Dependencias e metadados da requisicao.
@@ -181,13 +143,10 @@ export async function authorizeOpsRoute(input) {
   let expectedBearerToken;
   let expectedBearerBindingName;
   let expectedAuthScope;
-  const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(input.tenantId);
-  const tenantScopedBindingDeclared = tenantScopedBindingName
-    ? Object.prototype.hasOwnProperty.call(input.env, tenantScopedBindingName)
-    : false;
+  const tenantScopedBindingName = input.tenant?.opsBindings?.depositRecheckBearerToken;
 
   try {
-    const resolvedBearerToken = await readExpectedOpsBearerToken(input.env, input.tenantId);
+    const resolvedBearerToken = await readExpectedOpsBearerToken(input.env, input.tenant);
 
     expectedBearerToken = resolvedBearerToken.token;
     expectedBearerBindingName = resolvedBearerToken.bindingName;
@@ -198,9 +157,7 @@ export async function authorizeOpsRoute(input) {
       "ops_route_disabled",
       "Operational route is disabled because its bearer token is not configured.",
       {
-        bindingName: expectedBearerBindingName
-          ?? (tenantScopedBindingDeclared ? tenantScopedBindingName : undefined)
-          ?? OPS_ROUTE_BEARER_TOKEN_BINDING,
+        bindingName: expectedBearerBindingName ?? tenantScopedBindingName ?? OPS_ROUTE_BEARER_TOKEN_BINDING,
         environment: input.runtimeConfig.environment,
         tenantId: input.tenantId,
       },

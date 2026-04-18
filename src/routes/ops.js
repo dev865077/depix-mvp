@@ -122,6 +122,7 @@ export async function handleDepositRecheck(c) {
       runtimeConfig,
       authorizationHeader: c.req.header("authorization"),
       requestId: c.get("requestId"),
+      tenant,
       tenantId: tenant.tenantId,
       path: c.req.path,
     });

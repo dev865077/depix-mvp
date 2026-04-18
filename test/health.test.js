@@ -18,12 +18,11 @@ export async function assertHealthResponse() {
   expect(body.status).toBe("ok");
   expect(body.environment).toBe("local");
   expect(body.configuration.database.bindingConfigured).toBe(true);
+  expect(body.configuration.tenants.configured).toBe(true);
+  expect(body.configuration.tenants.count).toBe(2);
   expect(body.configuration.secrets.registryConfigured).toBe(true);
   expect(body.configuration.secrets.tenantSecretBindingsConfigured).toBe(true);
-  expect(body.configuration.operations.depositRecheck.enabled).toBe(true);
-  expect(body.configuration.operations.depositRecheck.featureFlag.configured).toBe(true);
-  expect(body.configuration.operations.depositRecheck.globalBearerBindingConfigured).toBe(false);
-  expect(Object.keys(body.configuration.tenants)).toEqual(["alpha", "beta"]);
+  expect(body.configuration.operations.depositRecheck.ready).toBe(false);
 }
 
 describe("health route", () => {
