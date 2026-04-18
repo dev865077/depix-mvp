@@ -170,7 +170,7 @@ A Eulen é responsável pela criação da cobrança DePix e pela confirmação d
 - tratamento base de idempotência
 - atualização persistida dos agregados de depósito
 
-O webhook de depósito é o caminho principal. O recheck continua sendo fallback e ainda não representa o fluxo operacional completo.
+O webhook de depósito é o caminho principal. O fallback operacional cobre `deposit-status` por depósito e `deposits` por janela curta.
 
 ## Mapa de Documentação
 

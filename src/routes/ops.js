@@ -30,6 +30,7 @@ import {
   authorizeOpsRoute,
   OpsRouteAuthorizationError,
 } from "../services/ops-route-authorization.js";
+import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
 
 export const opsRouter = new Hono();
@@ -57,19 +58,20 @@ function handleDiagnosticRouteError(c, error) {
 }
 
 /**
- * Converte erros conhecidos do recheck operacional para JSON padronizado.
+ * Converte erros conhecidos das rotas de reconciliacao para JSON padronizado.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @param {unknown} error Erro capturado durante a execucao.
+ * @param {{ authorizationFailed: string, operationFailed: string }} messages Mensagens de log especificas da rota.
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
-function handleDepositRecheckError(c, error) {
+function handleReconciliationRouteError(c, error, messages) {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (error instanceof OpsRouteAuthorizationError) {
     log(runtimeConfig, {
       level: error.status >= 500 ? "error" : "warn",
-      message: "ops.deposit_recheck.authorization_failed",
+      message: messages.authorizationFailed,
       tenantId: c.get("tenant")?.tenantId,
       requestId: c.get("requestId"),
       details: {
@@ -82,10 +84,10 @@ function handleDepositRecheckError(c, error) {
     return jsonError(c, error.status, error.code, error.message, error.details);
   }
 
-  if (error instanceof DepositRecheckError) {
+  if (error instanceof DepositRecheckError || error instanceof DepositsFallbackError) {
     log(runtimeConfig, {
       level: error.status >= 500 ? "error" : "warn",
-      message: "ops.deposit_recheck.failed",
+      message: messages.operationFailed,
       tenantId: c.get("tenant")?.tenantId,
       requestId: c.get("requestId"),
       details: {
@@ -102,6 +104,75 @@ function handleDepositRecheckError(c, error) {
 }
 
 /**
+ * Resolve dependencias comuns das rotas operacionais de reconciliacao.
+ *
+ * As duas rotas atuais, `deposit-status` e `deposits`, compartilham o mesmo
+ * contrato de rollout: tenant resolvido, bearer operacional, D1 configurado e
+ * token Eulen do tenant. Centralizar essa borda evita divergencia de auth entre
+ * ferramentas que escrevem no mesmo agregado financeiro.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @param {string} authorizationLogMessage Mensagem de log para auth bem sucedida.
+ * @param {{ code: string, message: string }} dependencyError Erro usado quando secrets Eulen faltarem.
+ * @param {typeof DepositRecheckError | typeof DepositsFallbackError} ErrorClass Classe de erro da rota atual.
+ * @returns {Promise<{ tenant: Record<string, unknown>, db: import("@cloudflare/workers-types").D1Database, runtimeConfig: Record<string, unknown>, eulenApiToken: string }>} Dependencias prontas.
+ */
+async function resolveReconciliationRouteContext(c, authorizationLogMessage, dependencyError, ErrorClass) {
+  const tenant = c.get("tenant");
+  const db = c.get("db");
+  const runtimeConfig = c.get("runtimeConfig");
+
+  if (!tenant) {
+    throw new ErrorClass(404, "tenant_not_resolved", "Tenant context is required for this operation.");
+  }
+
+  const authContext = await authorizeOpsRoute({
+    env: c.env,
+    runtimeConfig,
+    authorizationHeader: c.req.header("authorization"),
+    requestId: c.get("requestId"),
+    tenant,
+    tenantId: tenant.tenantId,
+    path: c.req.path,
+  });
+
+  log(runtimeConfig, {
+    level: "info",
+    message: authorizationLogMessage,
+    tenantId: tenant.tenantId,
+    requestId: c.get("requestId"),
+    details: {
+      path: c.req.path,
+      authScope: authContext.authScope,
+      bindingName: authContext.bindingName,
+    },
+  });
+
+  if (!db) {
+    throw new Error("Database binding is required to process operational reconciliation.");
+  }
+
+  try {
+    return {
+      tenant,
+      db,
+      runtimeConfig,
+      eulenApiToken: await readTenantSecret(c.env, tenant, "eulenApiToken"),
+    };
+  } catch (error) {
+    throw new ErrorClass(
+      503,
+      dependencyError.code,
+      dependencyError.message,
+      {
+        cause: error instanceof Error ? error.message : String(error),
+      },
+      error,
+    );
+  }
+}
+
+/**
  * Executa o recheck operacional de um deposito via `deposit-status`.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
@@ -109,55 +180,15 @@ function handleDepositRecheckError(c, error) {
  */
 export async function handleDepositRecheck(c) {
   try {
-    const tenant = c.get("tenant");
-    const db = c.get("db");
-    const runtimeConfig = c.get("runtimeConfig");
-
-    if (!tenant) {
-      return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this operation.");
-    }
-
-    const authContext = await authorizeOpsRoute({
-      env: c.env,
-      runtimeConfig,
-      authorizationHeader: c.req.header("authorization"),
-      requestId: c.get("requestId"),
-      tenant,
-      tenantId: tenant.tenantId,
-      path: c.req.path,
-    });
-
-    log(runtimeConfig, {
-      level: "info",
-      message: "ops.deposit_recheck.authorized",
-      tenantId: tenant.tenantId,
-      requestId: c.get("requestId"),
-      details: {
-        path: c.req.path,
-        authScope: authContext.authScope,
-        bindingName: authContext.bindingName,
+    const { tenant, db, runtimeConfig, eulenApiToken } = await resolveReconciliationRouteContext(
+      c,
+      "ops.deposit_recheck.authorized",
+      {
+        code: "recheck_dependency_unavailable",
+        message: "Required Eulen recheck dependencies are not available for this tenant.",
       },
-    });
-
-    if (!db) {
-      throw new Error("Database binding is required to process the deposit recheck.");
-    }
-
-    let eulenApiToken;
-
-    try {
-      eulenApiToken = await readTenantSecret(c.env, tenant, "eulenApiToken");
-    } catch (error) {
-      return jsonError(
-        c,
-        503,
-        "recheck_dependency_unavailable",
-        "Required Eulen recheck dependencies are not available for this tenant.",
-        {
-          cause: error instanceof Error ? error.message : String(error),
-        },
-      );
-    }
+      DepositRecheckError,
+    );
 
     const result = await processDepositRecheck({
       db,
@@ -178,7 +209,53 @@ export async function handleDepositRecheck(c) {
       result.status,
     );
   } catch (error) {
-    return handleDepositRecheckError(c, error);
+    return handleReconciliationRouteError(c, error, {
+      authorizationFailed: "ops.deposit_recheck.authorization_failed",
+      operationFailed: "ops.deposit_recheck.failed",
+    });
+  }
+}
+
+/**
+ * Executa fallback operacional por janela via `/deposits`.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @returns {Promise<Response>} Resultado da reconciliacao por janela.
+ */
+export async function handleDepositsFallback(c) {
+  try {
+    const { tenant, db, runtimeConfig, eulenApiToken } = await resolveReconciliationRouteContext(
+      c,
+      "ops.deposits_fallback.authorized",
+      {
+        code: "deposits_fallback_dependency_unavailable",
+        message: "Required Eulen deposits fallback dependencies are not available for this tenant.",
+      },
+      DepositsFallbackError,
+    );
+    const result = await processDepositsFallback({
+      db,
+      runtimeConfig,
+      tenant,
+      eulenApiToken,
+      rawBody: await c.req.text(),
+      requestId: c.get("requestId"),
+    });
+
+    return c.json(
+      {
+        ok: true,
+        requestId: c.get("requestId"),
+        tenantId: tenant.tenantId,
+        ...result.details,
+      },
+      result.status,
+    );
+  } catch (error) {
+    return handleReconciliationRouteError(c, error, {
+      authorizationFailed: "ops.deposits_fallback.authorization_failed",
+      operationFailed: "ops.deposits_fallback.failed",
+    });
   }
 }
 
@@ -311,6 +388,7 @@ export async function handleEulenCreateDeposit(c) {
 // escopo do webhook principal. As rotas de diagnostico continuam no mesmo
 // namespace operacional, mas sua implementacao vive no service dedicado.
 opsRouter.post("/:tenantId/recheck/deposit", handleDepositRecheck);
+opsRouter.post("/:tenantId/reconcile/deposits", handleDepositsFallback);
 opsRouter.get("/:tenantId/telegram/webhook-info", handleTelegramWebhookInfo);
 opsRouter.post("/:tenantId/telegram/register-webhook", handleTelegramWebhookRegistration);
 opsRouter.get("/:tenantId/eulen/ping", handleEulenPing);

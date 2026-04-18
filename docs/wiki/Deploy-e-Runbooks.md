@@ -16,6 +16,7 @@
 - `POST /telegram/:tenantId/webhook`
 - `POST /webhooks/eulen/:tenantId/deposit`
 - `POST /ops/:tenantId/recheck/deposit`
+- `POST /ops/:tenantId/reconcile/deposits`
 - `GET /ops/:tenantId/telegram/webhook-info`
 - `POST /ops/:tenantId/telegram/register-webhook`
 - `GET /ops/:tenantId/eulen/ping`
@@ -28,6 +29,7 @@
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status` e reconcilia `deposits` + `orders`
+- `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list` e reconcilia linhas compactas por `qrId`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 
 ## Recheck de deposito
@@ -61,7 +63,7 @@
 
 ## Retry e precedencia
 
-- esta rota e uma ferramenta manual de suporte, nao substitui o webhook principal nem o fallback futuro por `deposits`
+- esta rota e uma ferramenta manual de suporte para um deposito especifico; nao substitui o webhook principal nem o fallback por janela via `deposits`
 - retry manual depois de `502 deposit_status_unavailable` e permitido
 - retry manual depois de `409 deposit_status_regression`, `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch` nao deve ser tratado como tentativa cega; primeiro e preciso entender a divergencia
 - quando o agregado local ja estiver concluido por `depix_sent`, o recheck nao aceita um `deposit-status` atrasado que volte com `pending`, `under_review` ou outro estado inferior
@@ -79,6 +81,20 @@
 - `500 deposit_recheck_persistence_incomplete`: assumir que o batch pode ter sido persistido, anexar `requestId`, `tenantId`, `depositEntryId` e `orderId`, inspecionar o historico do deposito e repetir no maximo um retry controlado; o caminho continua idempotente por `depositEntryId` + payload do evento
 - `503 ops_route_disabled_invalid_flag`: corrigir o valor de `ENABLE_OPS_DEPOSIT_RECHECK`; typo ou valor legado mantem a rota desligada ate o deploy/config ser saneado
 - `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK`, token global e eventual override tenant-scoped antes de tratar como incidente de negocio
+
+## Fallback por janela via `deposits`
+
+- pre-condicao de rollout: mesma superficie operacional do recheck, com `ENABLE_OPS_DEPOSIT_RECHECK=true`
+- endpoint: `POST /ops/:tenantId/reconcile/deposits`
+- payload minimo: `{ "start": "2026-04-18T00:00:00Z", "end": "2026-04-19T00:00:00Z" }`
+- payload opcional: `status`, por exemplo `{ "status": "depix_sent" }`
+- header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` ou token tenant-scoped declarado em `opsBindings.depositRecheckBearerToken`
+- fonte de verdade remota: `deposits`
+- trilha local: evento `deposit_events.source = "recheck_deposits_list"`
+- correlacao: `/deposits` retorna linhas compactas por `qrId`; o runtime aplica somente linhas cujo `qrId` exista no tenant local
+- linhas sem deposito local sao reportadas como `skipped/local_deposit_not_found`, sem escrita
+- agregados locais ja concluidos nao aceitam status remoto inferior; a linha e reportada como `skipped/status_regression`
+- replay da mesma janela e idempotente pelo indice unico de `deposit_events`, sem duplicar evento
 
 ## Rollout e rollback
 

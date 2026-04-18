@@ -89,7 +89,7 @@ flowchart LR
 7. O sistema atualiza o pedido e decide a saida final.
 
 > [!note]
-> O webhook principal de deposito agora faz validacao do segredo no header `Authorization`, persiste o callback em `deposit_events` e aplica o status externo em `deposits` e `orders`. O fallback direto por `deposit-status` tambem ja existe em `POST /ops/:tenantId/recheck/deposit`, enquanto o fallback por `deposits` continua como etapa separada.
+> O webhook principal de deposito faz validacao do segredo no header `Authorization`, persiste o callback em `deposit_events` e aplica o status externo em `deposits` e `orders`. O fallback direto por `deposit-status` existe em `POST /ops/:tenantId/recheck/deposit`; o fallback por janela via `deposits` existe em `POST /ops/:tenantId/reconcile/deposits`.
 
 ## Status que importam
 
@@ -113,6 +113,10 @@ flowchart LR
   - payload minimo: `depositEntryId`
   - trilha de auditoria: `deposit_events.source = "recheck_deposit_status"`
 - usar `Deposits` para reconciliar por janela
+  - endpoint local: `POST /ops/:tenantId/reconcile/deposits`
+  - payload minimo: `start` e `end`; `status` e opcional
+  - correlacao segura: apenas linhas remotas cujo `qrId` exista no tenant local sao aplicadas
+  - trilha de auditoria: `deposit_events.source = "recheck_deposits_list"`
 - manter webhook como caminho principal; fallback entra so quando houver falha ou duvida
 
 ## Fora do MVP

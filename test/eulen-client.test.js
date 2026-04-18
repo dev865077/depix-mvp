@@ -10,6 +10,7 @@ import {
   createEulenDeposit,
   EulenApiError,
   isEulenAsyncResponsePointer,
+  listEulenDeposits,
   normalizeAsyncMode,
   pingEulen,
   readEulenAsyncResult,
@@ -150,6 +151,43 @@ export async function assertDepositRequestShape() {
   expect(response.nonce).toBe("nonce_deposit_001");
 }
 
+export async function assertDepositsListRequestShape() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify([
+      {
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        bankTxId: "bank_tx_001",
+      },
+    ]), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+  );
+
+  const response = await listEulenDeposits(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+    start: "2026-04-18T00:00:00Z",
+    end: "2026-04-19T00:00:00Z",
+    status: "depix_sent",
+    nonce: "nonce_deposits_001",
+    asyncMode: "false",
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  expect(fetchSpy.mock.calls[0][0]).toBe(
+    "https://depix.eulen.app/api/deposits?start=2026-04-18T00%3A00%3A00Z&end=2026-04-19T00%3A00%3A00Z&status=depix_sent",
+  );
+  expect(fetchSpy.mock.calls[0][1]?.method).toBe("GET");
+  expect(fetchSpy.mock.calls[0][1]?.headers.get("Authorization")).toBe("Bearer token_test_123");
+  expect(fetchSpy.mock.calls[0][1]?.headers.get("X-Partner-Id")).toBe("partner_alpha");
+  expect(fetchSpy.mock.calls[0][1]?.headers.get("X-Nonce")).toBe("nonce_deposits_001");
+  expect(fetchSpy.mock.calls[0][1]?.headers.get("X-Async")).toBe("false");
+  expect(response.status).toBe(200);
+  expect(response.data).toHaveLength(1);
+}
+
 export async function assertAsyncResultPolling() {
   const fetchSpy = vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(new Response("not ready", { status: 404 }))
@@ -268,6 +306,7 @@ describe("eulen client", () => {
   it("requires the mandatory split fields on deposit payloads", assertDepositSplitContract);
   it("fails fast before calling Eulen when split config is missing", assertDepositFailsFastWithoutSplit);
   it("sends deposit requests only when the split config is complete", assertDepositRequestShape);
+  it("lists deposits by reconciliation window", assertDepositsListRequestShape);
   it("detects asynchronous response pointers", function assertAsyncPointerDetection() {
     expect(isEulenAsyncResponsePointer({
       async: true,

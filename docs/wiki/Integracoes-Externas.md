@@ -45,7 +45,7 @@ Estado atual:
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
-- o fallback por janela via `deposits` continua como etapa separada
+- o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
 
 ## Regra operacional central
 
@@ -55,7 +55,7 @@ O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-s
 
 Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e fica desabilitada quando o segredo operacional nao estiver configurado.
 
-O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, e o fallback por `deposits` continua como etapa separada de backlog para janelas mais amplas.
+O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` cobre um deposito especifico e `deposits` cobre uma janela curta quando callbacks atrasarem ou faltarem.
 
 Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
 
@@ -66,6 +66,8 @@ No recheck operacional, a mesma politica vale para `deposit-status`: conflito de
 O write path do recheck foi desenhado para manter auditoria e agregado alinhados: o evento `recheck_deposit_status` e os updates em `deposits`/`orders` sao persistidos no mesmo batch do D1.
 
 Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao terminal nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
+
+No fallback por `deposits`, a correlacao e feita por `qrId` porque o endpoint remoto retorna uma lista compacta. Linhas sem `qrId` local correspondente sao ignoradas com resultado `skipped`, e linhas que tentariam regredir um agregado concluido tambem nao escrevem no banco. Quando a linha e aplicavel, o runtime grava `deposit_events.source = "recheck_deposits_list"` junto dos updates em `deposits` e `orders`.
 
 ## Split em deposit
 
