@@ -13,7 +13,7 @@
 9. O webhook da Eulen confirma o status.
 10. O sistema atualiza `deposit_events`, `deposits` e `orders`.
 
-## Regras de dados importantes
+## Regas de dados importantes
 
 - `tenantId` deve existir nas tabelas operacionais
 - `nonce` representa a intencao da cobranca
@@ -34,6 +34,7 @@
 - a resolucao de tenant no path ja existe
 - a persistencia base ja existe
 - a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
+- o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta

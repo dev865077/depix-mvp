@@ -49,6 +49,7 @@
 - `nonce` representa a intencao da cobranca e deve ser reutilizado em retry controlado
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
+- o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
 
 ## Guardas de transicao
 

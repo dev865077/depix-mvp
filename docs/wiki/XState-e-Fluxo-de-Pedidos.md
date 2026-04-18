@@ -9,9 +9,8 @@ transicao.
 
 Esta pagina descreve a fundacao da progressao inicial. Hoje o runtime do
 Telegram ja usa essa base para materializar e persistir o pedido inicial em
-`draft`; a conexao completa com progressao conversacional, criacao de deposito
-na Eulen e reconciliacao de webhook continua sendo uma fatia funcional
-separada.
+`draft`; quando o mesmo usuario volta ao bot, o runtime retoma o pedido aberto
+mais recente em vez de criar uma duplicata sem contexto.
 
 ## Regra arquitetural
 
