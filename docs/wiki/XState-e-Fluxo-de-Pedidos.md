@@ -17,6 +17,7 @@ A maquina de pedidos deve permanecer pura:
 - nao guarda estado em memoria global do Worker
 - recebe contexto de negocio e evento de dominio
 - devolve `currentStep`, `status`, contexto atualizado e `orderPatch`
+- devolve `persistenceGuard` para updates condicionais no D1
 
 Essa regra combina com Cloudflare Workers porque o isolate pode ser reutilizado.
 O estado real do fluxo deve ser persistido no D1 entre requests.
@@ -62,8 +63,12 @@ Fluxo recomendado dentro do Worker:
 2. O handler carrega o pedido atual no D1.
 3. O handler monta um evento de dominio.
 4. `advanceOrderProgression()` calcula a transicao.
-5. O service persiste `orderPatch` no D1.
+5. O service persiste `orderPatch` no D1 usando `persistenceGuard`.
 6. Side effects externos acontecem fora da maquina.
+
+`persistenceGuard.expectedCurrentStep` deve entrar no `WHERE` do update junto
+com `tenantId` e `orderId`. Isso evita que uma request atrasada sobrescreva uma
+transicao mais nova do mesmo pedido.
 
 Para Durable Objects, a regra muda apenas se houver necessidade real de
 coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente

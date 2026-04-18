@@ -36,6 +36,11 @@ describe("order progress machine", () => {
     expect(result.currentStep).toBe(ORDER_PROGRESS_STATES.DRAFT);
     expect(result.status).toBe("draft");
     expect(result.context.tenantId).toBe("alpha");
+    expect(result.persistenceGuard).toEqual({
+      tenantId: "alpha",
+      orderId: "order_001",
+      expectedCurrentStep: null,
+    });
     expect(result.orderPatch).toEqual({
       currentStep: ORDER_PROGRESS_STATES.DRAFT,
       status: "draft",
@@ -104,6 +109,20 @@ describe("order progress machine", () => {
     });
   });
 
+  it("returns a persistence guard for compare-and-set D1 updates", () => {
+    const result = advance(ORDER_PROGRESS_STATES.AMOUNT, {
+      type: ORDER_PROGRESS_EVENTS.AMOUNT_RECEIVED,
+      amountInCents: 15000,
+    });
+
+    expect(result.persistenceGuard).toEqual({
+      tenantId: "alpha",
+      orderId: "order_001",
+      expectedCurrentStep: ORDER_PROGRESS_STATES.AMOUNT,
+    });
+    expect(Object.keys(result.orderPatch).sort()).toEqual(["amountInCents", "currentStep", "status"]);
+  });
+
   it("rejects invalid transitions instead of silently changing steps", () => {
     expect(() =>
       advance(ORDER_PROGRESS_STATES.DRAFT, {
@@ -135,6 +154,28 @@ describe("order progress machine", () => {
         tenantId: "beta",
       }),
     ).toThrow(/tenantId does not match/);
+  });
+
+  it("rejects duplicate and terminal events", () => {
+    expect(() =>
+      advance(ORDER_PROGRESS_STATES.WALLET, {
+        type: ORDER_PROGRESS_EVENTS.AMOUNT_RECEIVED,
+        amountInCents: 15000,
+      }),
+    ).toThrow(/Cannot apply/);
+
+    expect(() =>
+      advance(ORDER_PROGRESS_STATES.AWAITING_PAYMENT, {
+        type: ORDER_PROGRESS_EVENTS.DEPOSIT_CREATED,
+        depositEntryId: "deposit_entry_001",
+      }),
+    ).toThrow(/Cannot apply/);
+
+    expect(() =>
+      advance(ORDER_PROGRESS_STATES.COMPLETED, {
+        type: ORDER_PROGRESS_EVENTS.PAYMENT_CONFIRMED,
+      }),
+    ).toThrow(/Cannot apply/);
   });
 
   it("supports explicit cancellation and failure terminal states", () => {

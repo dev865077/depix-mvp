@@ -84,9 +84,13 @@ function normalizeOrderContext(input = {}) {
   };
 }
 
-function requireTenantContext(context, event) {
+function requireOrderBoundaryContext(context, event) {
   if (!hasText(context.tenantId)) {
     throw new OrderProgressionError("missing_tenant_context", "Order progression requires a tenantId.");
+  }
+
+  if (!hasText(context.orderId)) {
+    throw new OrderProgressionError("missing_order_context", "Order progression requires an orderId.");
   }
 
   if (hasText(event?.tenantId) && event.tenantId !== context.tenantId) {
@@ -242,6 +246,13 @@ function toBoundaryResult(snapshot, previousStep = null) {
     previousStep,
     status: ORDER_STATUS_BY_STEP[snapshot.value],
     context: snapshot.context,
+    // Services devem usar esta guarda no WHERE do update para impedir que um
+    // request atrasado sobrescreva uma transicao mais nova do mesmo pedido.
+    persistenceGuard: {
+      tenantId: snapshot.context.tenantId,
+      orderId: snapshot.context.orderId,
+      expectedCurrentStep: previousStep,
+    },
     orderPatch: getOrderPatch(snapshot),
   };
 }
@@ -249,9 +260,7 @@ function toBoundaryResult(snapshot, previousStep = null) {
 export function createInitialOrderProgression(context = {}) {
   const normalizedContext = normalizeOrderContext(context);
 
-  if (!hasText(normalizedContext.tenantId)) {
-    throw new OrderProgressionError("missing_tenant_context", "Initial order progression requires a tenantId.");
-  }
+  requireOrderBoundaryContext(normalizedContext);
 
   return toBoundaryResult(getInitialSnapshot(orderProgressMachine, normalizedContext));
 }
@@ -268,7 +277,7 @@ export function advanceOrderProgression({ currentStep = ORDER_PROGRESS_STATES.DR
   requireKnownEvent(event);
 
   const normalizedContext = normalizeOrderContext(context);
-  requireTenantContext(normalizedContext, event);
+  requireOrderBoundaryContext(normalizedContext, event);
 
   const currentSnapshot = createPersistedSnapshot(currentStep, normalizedContext);
   const nextSnapshot = getNextSnapshot(orderProgressMachine, currentSnapshot, event);
