@@ -23,7 +23,7 @@
 
 ## Estado atual do `main`
 
-- `GET /health` responde
+- `GET /health` responde com inventario publico redigido de tenants, sem expor mapas brutos de bindings ou nomes de bindings sensiveis
 - as fronteiras canonicas de rota ja existem
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
@@ -91,33 +91,5 @@
 ## Checklist de migracao para auth tenant-scoped
 
 - tenants existentes continuam no caminho global por padrao; nenhuma entrada antiga precisa ser alterada para o rollout inicial
-- para migrar um tenant, primeiro provisionar o novo segredo, depois declarar `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY`, validar em `test` com o token novo e so entao repetir em `production`
-- se o tenant override for declarado com binding ausente ou vazio, aquele tenant falha fechado com `503`; o rollback imediato e remover a declaracao do registry ou corrigir o segredo provisionado
-- se `/health` retornar `tenantOverrides.state = invalid_config`, tratar como erro local de configuracao: algum override tenant-scoped foi declarado sem segredo valido, enquanto tenants sem override continuam herdando o token global
-- todo request autorizado registra `authScope` e `bindingName` em log estruturado, o que vira a trilha canonica para triagem operacional
-
-## Checklist de aceite operacional
-
-- `test` habilitado e validado antes de qualquer uso em `production`
-- `production` habilitado so depois do smoke test autenticado em `test`
-- `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config` ou `missing_secret`
-- `/health` confirma `configuration.operations.depositRecheck.tenantOverrides.state` como sinal redigido de overrides locais; `invalid_config` nesse campo nao derruba a prontidao global, mas indica que ao menos um tenant com override declarado falhara fechado ate o segredo ser corrigido
-- `/health` mantem `configuration.tenants` como inventario legado de tenants para compatibilidade operacional e adiciona `configuration.tenantSummary` para checagens agregadas novas
-- `/health` nao lista detalhes tenant-level dentro de `tenantOverrides`; esse contrato e redigido por desenho: `{ state, invalidCount }`. A trilha tenant-level fica nos logs estruturados de request/config, com `requestId`, `tenantId`, `authScope`, `bindingName` operacional e outcome.
-- migracao de consumidores de `/health`: dashboards e probes existentes podem continuar lendo `configuration.tenants`; novos checks devem preferir `configuration.tenantSummary` para contagem/configuracao e `configuration.operations.depositRecheck` para a rota operacional
-- nomenclatura canonica: o log estruturado de configuracao usa `config.deposit_recheck.tenant_override_invalid`; a API de health usa `configuration.operations.depositRecheck.tenantOverrides.state = "invalid_config"` como sinal publico final
-- operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
-- rollback rapido documentado por flag e por rotacao/remocao do segredo
-
-## Verificacao minima
-
-- confirmar `GET /health`
-- confirmar `tenantId` no path das rotas multi-tenant
-- confirmar bindings do tenant
-- confirmar se `test` e `production` estao usando `Cloudflare Secrets Store` como esperado
-- confirmar se a validacao local de diagnostico esta desabilitada em ambientes publicos
-- nunca logar tokens nem secrets
-
-## Regra de operacao
-
-Runbook curto e executavel vale mais do que texto operacional longo e desatualizado.
+- para migrar um tenant, primeiro provisionar o novo segredo, depois declara
+... [truncated]

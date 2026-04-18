@@ -40,6 +40,8 @@ Cada tenant aponta para bindings separados de:
 
 O projeto le o registro de tenants, valida sua forma e so materializa segredos quando eles sao realmente necessarios. O split usado em `deposit` nunca deve vir do request do operador; ele vem do tenant resolvido e de seus bindings secretos.
 
+O endpoint `GET /health` publica um inventario redigido de tenants: ele confirma existencia e metadados basicos, mas nao expoe mapas brutos de bindings nem nomes de bindings sensiveis.
+
 ## Tenants atuais
 
 `alpha` e `beta` aparecem hoje como tenants configurados nos ambientes versionados do projeto.
