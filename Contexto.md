@@ -1,10 +1,7 @@
 # Contexto do MVP
 
 > [!tip]
-> Este e o ponto de entrada historico da documentacao do projeto.
-
-> [!note]
-> Para navegacao canonica, use [README.md](./README.md), [docs/README.md](./docs/README.md) e a [Wiki do projeto](https://github.com/dev865077/depix-mvp/wiki).
+> Este e o ponto de entrada da documentacao do projeto.
 
 ## Objetivo
 
@@ -21,24 +18,25 @@ Centralizar o contexto do MVP e fixar as decisoes que nao devem mais ficar solta
 - `deposit webhook` como fonte primaria de confirmacao
 - `deposit-status` e `deposits` apenas como fallback
 - split obrigatorio em toda cobranca do MVP
+- `splitConfig` obrigatorio por tenant no `TENANT_REGISTRY`
 - filas, painel interno e servicos separados ficam fora do MVP
 
 ## Ordem de leitura
 
-1. [Faturamento Automações.md](./Faturamento%20Automações.md)
-2. [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md)
-3. [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
-4. [KANBAN.md](./KANBAN.md)
+1. [[Misc/DePix/Faturamento Automações|Faturamento Automacoes]]
+2. [[Misc/DePix/Arquitetura Tecnica do MVP|Arquitetura Tecnica do MVP]]
+3. [[Misc/DePix/Backlog Scrum do MVP|Backlog Scrum do MVP]]
+4. [[Misc/DePix/KANBAN|KANBAN]]
 
 ## Documentos essenciais
 
-- [Faturamento Automações.md](./Faturamento%20Automações.md)
-- [Arquitetura Tecnica do MVP.md](./Arquitetura%20Tecnica%20do%20MVP.md)
-- [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
-- [KANBAN.md](./KANBAN.md)
-- [Mapa de Uso da API.md](./Mapa%20de%20Uso%20da%20API.md)
-- [docs/README.md](./docs/README.md)
-- [Pix2DePix API - Documentacao Completa.md](./docs/Pix2DePix%20API%20-%20Documentacao%20Completa.md)
+- [[Misc/DePix/Faturamento Automações|Faturamento Automacoes]]
+- [[Misc/DePix/Arquitetura Tecnica do MVP|Arquitetura Tecnica do MVP]]
+- [[Misc/DePix/Backlog Scrum do MVP|Backlog Scrum do MVP]]
+- [[Misc/DePix/KANBAN|KANBAN]]
+- [[Misc/DePix/Mapa de Uso da API|Mapa de Uso da API]]
+- [[Misc/DePix/Open-Source para Reduzir Complexidade no MVP|Open-Source para Reduzir Complexidade no MVP]]
+- [[Misc/DePix/Docs/Pix2DePix API - Documentacao Completa|Pix2DePix API - Documentacao Completa]]
 
 ## Plano resumido
 
@@ -60,7 +58,7 @@ O fluxo completo e:
 4. `XState` decide em que etapa da conversa e do pedido o usuario esta
 5. o sistema coleta ativo, valor e carteira
 6. quando os dados minimos ficam completos, o sistema cria ou atualiza um pedido interno
-7. o `deposit service` chama a Eulen para gerar a cobranca Pix
+7. o `deposit service` chama a Eulen para gerar a cobranca Pix usando o `splitConfig` obrigatorio do tenant
 8. a Eulen devolve `qrCopyPaste` e `qrImageUrl`
 9. o bot responde ao usuario com os dados de pagamento
 10. a Eulen envia o `deposit webhook` quando houver confirmacao

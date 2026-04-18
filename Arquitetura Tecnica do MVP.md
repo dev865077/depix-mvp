@@ -1,11 +1,11 @@
 # Arquitetura Tecnica do MVP
 
 > [!tip]
-> Documento mestre: [Contexto.md](./Contexto.md)
+> Documento mestre: [[Misc/DePix/Contexto|Contexto]]
 >
-> Fluxo funcional: [Faturamento Automações.md](./Faturamento%20Automações.md)
+> Fluxo funcional: [[Misc/DePix/Faturamento Automações|Faturamento Automacoes]]
 >
-> Backlog: [Backlog Scrum do MVP.md](./Backlog%20Scrum%20do%20MVP.md)
+> Backlog: [[Misc/DePix/Backlog Scrum do MVP|Backlog Scrum do MVP]]
 
 ## Objetivo
 
@@ -58,9 +58,9 @@ Camada unica de entrada HTTP do MVP.
 Rotas minimas:
 
 - `GET /health`
-- `POST /telegram/:tenantId/webhook`
-- `POST /webhooks/eulen/:tenantId/deposit`
-- `POST /ops/:tenantId/recheck/deposit`
+- `POST /telegram/webhook`
+- `POST /webhooks/eulen/deposit`
+- `POST /ops/recheck/deposit`
 
 ### 2. `grammY`
 
@@ -79,7 +79,7 @@ Separacao minima recomendada:
 
 - `order service`: cria e atualiza o pedido
 - `deposit service`: chama `deposit`, aplica split e persiste cobranca
-- `webhook service`: valida `Authorization`, persiste evento da Eulen e aplica a verdade externa em `orders` e `deposits`
+- `webhook service`: processa evento da Eulen
 - `recheck service`: usa `deposit-status` e `deposits` quando preciso
 
 ### 4. `XState`
@@ -92,7 +92,6 @@ Responsabilidades:
 - controlar transicoes validas do pedido
 - evitar `if/else` espalhado entre bot, servicos e webhook
 - deixar os eventos principais claros no codigo
-
 ### 5. `Cloudflare D1`
 
 Persistencia unica do MVP com SQL cru parametrizado usando a API nativa do `D1`.
@@ -117,15 +116,28 @@ Responsabilidades:
 - `Authorization`
 - `X-Nonce`
 - `X-Async`
-
-> [!note]
-> O webhook principal de deposito da Eulen valida o segredo no header `Authorization` na borda da requisicao. O recheck operacional continua como trabalho separado.
+- rejeitar criacao de cobranca quando o payload nao trouxer `depixSplitAddress` e `splitFee`
 
 ### 7. Saida externa de entrega
 
 So existe para `BTC` e `USDT`.
 
 No MVP, ela nao entra na API da Eulen. O sistema apenas libera uma saida clara para o fluxo externo de entrega.
+
+## Contrato de configuracao por tenant
+
+Cada tenant no `TENANT_REGISTRY` precisa declarar:
+
+- `displayName`
+- `eulenPartnerId`, quando houver
+- `splitConfig.depixSplitAddress`
+- `splitConfig.splitFee`
+- `secretBindings.telegramBotToken`
+- `secretBindings.telegramWebhookSecret`
+- `secretBindings.eulenApiToken`
+- `secretBindings.eulenWebhookSecret`
+
+Sem `splitConfig` completo, o tenant fica invalido para criacao de cobranca.
 
 ## Modelo minimo de dados
 
@@ -179,9 +191,10 @@ No MVP, ela nao entra na API da Eulen. O sistema apenas libera uma saida clara p
 ### 2. Cobranca
 
 1. `deposit service` gera `nonce`.
-2. Chama `deposit` com split.
-3. Persiste `depositId`, QR e status inicial.
-4. O bot responde com os dados de pagamento.
+2. Resolve `depixSplitAddress` e `splitFee` a partir do tenant atual.
+3. Chama `deposit` com split.
+4. Persiste `depositId`, QR e status inicial.
+5. O bot responde com os dados de pagamento.
 
 ### 3. Confirmacao
 

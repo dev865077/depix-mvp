@@ -1,11 +1,12 @@
 # Exemplo de variaveis locais para desenvolvimento.
 # Este arquivo documenta o formato esperado, mas nunca deve guardar segredos reais.
+# Cada tenant precisa declarar splitConfig completo porque split e obrigatorio em toda cobranca do MVP.
 APP_ENV=local
 APP_NAME=depix-mvp
 LOG_LEVEL=debug
 EULEN_API_BASE_URL=https://depix.eulen.app/api
 EULEN_API_TIMEOUT_MS=10000
-TENANT_REGISTRY={"alpha":{"displayName":"Alpha","eulenPartnerId":"partner-alpha","secretBindings":{"telegramBotToken":"ALPHA_TELEGRAM_BOT_TOKEN","telegramWebhookSecret":"ALPHA_TELEGRAM_WEBHOOK_SECRET","eulenApiToken":"ALPHA_EULEN_API_TOKEN","eulenWebhookSecret":"ALPHA_EULEN_WEBHOOK_SECRET"}},"beta":{"displayName":"Beta","eulenPartnerId":"partner-beta","secretBindings":{"telegramBotToken":"BETA_TELEGRAM_BOT_TOKEN","telegramWebhookSecret":"BETA_TELEGRAM_WEBHOOK_SECRET","eulenApiToken":"BETA_EULEN_API_TOKEN","eulenWebhookSecret":"BETA_EULEN_WEBHOOK_SECRET"}}}
+TENANT_REGISTRY={"alpha":{"displayName":"Alpha","eulenPartnerId":"partner-alpha","splitConfig":{"depixSplitAddress":"split-address-alpha","splitFee":"12.50"},"secretBindings":{"telegramBotToken":"ALPHA_TELEGRAM_BOT_TOKEN","telegramWebhookSecret":"ALPHA_TELEGRAM_WEBHOOK_SECRET","eulenApiToken":"ALPHA_EULEN_API_TOKEN","eulenWebhookSecret":"ALPHA_EULEN_WEBHOOK_SECRET"}},"beta":{"displayName":"Beta","eulenPartnerId":"partner-beta","splitConfig":{"depixSplitAddress":"split-address-beta","splitFee":"15.00"},"secretBindings":{"telegramBotToken":"BETA_TELEGRAM_BOT_TOKEN","telegramWebhookSecret":"BETA_TELEGRAM_WEBHOOK_SECRET","eulenApiToken":"BETA_EULEN_API_TOKEN","eulenWebhookSecret":"BETA_EULEN_WEBHOOK_SECRET"}}}
 ALPHA_TELEGRAM_BOT_TOKEN=replace-with-alpha-telegram-bot-token
 ALPHA_TELEGRAM_WEBHOOK_SECRET=replace-with-alpha-telegram-webhook-secret
 ALPHA_EULEN_API_TOKEN=replace-with-alpha-eulen-api-token

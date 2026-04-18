@@ -16,6 +16,10 @@ const TEST_ENV = {
     alpha: {
       displayName: "Alpha",
       eulenPartnerId: "partner-alpha",
+      splitConfig: {
+        depixSplitAddress: "split-address-alpha",
+        splitFee: "12.50",
+      },
       secretBindings: {
         telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
         telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
@@ -39,6 +43,7 @@ describe("telegram runtime bootstrap", () => {
     expect(runtime.tenantId).toBe("alpha");
     expect(runtime.botInfo.first_name).toBe("Alpha Runtime");
     expect(runtime.botInfo.username).toBe("alpha_bootstrap_bot");
+    expect(tenants.alpha.splitConfig.depixSplitAddress).toBe("split-address-alpha");
     expect(listBootstrappedTelegramTenants()).toEqual(["alpha"]);
   });
 
@@ -55,6 +60,10 @@ describe("telegram runtime bootstrap", () => {
     const runtime = getTelegramRuntime({
       tenantId: "alpha-prod.internal",
       displayName: "Alpha Prod",
+      splitConfig: {
+        depixSplitAddress: "split-address-alpha-prod",
+        splitFee: "12.50",
+      },
       secretBindings: {
         telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
         telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",

@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertEulenCredentials,
+  assertRequiredDepositSplit,
   buildEulenRequestHeaders,
+  createEulenDeposit,
   EulenApiError,
   normalizeAsyncMode,
   pingEulen,
@@ -20,6 +22,14 @@ const RUNTIME_CONFIG = {
 const TENANT_CREDENTIALS = {
   apiToken: "token_test_123",
   partnerId: "partner_alpha",
+};
+
+const VALID_DEPOSIT_BODY = {
+  walletAddress: "bc1qexamplewallet",
+  asset: "BTC",
+  amount: "150.00",
+  depixSplitAddress: "split-address-001",
+  splitFee: "12.50",
 };
 
 afterEach(function restoreFetchMock() {
@@ -88,6 +98,55 @@ export async function assertHttpErrorHandling() {
   ).rejects.toBeInstanceOf(EulenApiError);
 }
 
+export function assertDepositSplitContract() {
+  expect(assertRequiredDepositSplit(VALID_DEPOSIT_BODY)).toEqual(VALID_DEPOSIT_BODY);
+  expect(() => assertRequiredDepositSplit(undefined)).toThrow(EulenApiError);
+  expect(() => assertRequiredDepositSplit({ ...VALID_DEPOSIT_BODY, depixSplitAddress: "" })).toThrow(EulenApiError);
+  expect(() => assertRequiredDepositSplit({ ...VALID_DEPOSIT_BODY, splitFee: "" })).toThrow(EulenApiError);
+}
+
+export async function assertDepositFailsFastWithoutSplit() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+  expect(() => (
+    createEulenDeposit(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+      body: {
+        ...VALID_DEPOSIT_BODY,
+        depixSplitAddress: "",
+      },
+      nonce: "nonce_split_missing",
+      asyncMode: "auto",
+    })
+  )).toThrow(EulenApiError);
+
+  expect(fetchSpy).not.toHaveBeenCalled();
+}
+
+export async function assertDepositRequestShape() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ id: "deposit_123", async: false }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+  );
+
+  const response = await createEulenDeposit(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+    body: VALID_DEPOSIT_BODY,
+    nonce: "nonce_deposit_001",
+    asyncMode: "auto",
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  expect(fetchSpy.mock.calls[0][0]).toBe("https://depix.eulen.app/api/deposit");
+  expect(fetchSpy.mock.calls[0][1]?.method).toBe("POST");
+  expect(fetchSpy.mock.calls[0][1]?.headers.get("Content-Type")).toBe("application/json");
+  expect(fetchSpy.mock.calls[0][1]?.body).toBe(JSON.stringify(VALID_DEPOSIT_BODY));
+  expect(response.status).toBe(200);
+  expect(response.nonce).toBe("nonce_deposit_001");
+}
+
 describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
@@ -102,4 +161,7 @@ describe("eulen client", () => {
     expect(assertEulenCredentials(TENANT_CREDENTIALS).apiToken).toBe("token_test_123");
     expect(() => assertEulenCredentials({ apiToken: "" })).toThrow(EulenApiError);
   });
+  it("requires the mandatory split fields on deposit payloads", assertDepositSplitContract);
+  it("fails fast before calling Eulen when split config is missing", assertDepositFailsFastWithoutSplit);
+  it("sends deposit requests only when the split config is complete", assertDepositRequestShape);
 });

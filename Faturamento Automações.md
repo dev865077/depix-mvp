@@ -75,6 +75,9 @@ flowchart LR
 > [!warning]
 > `depixSplitAddress` e `splitFee` nunca devem vir do usuario final. Eles entram por configuracao interna do projeto.
 
+> [!note]
+> No runtime atual, esses dois campos ficam em `splitConfig` dentro do `TENANT_REGISTRY` de cada tenant. Sem `splitConfig.depixSplitAddress` e `splitConfig.splitFee`, a criacao do `deposit` deve falhar antes de chamar a Eulen.
+
 ## Fluxo de negocio
 
 1. O usuario inicia o fluxo no Telegram.

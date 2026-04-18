@@ -26,6 +26,10 @@ function createWorkerEnv() {
       alpha: {
         displayName: "Alpha",
         eulenPartnerId: "partner-alpha",
+        splitConfig: {
+          depixSplitAddress: "split-address-alpha",
+          splitFee: "12.50",
+        },
         secretBindings: {
           telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
           telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
@@ -36,6 +40,10 @@ function createWorkerEnv() {
       beta: {
         displayName: "Beta",
         eulenPartnerId: "partner-beta",
+        splitConfig: {
+          depixSplitAddress: "split-address-beta",
+          splitFee: "15.00",
+        },
         secretBindings: {
           telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
           telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",

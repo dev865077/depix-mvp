@@ -6,6 +6,11 @@
  * externa da regra de negocio.
  */
 
+const REQUIRED_DEPOSIT_SPLIT_FIELDS = [
+  "depixSplitAddress",
+  "splitFee",
+];
+
 /**
  * Erro padronizado para qualquer falha de integracao com a Eulen.
  *
@@ -40,6 +45,32 @@ export function assertEulenCredentials(credentials) {
     apiToken: String(credentials.apiToken),
     partnerId: credentials.partnerId ? String(credentials.partnerId) : undefined,
   };
+}
+
+/**
+ * Garante que a cobranca saia com o split obrigatorio do MVP.
+ *
+ * @param {Record<string, unknown> | undefined} body Payload bruto do deposit.
+ * @returns {Record<string, unknown>} Payload validado.
+ */
+export function assertRequiredDepositSplit(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new EulenApiError("Missing required deposit payload.", {
+      field: "body",
+    });
+  }
+
+  for (const field of REQUIRED_DEPOSIT_SPLIT_FIELDS) {
+    const value = body[field];
+
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new EulenApiError("Missing required deposit split configuration.", {
+        field,
+      });
+    }
+  }
+
+  return body;
 }
 
 /**
@@ -281,7 +312,7 @@ export function createEulenDeposit(runtimeConfig, credentials, options) {
   return requestEulenApi(runtimeConfig, credentials, {
     path: "/deposit",
     method: "POST",
-    body: options.body,
+    body: assertRequiredDepositSplit(options.body),
     nonce: options.nonce,
     asyncMode: options.asyncMode,
   });
