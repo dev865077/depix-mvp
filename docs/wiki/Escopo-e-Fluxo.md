@@ -35,6 +35,7 @@
 - a persistencia base ja existe
 - a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
 - o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
+- ` /start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta

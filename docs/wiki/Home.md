@@ -28,6 +28,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o fallback por janela via `POST /ops/:tenantId/reconcile/deposits` ja reconcilia linhas compactas da Eulen por `qrId`
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar
+- o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa
 
 ## Comece por aqui
 

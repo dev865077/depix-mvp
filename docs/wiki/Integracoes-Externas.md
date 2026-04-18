@@ -15,6 +15,7 @@ Estado atual:
 - o webhook ja despacha o update real para o runtime do tenant
 - o bot ja tem um fluxo inicial de resposta para `/start` e mensagens de texto
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
+- o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 
 ## Eulen

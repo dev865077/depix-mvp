@@ -50,6 +50,7 @@
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
+- quando o pedido aberto estiver em `draft`, o comando `/start` avanca o agregado para `amount` sem criar uma nova linha
 
 ## Guardas de transicao
 
