@@ -16,6 +16,10 @@
 - `POST /telegram/:tenantId/webhook`
 - `POST /webhooks/eulen/:tenantId/deposit`
 - `POST /ops/:tenantId/recheck/deposit`
+- `GET /ops/:tenantId/telegram/webhook-info`
+- `POST /ops/:tenantId/telegram/register-webhook`
+- `GET /ops/:tenantId/eulen/ping`
+- `POST /ops/:tenantId/eulen/create-deposit`
 
 ## Estado atual do `main`
 
@@ -24,6 +28,7 @@
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
 - `POST /ops/:tenantId/recheck/deposit` ainda e placeholder
+- as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 
 ## Verificacao minima
 
@@ -31,6 +36,7 @@
 - confirmar `tenantId` no path das rotas multi-tenant
 - confirmar bindings do tenant
 - confirmar se `test` e `production` estao usando `Cloudflare Secrets Store` como esperado
+- confirmar se a validacao local de diagnostico esta desabilitada em ambientes publicos
 - nunca logar tokens nem secrets
 
 ## Regra de operacao
