@@ -42,11 +42,16 @@ Estado atual:
 
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
+- o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
 - o recheck por fallback ainda nao entrou no fluxo operacional real
 
 ## Regra operacional central
 
 Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
+
+Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
+
+Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
 
 ## Split em deposit
 

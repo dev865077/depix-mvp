@@ -1,16 +1,18 @@
 /**
  * Repositorio de historico de eventos externos.
  *
- * A tabela `deposit_events` registra a trilha bruta dos callbacks e rechecks
- * associados a um deposito. Ela e essencial para auditoria, idempotencia e
- * comparacao entre a verdade recebida por webhook e a verdade reconsultada.
+ * Cada evento fica amarrado ao `depositEntryId` local e, quando conhecido,
+ * tambem carrega o `qrId` externo que apareceu no webhook ou no recheck.
+ * Assim a trilha fica auditavel sem reintroduzir a ambiguidade do antigo
+ * `deposit_id`.
  */
 const DEPOSIT_EVENT_SELECT_SQL = `
   SELECT
     id AS id,
     tenant_id AS tenantId,
     order_id AS orderId,
-    deposit_id AS depositId,
+    deposit_entry_id AS depositEntryId,
+    qr_id AS qrId,
     source AS source,
     external_status AS externalStatus,
     bank_tx_id AS bankTxId,
@@ -24,18 +26,20 @@ const INSERT_DEPOSIT_EVENT_SQL = `
   INSERT INTO deposit_events (
     tenant_id,
     order_id,
-    deposit_id,
+    deposit_entry_id,
+    qr_id,
     source,
     external_status,
     bank_tx_id,
     blockchain_tx_id,
     raw_payload
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   RETURNING
     id AS id,
     tenant_id AS tenantId,
     order_id AS orderId,
-    deposit_id AS depositId,
+    deposit_entry_id AS depositEntryId,
+    qr_id AS qrId,
     source AS source,
     external_status AS externalStatus,
     bank_tx_id AS bankTxId,
@@ -55,7 +59,8 @@ export async function createDepositEvent(db, input) {
   return db.prepare(INSERT_DEPOSIT_EVENT_SQL).bind(
     input.tenantId,
     input.orderId,
-    input.depositId,
+    input.depositEntryId,
+    input.qrId ?? null,
     input.source,
     input.externalStatus,
     input.bankTxId ?? null,
@@ -83,15 +88,18 @@ export async function getDepositEventById(db, tenantId, id) {
 /**
  * Lista o historico de eventos de um deposito em ordem decrescente.
  *
+ * `depositEntryId` fica como ancora local porque ele existe desde o create e
+ * nao depende de o `qrId` externo ja ter sido reconciliado.
+ *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
- * @param {string} depositId Identificador canonico do deposito.
+ * @param {string} depositEntryId ID canonico da entrada criada na Eulen.
  * @returns {Promise<Record<string, unknown>[]>} Eventos do deposito.
  */
-export async function listDepositEventsByDepositId(db, tenantId, depositId) {
-  const result = await db.prepare(`${DEPOSIT_EVENT_SELECT_SQL} WHERE tenant_id = ? AND deposit_id = ? ORDER BY id DESC`).bind(
+export async function listDepositEventsByDepositEntryId(db, tenantId, depositEntryId) {
+  const result = await db.prepare(`${DEPOSIT_EVENT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? ORDER BY id DESC`).bind(
     tenantId,
-    depositId,
+    depositEntryId,
   ).all();
 
   return result.results;
