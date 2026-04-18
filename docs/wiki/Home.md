@@ -10,9 +10,10 @@ O `depix-mvp` e um bot Telegram multi-tenant para parceiros venderem o fluxo `De
 
 - `Hono` ja e a borda HTTP real do Worker
 - a fundacao multi-tenant ja existe no `main`
-- o runtime Telegram ja foi bootstrapado em `grammY`
+- o webhook do Telegram ja faz despacho real para `grammY`
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
-- webhook real da Eulen, recheck real e fluxo completo do bot ainda nao estao implementados
+- o webhook principal da Eulen ja existe com validacao, idempotencia e persistencia base
+- o recheck real e o fluxo funcional completo do bot ainda nao estao implementados
 - `XState` esta travado na arquitetura, mas ainda nao entrou no `main`
 
 ## Comece por aqui

@@ -34,9 +34,9 @@ flowchart LR
 ## Estado atual do `main`
 
 - `Hono` e middleware multi-tenant ja existem
-- runtime Telegram bootstrapado em `grammY` ja existe
-- webhook Telegram real ainda nao esta no `main`
-- webhook Eulen e recheck ainda retornam `501`
+- runtime Telegram em `grammY` ja recebe despacho real do webhook
+- webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
+- recheck de deposito ainda retorna `501`
 - `XState` ainda nao entrou no codigo
 
 ## Principios arquiteturais

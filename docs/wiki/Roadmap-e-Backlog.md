@@ -42,7 +42,8 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - fundacao do Worker e multi-tenancy: avancadas
 - persistencia base: avancada
 - fluxo funcional completo do bot: pendente
-- webhook e recheck reais: pendentes
+- webhook principal real: avancado
+- recheck real: pendente
 - CI automatizado estavel: em backlog proprio
 
 ## Fonte de verdade

@@ -12,7 +12,7 @@ Estado atual:
 
 - runtime `grammY` bootstrapado existe
 - rota canonica existe
-- processamento real do update ainda nao esta no `main`
+- o webhook ja despacha o update real para o runtime do tenant
 
 ## Eulen
 
@@ -35,6 +35,12 @@ Endpoints relevantes:
 - `deposit-status`
 - `deposits`
 - webhook de deposito
+
+Estado atual:
+
+- o webhook principal de deposito ja existe no `main`
+- a validacao do header `Authorization` e a idempotencia base ja estao implementadas
+- o recheck por fallback ainda nao entrou no fluxo operacional real
 
 ## Regra operacional central
 
