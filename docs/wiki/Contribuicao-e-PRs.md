@@ -51,7 +51,9 @@ Explicitar:
 - a Discussion nao substitui os checks obrigatorios; ela documenta decisao, risco e alinhamento antes do merge
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
 - se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
+- timeout do modelo nao derruba o job quando a Discussion foi publicada; ele vira sintese `Request changes`, e o mantenedor pode rerodar o check ou aceitar explicitamente o risco
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
+- a automacao nao fecha Discussions via API; o fechamento operacional e o comentario final append-only de status
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional
 
 ## Fluxo de documentacao da wiki
