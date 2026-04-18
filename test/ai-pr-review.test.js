@@ -5,14 +5,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidReviewRecommendation,
+  buildDiscussionCompletionComment,
+  buildDiscussionDebateFailureSynthesis,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
+  buildModelFailureMemo,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
+  getReviewGateFailure,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
   summarizePullRequestScope,
@@ -59,6 +63,11 @@ describe("ai pr review recommendation parser", () => {
     ].join("\n");
 
     expect(() => assertValidReviewRecommendation(review)).toThrow(/Forbidden recommendation/);
+  });
+
+  it("turns Request changes into a failing GitHub check verdict", () => {
+    expect(getReviewGateFailure("Approve")).toBeNull();
+    expect(getReviewGateFailure("Request changes")?.message).toContain("final recommendation is blocking");
   });
 });
 
@@ -180,6 +189,12 @@ describe("ai pr review discussion rendering", () => {
     });
 
     expect(roleComments).toHaveLength(4);
+    expect(roleComments.map((comment) => comment.marker)).toEqual([
+      "<!-- ai-pr-discussion-role:product -->",
+      "<!-- ai-pr-discussion-role:technical -->",
+      "<!-- ai-pr-discussion-role:risk -->",
+      "<!-- ai-pr-discussion-role:synthesis -->",
+    ]);
     expect(roleComments.map((comment) => comment.role)).toEqual([
       "Product and scope",
       "Technical and architecture",
@@ -187,6 +202,35 @@ describe("ai pr review discussion rendering", () => {
       "Synthesis",
     ]);
     expect(roleComments.every((comment) => comment.body.includes("<!-- ai-pr-discussion-review:openai -->"))).toBe(true);
+  });
+
+  it("builds a visible final discussion status comment", () => {
+    const approved = buildDiscussionCompletionComment("Approve");
+    const blocked = buildDiscussionCompletionComment("Request changes");
+
+    expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
+    expect(approved).toContain("Discussion concluded");
+    expect(approved).toContain("Final recommendation: `Approve`");
+    expect(approved).toContain("visible closure marker");
+    expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
+    expect(blocked).toContain("Final recommendation: `Request changes`");
+    expect(blocked).toContain("remains open");
+    expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
+  });
+
+  it("turns model timeouts into bounded request-changes output", () => {
+    const memo = buildModelFailureMemo("Technical and architecture", new DOMException("Timed out", "TimeoutError"));
+    const synthesis = buildDiscussionDebateFailureSynthesis([
+      { role: "Technical and architecture", error: new DOMException("Timed out", "TimeoutError") },
+    ]);
+
+    expect(memo).toContain("could not complete");
+    expect(memo.length).toBeLessThan(900);
+    expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
+    expect(synthesis).toContain("Rerun the discussion review");
+    expect(buildDiscussionCompletionComment(assertValidReviewRecommendation(synthesis))).toContain(
+      "Final recommendation: `Request changes`",
+    );
   });
 
   it("builds the model payload from the GitHub pull_request shape", () => {
@@ -264,11 +308,11 @@ describe("ai pr review discussion rendering", () => {
     expect(body).not.toContain("[noise](https://example.com)");
   });
 
-  it("renders a non-blocking fallback when discussion publication fails", () => {
+  it("renders a visible fallback when discussion publication fails", () => {
     const body = buildDiscussionPublicationFallback(new Error("GraphQL timeout"));
 
     expect(body).toContain("Discussion publication fallback");
-    expect(body).toContain("review can continue");
+    expect(body).toContain("check should fail");
     expect(body).toContain("GraphQL timeout");
   });
 

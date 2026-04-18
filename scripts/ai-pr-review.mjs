@@ -13,6 +13,7 @@ const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
 const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
+const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-pr-discussion-final:openai -->";
 const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
@@ -22,9 +23,9 @@ const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_PATCH_CHARS_PER_FILE = 3000;
 const MAX_PR_BODY_CHARS = 3000;
 const MAX_REVIEW_INPUT_CHARS = 18000;
-const MAX_SYNTHESIS_INPUT_CHARS = 26000;
-const MAX_AGENT_MEMO_CHARS = 5000;
-const MAX_OUTPUT_TOKENS = 8000;
+const MAX_SYNTHESIS_INPUT_CHARS = 16000;
+const MAX_AGENT_MEMO_CHARS = 2600;
+const MAX_OUTPUT_TOKENS = 2200;
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
 const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
@@ -998,6 +999,25 @@ export function assertValidReviewRecommendation(reviewText) {
 }
 
 /**
+ * Convert the model's final recommendation into the GitHub check outcome.
+ *
+ * The workflow must publish the review first so humans can see why it failed,
+ * but `Request changes` is still a blocking verdict. A green check with a
+ * blocking recommendation is worse than a failed job because it lets the PR
+ * appear merge-ready while the public review says the opposite.
+ *
+ * @param {string} recommendation Parsed final recommendation.
+ * @returns {Error | null} Error to throw after publishing, or null when approved.
+ */
+export function getReviewGateFailure(recommendation) {
+  if (recommendation !== "Request changes") {
+    return null;
+  }
+
+  return new Error("AI PR review requested changes. The check failed because the final recommendation is blocking.");
+}
+
+/**
  * Send one prompt to OpenAI and return markdown text.
  *
  * @param {string} systemPrompt Final system prompt.
@@ -1095,6 +1115,60 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
 }
 
 /**
+ * Render a bounded memo when one model role fails. The synthesis can still make
+ * the operational state visible instead of timing out the whole job silently.
+ *
+ * @param {string} role Reviewer role.
+ * @param {unknown} error Failure from the model call.
+ * @returns {string} Safe reviewer memo.
+ */
+export function buildModelFailureMemo(role, error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return [
+    "## Perspective",
+    `The ${role} reviewer could not complete within the automation budget.`,
+    "",
+    "## Findings",
+    "- Automated review role failed before producing a memo.",
+    `- Failure: \`${truncateText(message, 240).replace(/`/g, "'")}\``,
+    "",
+    "## Questions",
+    "- None.",
+    "",
+    "## Merge posture",
+    "Request changes until the discussion review can be rerun or manually accepted by a maintainer.",
+  ].join("\n");
+}
+
+/**
+ * Render a valid synthesis when specialist or synthesis generation fails.
+ *
+ * @param {Array<{ role: string, error: unknown }>} failures Model failures.
+ * @returns {string} Valid final synthesis.
+ */
+export function buildDiscussionDebateFailureSynthesis(failures) {
+  const failureBullets = failures.length > 0
+    ? failures.map(({ role, error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return `- ${role} review did not complete: \`${truncateText(message, 220).replace(/`/g, "'")}\``;
+    })
+    : ["- Discussion review did not complete for an unknown operational reason."];
+
+  return [
+    "Request changes",
+    "",
+    "## Findings",
+    ...failureBullets,
+    "- Rerun the discussion review after the transient model/API issue is resolved.",
+    "",
+    "## Recommendation",
+    "Request changes",
+  ].join("\n");
+}
+
+/**
  * Run the multi-role debate and return each memo plus the merge synthesis.
  *
  * @param {{
@@ -1110,19 +1184,34 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
  */
 async function generateDiscussionDebate(promptBundle, userPrompt, model) {
   console.log("Starting multi-role PR discussion review.");
-  const [product, technical, risk] = await Promise.all([
+  const roleResults = await Promise.allSettled([
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt), userPrompt, model),
   ]);
+  const roleNames = ["Product and scope", "Technical and architecture", "Risk, security, and operations"];
+  const failures = roleResults.flatMap((result, index) =>
+    result.status === "rejected" ? [{ role: roleNames[index], error: result.reason }] : []);
+  const [product, technical, risk] = roleResults.map((result, index) =>
+    result.status === "fulfilled" ? result.value : buildModelFailureMemo(roleNames[index], result.reason));
 
   console.log("Specialist PR review memos completed. Starting synthesis.");
-  const synthesis = await generateModelMarkdown(
-    composeSystemPrompt(promptBundle.doctrine, promptBundle.synthesisPrompt),
-    buildSynthesisUserPrompt(userPrompt, { product, technical, risk }),
-    model,
-    { expectRecommendation: true, maxInputChars: MAX_SYNTHESIS_INPUT_CHARS },
-  );
+  let synthesis = "";
+
+  if (failures.length > 0) {
+    synthesis = buildDiscussionDebateFailureSynthesis(failures);
+  } else {
+    try {
+      synthesis = await generateModelMarkdown(
+        composeSystemPrompt(promptBundle.doctrine, promptBundle.synthesisPrompt),
+        buildSynthesisUserPrompt(userPrompt, { product, technical, risk }),
+        model,
+        { expectRecommendation: true, maxInputChars: MAX_SYNTHESIS_INPUT_CHARS },
+      );
+    } catch (error) {
+      synthesis = buildDiscussionDebateFailureSynthesis([{ role: "Synthesis", error }]);
+    }
+  }
 
   console.log("Multi-role PR discussion synthesis completed.");
   return { product, technical, risk, synthesis };
@@ -1171,22 +1260,83 @@ export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model)
 export function buildDiscussionReviewComments(debate) {
   return [
     {
+      key: "product",
       role: "Product and scope",
-      body: [DISCUSSION_COMMENT_MARKER, "## Product and scope review", "", debate.product].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:product -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:product -->",
+        "## Product and scope review",
+        "",
+        debate.product,
+      ].join("\n"),
     },
     {
+      key: "technical",
       role: "Technical and architecture",
-      body: [DISCUSSION_COMMENT_MARKER, "## Technical and architecture review", "", debate.technical].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:technical -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:technical -->",
+        "## Technical and architecture review",
+        "",
+        debate.technical,
+      ].join("\n"),
     },
     {
+      key: "risk",
       role: "Risk, security, and operations",
-      body: [DISCUSSION_COMMENT_MARKER, "## Risk, security, and operations review", "", debate.risk].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:risk -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:risk -->",
+        "## Risk, security, and operations review",
+        "",
+        debate.risk,
+      ].join("\n"),
     },
     {
+      key: "synthesis",
       role: "Synthesis",
-      body: [DISCUSSION_COMMENT_MARKER, "## Synthesis", "", debate.synthesis].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:synthesis -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:synthesis -->",
+        "## Synthesis",
+        "",
+        debate.synthesis,
+      ].join("\n"),
     },
   ];
+}
+
+/**
+ * Build the final visible lifecycle comment for the Discussion.
+ *
+ * @param {string} recommendation Parsed final recommendation.
+ * @returns {string} Final Discussion status comment.
+ */
+export function buildDiscussionCompletionComment(recommendation) {
+  const isApproved = recommendation === "Approve";
+  const statusLine = isApproved
+    ? "Discussion concluded: all automated reviewer roles completed and no unresolved blockers remain."
+    : "Discussion concluded: automated reviewers still request changes before merge.";
+  const closeLine = isApproved
+    ? "This append-only comment is the visible closure marker for the automated review."
+    : "The Discussion remains open because the synthesis is not approved.";
+  const canonicalLine =
+    "Because this workflow is append-only, this newest final-status comment supersedes earlier automated final-status comments in this Discussion.";
+
+  return [
+    DISCUSSION_FINAL_COMMENT_MARKER,
+    "## Discussion status",
+    "",
+    statusLine,
+    closeLine,
+    canonicalLine,
+    "",
+    `Final recommendation: \`${recommendation}\``,
+  ].join("\n");
 }
 
 /**
@@ -1223,8 +1373,8 @@ export function buildPullRequestCommentBody({ model, gate, review, discussionUrl
 /**
  * Build a safe fallback note when the richer Discussion cannot be published.
  *
- * The model review still lands on the PR, so transient Discussion/API problems
- * do not block reviewer visibility or merge progress.
+ * The model review still lands on the PR before the check fails, so transient
+ * Discussion/API problems remain visible instead of silently losing context.
  *
  * @param {Error | unknown} error Publication failure.
  * @returns {string} Markdown fallback section.
@@ -1236,7 +1386,7 @@ export function buildDiscussionPublicationFallback(error) {
     "## Discussion publication fallback",
     "",
     "The multi-role review completed, but GitHub Discussion publication failed.",
-    "This PR comment contains the synthesis so review can continue without blocking on Discussion infrastructure.",
+    "This PR comment contains the synthesis, but the check should fail until Discussion publication is complete.",
     "",
     `Failure: \`${truncateText(message, 500).replace(/`/g, "'")}\``,
   ].join("\n");
@@ -1395,11 +1545,22 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
 
     for (const comment of discussionComments) {
       await addDiscussionComment(discussion.id, comment.body);
-      logOperationalEvent("ai_pr_review.discussion_comment.created", {
+      logOperationalEvent("ai_pr_review.discussion_comment.published", {
+        action: "created",
         role: comment.role,
         discussionUrl: discussion.url,
       });
     }
+
+    const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
+    const finalCommentBody = buildDiscussionCompletionComment(recommendation);
+    await addDiscussionComment(discussion.id, finalCommentBody);
+
+    logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
+      action: "created",
+      recommendation,
+      discussionUrl: discussion.url,
+    });
 
     return { url: discussion.url, failure: null };
   } catch (error) {
@@ -1457,6 +1618,7 @@ async function main() {
   const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate);
   let review = "";
   let discussionUrl = null;
+  let discussionPublicationFailure = null;
 
   if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
@@ -1489,6 +1651,7 @@ async function main() {
     discussionUrl = discussionPublication.url;
 
     if (discussionPublication.failure) {
+      discussionPublicationFailure = discussionPublication.failure;
       review = [
         buildDiscussionPublicationFallback(discussionPublication.failure),
         "",
@@ -1503,6 +1666,7 @@ async function main() {
     review = await generateModelMarkdown(reviewPrompt, userPrompt, model, { expectRecommendation: true });
   }
 
+  const reviewRecommendation = assertValidReviewRecommendation(review);
   const commentBody = buildPullRequestCommentBody({
     model,
     gate,
@@ -1511,6 +1675,16 @@ async function main() {
   });
 
   await publishPullRequestCommentOrSummary(repository, pullRequest.number, commentBody);
+
+  if (discussionPublicationFailure) {
+    throw discussionPublicationFailure;
+  }
+
+  const reviewGateFailure = getReviewGateFailure(reviewRecommendation);
+
+  if (reviewGateFailure) {
+    throw reviewGateFailure;
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
