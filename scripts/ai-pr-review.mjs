@@ -18,7 +18,8 @@ const MAX_FILES = 12;
 const MAX_PATCH_CHARS_PER_FILE = 3000;
 const MAX_PR_BODY_CHARS = 3000;
 const MAX_REVIEW_INPUT_CHARS = 18000;
-const MAX_OUTPUT_TOKENS = 4000;
+const MAX_OUTPUT_TOKENS = 25000;
+const REASONING_EFFORT = "low";
 const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
 const FORBIDDEN_RECOMMENDATIONS = ["Approve with minor follow-up", "Approve with later changes"];
 
@@ -385,6 +386,9 @@ async function generateReview(systemPrompt, userPrompt, model) {
     body: JSON.stringify({
       model,
       max_output_tokens: MAX_OUTPUT_TOKENS,
+      reasoning: {
+        effort: REASONING_EFFORT,
+      },
       input: [
         {
           role: "system",
