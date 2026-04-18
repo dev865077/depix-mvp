@@ -37,7 +37,7 @@ flowchart LR
 - runtime Telegram em `grammY` ja recebe despacho real do webhook
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
 - recheck de deposito ainda retorna `501`
-- `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects
+- `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
 
 ## Principios arquiteturais
 

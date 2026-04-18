@@ -10,8 +10,7 @@ import { getAllowedPatchEntries } from "../client.js";
 // Select base reaproveitado pelos readers do repositorio.
 // Mantemos aliases em camelCase para devolver objetos prontos para o restante
 // da aplicacao, sem espalhar nomes snake_case fora da borda SQL.
-const ORDER_SELECT_SQL = `
-  SELECT
+const ORDER_COLUMNS_SQL = `
     tenant_id AS tenantId,
     order_id AS orderId,
     user_id AS userId,
@@ -25,6 +24,11 @@ const ORDER_SELECT_SQL = `
     split_fee AS splitFee,
     created_at AS createdAt,
     updated_at AS updatedAt
+`;
+
+const ORDER_SELECT_SQL = `
+  SELECT
+    ${ORDER_COLUMNS_SQL}
   FROM orders
 `;
 
@@ -209,20 +213,32 @@ export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expect
   // Isso protege contra retries, webhooks duplicados e requests concorrentes.
   const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
   const values = patchEntries.map(([, value]) => value);
-  const updateStatement = db
-    .prepare(`UPDATE orders SET ${setClause} WHERE tenant_id = ? AND order_id = ? AND current_step = ?`)
-    .bind(...values, tenantId, orderId, expectedCurrentStep);
-  const selectStatement = db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(
+  const updatedOrder = await db
+    .prepare(
+      `UPDATE orders
+       SET ${setClause}
+       WHERE tenant_id = ? AND order_id = ? AND current_step = ?
+       RETURNING ${ORDER_COLUMNS_SQL}`,
+    )
+    .bind(...values, tenantId, orderId, expectedCurrentStep)
+    .first();
+
+  if (updatedOrder) {
+    return {
+      order: updatedOrder,
+      didUpdate: true,
+      conflict: false,
+    };
+  }
+
+  const currentOrder = await db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(
     tenantId,
     orderId,
-  );
-  const [updateResult, selectResult] = await db.batch([updateStatement, selectStatement]);
-  const changedRows = updateResult.meta?.changes;
-  const didUpdate = typeof changedRows === "number" ? changedRows > 0 : selectResult.results[0]?.currentStep === patch.currentStep;
+  ).first();
 
   return {
-    order: selectResult.results[0] ?? null,
-    didUpdate,
-    conflict: !didUpdate,
+    order: currentOrder ?? null,
+    didUpdate: false,
+    conflict: currentOrder !== null,
   };
 }

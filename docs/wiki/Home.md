@@ -25,7 +25,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - o webhook principal da Eulen ja existe com validacao, idempotencia base e persistencia
 - o recheck real e o fluxo funcional completo do bot ainda nao estao implementados
-- `XState` ja modela a progressao inicial de pedidos como maquina pura, ainda sem acoplamento direto ao fluxo completo do bot
+- `XState` ja modela a progressao inicial de pedidos como maquina pura, ainda sem acoplamento direto ao fluxo completo Telegram/Eulen
 
 ## Comece por aqui
 

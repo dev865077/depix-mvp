@@ -7,6 +7,10 @@ de cada handler decidir informalmente qual e o proximo passo, a aplicacao
 converte entradas externas em eventos de dominio e deixa a maquina calcular a
 transicao.
 
+Esta pagina descreve a fundacao da progressao inicial. A conexao completa com
+Telegram, criacao de deposito na Eulen e reconciliacao de webhook continua sendo
+uma fatia funcional separada.
+
 ## Regra arquitetural
 
 A maquina de pedidos deve permanecer pura:
@@ -80,6 +84,9 @@ A maquina aceita somente estados canonicos conhecidos. Linhas ja existentes que
 usem `draft`, `wallet`, `awaiting_payment` ou `completed` continuam dentro do
 vocabulario atual. Qualquer valor legado fora dessa lista deve ser normalizado
 por migracao ou tratado explicitamente antes de chamar `advanceOrderProgression()`.
+
+Estados operacionais vindos do webhook da Eulen, como revisao manual, continuam
+sob responsabilidade do service de webhook ate a integracao completa do fluxo.
 
 Para Durable Objects, a regra muda apenas se houver necessidade real de
 coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente
