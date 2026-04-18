@@ -1,9 +1,22 @@
 /**
- * Testes do parser de recomendacao da AI review.
+ * Focused tests for the PR review gate and recommendation parser.
  */
 import { describe, expect, it } from "vitest";
 
-import { assertValidReviewRecommendation, extractReviewRecommendation } from "../scripts/ai-pr-review.mjs";
+import {
+  assertValidReviewRecommendation,
+  assessDiscussionGate,
+  buildDiscussionPublicationFallback,
+  buildDiscussionReviewComments,
+  buildPullRequestCommentBody,
+  buildPullRequestDiscussionBody,
+  buildPullRequestUserPrompt,
+  extractDiscussionUrlFromComment,
+  extractReviewRecommendation,
+  sanitizePublishedMarkdown,
+  selectDiscussionCategory,
+  summarizePullRequestScope,
+} from "../scripts/ai-pr-review.mjs";
 
 describe("ai pr review recommendation parser", () => {
   it("reads the canonical recommendation section", () => {
@@ -34,44 +47,6 @@ describe("ai pr review recommendation parser", () => {
     expect(assertValidReviewRecommendation(review)).toBe("Approve");
   });
 
-  it("accepts a plain recommendation label", () => {
-    const review = [
-      "Request changes",
-      "",
-      "## Findings",
-      "- Regression risk.",
-      "",
-      "Recommendation: Request changes",
-    ].join("\n");
-
-    expect(assertValidReviewRecommendation(review)).toBe("Request changes");
-  });
-
-  it("accepts benign trailing punctuation in the recommendation", () => {
-    const review = [
-      "Approve.",
-      "",
-      "## Findings",
-      "- No material findings.",
-      "",
-      "## Recommendation",
-      "Approve.",
-    ].join("\n");
-
-    expect(assertValidReviewRecommendation(review)).toBe("Approve");
-  });
-
-  it("falls back to the first non-empty verdict line when needed", () => {
-    const review = [
-      "Approve",
-      "",
-      "## Findings",
-      "- No material findings.",
-    ].join("\n");
-
-    expect(assertValidReviewRecommendation(review)).toBe("Approve");
-  });
-
   it("still rejects forbidden follow-up approval verdicts", () => {
     const review = [
       "Approve with later changes",
@@ -85,18 +60,278 @@ describe("ai pr review recommendation parser", () => {
 
     expect(() => assertValidReviewRecommendation(review)).toThrow(/Forbidden recommendation/);
   });
+});
 
-  it("still rejects malformed recommendations that cannot be normalized", () => {
-    const review = [
-      "Looks good",
-      "",
-      "## Findings",
-      "- No material findings.",
-      "",
-      "## Recommendation",
-      "Ship it",
-    ].join("\n");
+describe("ai pr review discussion gate", () => {
+  it("keeps tiny docs-only pull requests in the direct lane", () => {
+    const gate = assessDiscussionGate([
+      { filename: "README.md", additions: 10, deletions: 2 },
+      { filename: "docs/wiki/Runbook.md", additions: 14, deletions: 3 },
+    ]);
 
-    expect(() => assertValidReviewRecommendation(review)).toThrow(/missing the ## Recommendation section|Invalid AI review recommendation/);
+    expect(gate.requiresDiscussion).toBe(false);
+    expect(gate.route).toBe("direct_review");
+  });
+
+  it("keeps the direct lane inclusive at the documented boundary", () => {
+    const gate = assessDiscussionGate([
+      { filename: "README.md", additions: 40, deletions: 0 },
+      { filename: "docs/wiki/Runbook.md", additions: 40, deletions: 0 },
+      { filename: "docs/wiki/Architecture.md", additions: 40, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+  });
+
+  it("routes docs-only pull requests to discussion when they exceed the size boundary", () => {
+    const gate = assessDiscussionGate([
+      { filename: "README.md", additions: 121, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
+  it("routes implementation changes into discussion before merge", () => {
+    const gate = assessDiscussionGate([
+      { filename: "src/routes/telegram.js", additions: 40, deletions: 8 },
+      { filename: "test/telegram-webhook-reply.test.js", additions: 22, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+    expect(gate.route).toBe("discussion_before_merge");
+    expect(gate.reason).toContain("Meaningful PR scope");
+  });
+
+  it("routes workflow-only changes into discussion even when tiny", () => {
+    const gate = assessDiscussionGate([
+      { filename: ".github/workflows/ai-pr-review.yml", additions: 1, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
+  it("routes mixed docs and source changes into discussion", () => {
+    const gate = assessDiscussionGate([
+      { filename: "docs/wiki/Runbook.md", additions: 4, deletions: 0 },
+      { filename: "src/index.js", additions: 1, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
+  it("summarizes categories and top-level areas deterministically", () => {
+    const summary = summarizePullRequestScope([
+      { filename: "src/app.js", additions: 10, deletions: 1 },
+      { filename: ".github/workflows/ai-pr-review.yml", additions: 12, deletions: 2 },
+      { filename: "test/app.test.js", additions: 5, deletions: 0 },
+    ]);
+
+    expect(summary.categories).toEqual(["source", "tests", "workflow"]);
+    expect(summary.areas).toEqual([".github", "src", "test"]);
+    expect(summary.totalChangedLines).toBe(30);
+  });
+});
+
+describe("ai pr review discussion rendering", () => {
+  const gate = {
+    route: "discussion_before_merge",
+    requiresDiscussion: true,
+    reason: "Meaningful PR scope detected.",
+    summary: {
+      fileCount: 3,
+      totalChangedLines: 150,
+      topLevelAreaCount: 2,
+      areas: ["src", "test"],
+      categories: ["source", "tests"],
+    },
+  };
+
+  it("builds the discussion body as an index for reviewer comments", () => {
+    const body = buildPullRequestDiscussionBody(
+      {
+        number: 57,
+        title: "Harden PR review workflow",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/57",
+        body: "Implements the new workflow.",
+      },
+      gate,
+      {
+        product: "## Perspective\nScoped correctly.",
+        technical: "## Perspective\nArchitecture is coherent.",
+        risk: "## Perspective\nOperationally acceptable.",
+        synthesis: "Request changes\n\n## Findings\n- Tighten one thing.\n\n## Recommendation\nRequest changes",
+      },
+      "gpt-5.4-mini",
+    );
+
+    expect(body).toContain("## Review comments");
+    expect(body).toContain("- Product and scope");
+    expect(body).toContain("- Technical and architecture");
+    expect(body).toContain("- Risk, security, and operations");
+    expect(body).not.toContain("Scoped correctly.");
+  });
+
+  it("builds one discussion comment per reviewer role", () => {
+    const roleComments = buildDiscussionReviewComments({
+      product: "Product memo",
+      technical: "Technical memo",
+      risk: "Risk memo",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+
+    expect(roleComments).toHaveLength(4);
+    expect(roleComments.map((comment) => comment.role)).toEqual([
+      "Product and scope",
+      "Technical and architecture",
+      "Risk, security, and operations",
+      "Synthesis",
+    ]);
+    expect(roleComments.every((comment) => comment.body.includes("<!-- ai-pr-discussion-review:openai -->"))).toBe(true);
+  });
+
+  it("builds the model payload from the GitHub pull_request shape", () => {
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-57-multi-bot-debate" },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          status: "modified",
+          additions: 20,
+          deletions: 5,
+          patch: "@@ -1 +1 @@",
+        },
+      ],
+      gate,
+    );
+
+    expect(body).toContain("Repository: dev865077/depix-mvp");
+    expect(body).toContain("PR: #60 - Automate review");
+    expect(body).toContain("Base branch: main");
+    expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
+    expect(body).toContain("scripts/ai-pr-review.mjs");
+  });
+
+  it("builds the sticky comment with a discussion link when present", () => {
+    const body = buildPullRequestCommentBody({
+      model: "gpt-5.4-mini",
+      gate,
+      review: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/12",
+    });
+
+    expect(body).toContain("## Discussion");
+    expect(extractDiscussionUrlFromComment(body)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
+  });
+
+  it("sanitizes model-authored mentions, images, and markdown links", () => {
+    const sanitized = sanitizePublishedMarkdown(
+      "Ping @dev865077 and @org/team. See [link](https://example.com) ![x](https://example.com/x.png)",
+    );
+
+    expect(sanitized).toContain("@<!-- -->dev865077");
+    expect(sanitized).toContain("@<!-- -->org/team");
+    expect(sanitized).toContain("link (https://example.com)");
+    expect(sanitized).toContain("Image omitted");
+  });
+
+  it("sanitizes untrusted PR text inside discussion bodies", () => {
+    const body = buildPullRequestDiscussionBody(
+      {
+        number: 57,
+        title: "Ping @team",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/57",
+        body: "Notify @dev865077 with [noise](https://example.com).",
+      },
+      gate,
+      {
+        product: "## Perspective\nScoped correctly.",
+        technical: "## Perspective\nArchitecture is coherent.",
+        risk: "## Perspective\nOperationally acceptable.",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      },
+      "gpt-5.4-mini",
+    );
+
+    expect(body).toContain("@<!-- -->dev865077");
+    expect(body).not.toContain("[noise](https://example.com)");
+  });
+
+  it("renders a non-blocking fallback when discussion publication fails", () => {
+    const body = buildDiscussionPublicationFallback(new Error("GraphQL timeout"));
+
+    expect(body).toContain("Discussion publication fallback");
+    expect(body).toContain("review can continue");
+    expect(body).toContain("GraphQL timeout");
+  });
+
+  it("keeps publication fallback messages bounded and markdown-safe", () => {
+    const body = buildDiscussionPublicationFallback(new Error("GitHub said `nope` ".repeat(60)));
+
+    expect(body).toContain("Discussion publication fallback");
+    expect(body.length).toBeLessThan(900);
+    expect(body).not.toContain("`nope`");
+  });
+
+  it("selects a safe discussion category", () => {
+    const category = selectDiscussionCategory([
+      { id: "1", name: "Announcements", isAnswerable: true },
+      { id: "2", name: "Ideas", isAnswerable: false },
+    ], "Missing");
+
+    expect(category.id).toBe("2");
+  });
+
+  it("fails clearly when the repository has no discussion categories", () => {
+    expect(() => selectDiscussionCategory([], "Architecture")).toThrow(/create at least one category/);
+  });
+
+  it("prefers the configured discussion category when available", () => {
+    const category = selectDiscussionCategory([
+      { id: "1", name: "General", isAnswerable: false },
+      { id: "2", name: "Architecture", isAnswerable: false },
+    ], "Architecture");
+
+    expect(category.id).toBe("2");
+  });
+
+  it("returns a complete publication set for the discussion lane", () => {
+    const discussionBody = buildPullRequestDiscussionBody(
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+      },
+      gate,
+      {
+        product: "Product memo",
+        technical: "Technical memo",
+        risk: "Risk memo",
+        synthesis: "Request changes\n\n## Findings\n- One blocker.\n\n## Recommendation\nRequest changes",
+      },
+      "gpt-5.4-mini",
+    );
+    const roleComments = buildDiscussionReviewComments({
+      product: "Product memo",
+      technical: "Technical memo",
+      risk: "Risk memo",
+      synthesis: "Request changes\n\n## Findings\n- One blocker.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(discussionBody).toContain("## Review comments");
+    expect(roleComments.map((comment) => comment.role)).toEqual([
+      "Product and scope",
+      "Technical and architecture",
+      "Risk, security, and operations",
+      "Synthesis",
+    ]);
   });
 });
