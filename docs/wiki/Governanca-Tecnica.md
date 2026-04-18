@@ -19,6 +19,14 @@
 - runbooks operacionais mais completos
 - consolidacao final da estrategia de CI
 - governanca da manutencao automatica da wiki apos merge
+- governanca automatizada da entrada de issues antes da PR
+
+## Gate de decisao antes da PR
+
+- issue nova pode receber triagem automatica de impacto
+- `baixo` segue para PR direta
+- `medio` e `alto` geram Discussion com debate curto entre perspectivas de produto, tecnica e risco
+- a decisao registrada na issue e na Discussion vira insumo para a PR pequena e coesa
 
 ## Regra de longo prazo
 

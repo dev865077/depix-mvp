@@ -1,0 +1,41 @@
+name: AI Issue Triage
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+  discussions: write
+
+concurrency:
+  group: ai-issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    if: github.event.issue.pull_request == null && github.event.issue.state == 'open'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run AI issue triage
+        env:
+          AI_ISSUE_TRIAGE_PROMPT_PATH: .github/prompts/ai-issue-triage.md
+          AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY: ${{ vars.AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ISSUE_TRIAGE_MODEL: ${{ vars.OPENAI_ISSUE_TRIAGE_MODEL }}
+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}
+        run: node scripts/ai-issue-triage.mjs
