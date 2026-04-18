@@ -26,6 +26,7 @@ Tambem existe um segredo operacional transversal:
 Tambem existe uma flag operacional explicita:
 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` para habilitar de fato `POST /ops/:tenantId/recheck/deposit`
+- `ENABLE_OPS_DEPOSITS_FALLBACK=true` para habilitar de fato `POST /ops/:tenantId/reconcile/deposits`
 
 ## Como o runtime resolve isso
 
@@ -63,12 +64,14 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` sem token configurado: a rota continua desabilitada com `503 ops_route_disabled`
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `OPS_ROUTE_BEARER_TOKEN` configurado: a rota fica operacionalmente pronta
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `opsBindings.depositRecheckBearerToken`: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
+- `ENABLE_OPS_DEPOSITS_FALLBACK=false` ou ausente: o fallback por janela responde `503 ops_deposits_fallback_disabled`, mesmo que o recheck por deposito esteja habilitado
+- `ENABLE_OPS_DEPOSITS_FALLBACK=true` usa o mesmo bearer operacional, mas abre apenas `POST /ops/:tenantId/reconcile/deposits`
 
 ## Ambientes de lancamento
 
 - `local`: pode habilitar para desenvolvimento e testes locais
-- `test`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional por configuracao de ambiente antes da validacao real; o valor nao fica ligado no `wrangler.jsonc` versionado
-- `production`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional por configuracao de ambiente antes de qualquer uso de suporte; o valor nao fica ligado no `wrangler.jsonc` versionado
+- `test`: deve receber a flag da rota operacional desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional por configuracao de ambiente antes da validacao real; o valor nao fica ligado no `wrangler.jsonc` versionado
+- `production`: deve receber a flag da rota operacional desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional por configuracao de ambiente antes de qualquer uso de suporte; o valor nao fica ligado no `wrangler.jsonc` versionado
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 

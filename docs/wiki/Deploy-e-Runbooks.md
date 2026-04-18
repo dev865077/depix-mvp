@@ -84,13 +84,14 @@
 
 ## Fallback por janela via `deposits`
 
-- pre-condicao de rollout: mesma superficie operacional do recheck, com `ENABLE_OPS_DEPOSIT_RECHECK=true`
+- pre-condicao de rollout: flag propria `ENABLE_OPS_DEPOSITS_FALLBACK=true`
 - endpoint: `POST /ops/:tenantId/reconcile/deposits`
 - payload minimo: `{ "start": "2026-04-18T00:00:00Z", "end": "2026-04-19T00:00:00Z" }`
 - payload opcional: `status`, por exemplo `{ "status": "depix_sent" }`
 - header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` ou token tenant-scoped declarado em `opsBindings.depositRecheckBearerToken`
 - fonte de verdade remota: `deposits`
 - trilha local: evento `deposit_events.source = "recheck_deposits_list"`
+- limite local: `start` e `end` precisam ser datas parseaveis, `start < end`, janela maxima de 24h e no maximo 200 linhas remotas
 - correlacao: `/deposits` retorna linhas compactas por `qrId`; o runtime aplica somente linhas cujo `qrId` exista no tenant local
 - linhas sem deposito local sao reportadas como `skipped/local_deposit_not_found`, sem escrita
 - agregados locais ja concluidos nao aceitam status remoto inferior; a linha e reportada como `skipped/status_regression`
@@ -98,9 +99,9 @@
 
 ## Rollout e rollback
 
-- rollout: manter `ENABLE_OPS_DEPOSIT_RECHECK` fora do `wrangler.jsonc` versionado; provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
+- rollout: manter `ENABLE_OPS_DEPOSIT_RECHECK` e `ENABLE_OPS_DEPOSITS_FALLBACK` fora do `wrangler.jsonc` versionado; provisionar somente a flag necessaria e `OPS_ROUTE_BEARER_TOKEN` nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado
 - rollout atual esperado: `local`, `test` e `production` ficam desligados por padrao no config versionado; cada ambiente so fica operacionalmente ativo depois da provisao explicita da flag e dos secrets
-- rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` para `false`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
+- rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` ou `ENABLE_OPS_DEPOSITS_FALLBACK` para `false`; a rota correspondente passa a devolver `503` sem afetar webhook principal, Telegram ou leitura de saude
 - rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
 - rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
 

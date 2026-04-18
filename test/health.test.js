@@ -63,6 +63,7 @@ function createHealthEnv(overrides = {}) {
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "1.00%",
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
+    ENABLE_OPS_DEPOSITS_FALLBACK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-token",
     ...overrides,
   };
@@ -102,6 +103,10 @@ export async function assertHealthResponse() {
   expect(body.configuration.operations.depositRecheck.ready).toBe(false);
   expect(body.configuration.operations.depositRecheck.tenantOverrides.state).toBe("ready");
   expect(body.configuration.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
+  expect(body.configuration.operations.depositsFallback.state).toBe("disabled");
+  expect(body.configuration.operations.depositsFallback.ready).toBe(false);
+  expect(body.configuration.operations.depositsFallback.tenantOverrides.state).toBe("ready");
+  expect(body.configuration.operations.depositsFallback.tenantOverrides.invalidCount).toBe(0);
 }
 
 describe("health route", () => {
@@ -150,6 +155,8 @@ describe("health route", () => {
     expect(response.status).toBe(200);
     expect(body.configuration.operations.depositRecheck.state).toBe("ready");
     expect(body.configuration.operations.depositRecheck.ready).toBe(true);
+    expect(body.configuration.operations.depositsFallback.state).toBe("ready");
+    expect(body.configuration.operations.depositsFallback.ready).toBe(true);
     expect(body.configuration.operations.depositRecheck.tenantOverrides.state).toBe("invalid_config");
     expect(body.configuration.operations.depositRecheck.tenantOverrides.invalidCount).toBe(1);
     expect(Object.keys(body.configuration.operations.depositRecheck.tenantOverrides).sort()).toEqual([

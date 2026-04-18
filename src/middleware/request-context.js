@@ -33,19 +33,23 @@ export async function requestContextMiddleware(c, next) {
   c.set("db", db);
   c.set("tenant", tenant);
 
-  if (runtimeConfig.operations?.depositRecheck?.featureFlag.configured
-    && !runtimeConfig.operations.depositRecheck.featureFlag.recognized) {
-    log(runtimeConfig, {
-      level: "warn",
-      message: "config.invalid_boolean_flag",
-      tenantId: tenant?.tenantId,
-      requestId,
-      path: c.req.path,
-      details: {
-        bindingName: "ENABLE_OPS_DEPOSIT_RECHECK",
-        rawValue: runtimeConfig.operations.depositRecheck.featureFlag.rawValue,
-      },
-    });
+  for (const [bindingName, operation] of [
+    ["ENABLE_OPS_DEPOSIT_RECHECK", runtimeConfig.operations?.depositRecheck],
+    ["ENABLE_OPS_DEPOSITS_FALLBACK", runtimeConfig.operations?.depositsFallback],
+  ]) {
+    if (operation?.featureFlag.configured && !operation.featureFlag.recognized) {
+      log(runtimeConfig, {
+        level: "warn",
+        message: "config.invalid_boolean_flag",
+        tenantId: tenant?.tenantId,
+        requestId,
+        path: c.req.path,
+        details: {
+          bindingName,
+          rawValue: operation.featureFlag.rawValue,
+        },
+      });
+    }
   }
 
   if (runtimeConfig.operations?.depositRecheck?.tenantOverrides?.state === "invalid_config") {

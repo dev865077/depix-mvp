@@ -28,6 +28,7 @@ import {
 } from "../services/local-diagnostic-validation.js";
 import {
   authorizeOpsRoute,
+  ENABLE_OPS_DEPOSITS_FALLBACK_BINDING,
   OpsRouteAuthorizationError,
 } from "../services/ops-route-authorization.js";
 import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
@@ -115,9 +116,10 @@ function handleReconciliationRouteError(c, error, messages) {
  * @param {string} authorizationLogMessage Mensagem de log para auth bem sucedida.
  * @param {{ code: string, message: string }} dependencyError Erro usado quando secrets Eulen faltarem.
  * @param {typeof DepositRecheckError | typeof DepositsFallbackError} ErrorClass Classe de erro da rota atual.
+ * @param {{ operation?: Record<string, string>, databaseError?: { code: string, message: string } }} [options] Contratos especificos da rota.
  * @returns {Promise<{ tenant: Record<string, unknown>, db: import("@cloudflare/workers-types").D1Database, runtimeConfig: Record<string, unknown>, eulenApiToken: string }>} Dependencias prontas.
  */
-async function resolveReconciliationRouteContext(c, authorizationLogMessage, dependencyError, ErrorClass) {
+async function resolveReconciliationRouteContext(c, authorizationLogMessage, dependencyError, ErrorClass, options = {}) {
   const tenant = c.get("tenant");
   const db = c.get("db");
   const runtimeConfig = c.get("runtimeConfig");
@@ -134,6 +136,7 @@ async function resolveReconciliationRouteContext(c, authorizationLogMessage, dep
     tenant,
     tenantId: tenant.tenantId,
     path: c.req.path,
+    operation: options.operation,
   });
 
   log(runtimeConfig, {
@@ -149,7 +152,15 @@ async function resolveReconciliationRouteContext(c, authorizationLogMessage, dep
   });
 
   if (!db) {
-    throw new Error("Database binding is required to process operational reconciliation.");
+    throw new ErrorClass(
+      500,
+      options.databaseError?.code ?? "reconciliation_database_unavailable",
+      options.databaseError?.message ?? "Database binding is required to process operational reconciliation.",
+      {
+        databaseConfigured: false,
+        path: c.req.path,
+      },
+    );
   }
 
   try {
@@ -188,6 +199,12 @@ export async function handleDepositRecheck(c) {
         message: "Required Eulen recheck dependencies are not available for this tenant.",
       },
       DepositRecheckError,
+      {
+        databaseError: {
+          code: "recheck_database_unavailable",
+          message: "Database binding is required to process deposit recheck.",
+        },
+      },
     );
 
     const result = await processDepositRecheck({
@@ -232,6 +249,18 @@ export async function handleDepositsFallback(c) {
         message: "Required Eulen deposits fallback dependencies are not available for this tenant.",
       },
       DepositsFallbackError,
+      {
+        operation: {
+          runtimeKey: "depositsFallback",
+          featureFlagBindingName: ENABLE_OPS_DEPOSITS_FALLBACK_BINDING,
+          invalidFlagCode: "ops_deposits_fallback_disabled_invalid_flag",
+          disabledCode: "ops_deposits_fallback_disabled",
+        },
+        databaseError: {
+          code: "deposits_fallback_database_unavailable",
+          message: "Database binding is required to process deposits fallback.",
+        },
+      },
     );
     const result = await processDepositsFallback({
       db,

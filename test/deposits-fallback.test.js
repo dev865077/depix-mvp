@@ -64,6 +64,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "15.00%",
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
+    ENABLE_OPS_DEPOSITS_FALLBACK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-test-token",
     ...overrides,
   };
@@ -144,6 +145,92 @@ afterEach(function restoreFallbackMocks() {
 });
 
 describe("deposits fallback route", () => {
+  it("keeps the deposits-list route disabled unless its own rollout flag is enabled", async function assertDepositsFallbackSeparateFlag() {
+    await seedDepositAggregate();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await requestDepositsFallback({
+      envOverrides: {
+        ENABLE_OPS_DEPOSITS_FALLBACK: "false",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_deposits_fallback_disabled");
+    expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSITS_FALLBACK");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns a controlled JSON error when D1 is unavailable", async function assertDepositsFallbackMissingDatabase() {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await requestDepositsFallback({
+      envOverrides: {
+        DB: undefined,
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("deposits_fallback_database_unavailable");
+    expect(body.error.details.databaseConfigured).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed windows before calling Eulen", async function assertDepositsFallbackMalformedWindow() {
+    await seedDepositAggregate();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await requestDepositsFallback({
+      body: {
+        start: "not-a-date",
+        end: "2026-04-18T01:00:00Z",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("deposits_fallback_invalid_window");
+    expect(body.error.details.field).toBe("start");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-monotonic windows before calling Eulen", async function assertDepositsFallbackReversedWindow() {
+    await seedDepositAggregate();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await requestDepositsFallback({
+      body: {
+        start: "2026-04-19T00:00:00Z",
+        end: "2026-04-18T00:00:00Z",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("deposits_fallback_invalid_window");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects broad reconciliation windows before calling Eulen", async function assertDepositsFallbackWindowLimit() {
+    await seedDepositAggregate();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const response = await requestDepositsFallback({
+      body: {
+        start: "2026-04-18T00:00:00Z",
+        end: "2026-04-19T00:00:01Z",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("deposits_fallback_window_too_large");
+    expect(body.error.details.maxWindowHours).toBe(24);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("reconciles a delayed deposit from the deposits list and records the source", async function assertDepositsFallbackReconciliation() {
     const { db, depositEntryId, orderId } = await seedDepositAggregate();
     const fetchSpy = mockDepositsListResponse([
@@ -188,6 +275,22 @@ describe("deposits fallback route", () => {
     expect(savedEvents[0]?.externalStatus).toBe("depix_sent");
     expect(savedEvents[0]?.bankTxId).toBe("bank_tx_001");
     expect(savedEvents[0]?.rawPayload).toContain("2026-04-18T00:00:00Z");
+  });
+
+  it("fails closed when Eulen returns more rows than the supported fallback limit", async function assertDepositsFallbackRemoteRowLimit() {
+    await seedDepositAggregate();
+    mockDepositsListResponse(Array.from({ length: 201 }, (_, index) => ({
+      qrId: `qr_alpha_${index}`,
+      status: "depix_sent",
+    })));
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.error.code).toBe("deposits_fallback_remote_row_limit_exceeded");
+    expect(body.error.details.remoteRows).toBe(201);
+    expect(body.error.details.maxRemoteRows).toBe(200);
   });
 
   it("keeps repeated deposits-list reconciliation idempotent", async function assertDepositsFallbackIdempotency() {

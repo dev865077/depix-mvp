@@ -32,6 +32,8 @@ import {
 
 const DEPOSITS_LIST_SOURCE = "recheck_deposits_list";
 const NON_REGRESSIVE_COMPLETED_REMOTE_STATUSES = new Set(["depix_sent", "expired", "canceled", "refunded"]);
+export const DEPOSITS_FALLBACK_MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const DEPOSITS_FALLBACK_MAX_REMOTE_ROWS = 200;
 
 /**
  * Erro controlado do fallback por `/deposits`.
@@ -104,11 +106,39 @@ function readRequiredBodyString(body, field) {
 }
 
 /**
+ * Converte uma fronteira temporal em timestamp validado.
+ *
+ * O fallback por janela e uma ferramenta operacional de baixo blast radius. Por
+ * isso a borda local nao repassa datas malformadas para a Eulen: qualquer valor
+ * que `Date.parse` nao reconheca falha antes de gerar chamada externa ou efeito
+ * colateral em D1.
+ *
+ * @param {string} value Valor textual enviado no corpo.
+ * @param {"start" | "end"} field Nome da fronteira validada.
+ * @returns {number} Timestamp em milissegundos.
+ */
+function readWindowBoundaryTimestamp(value, field) {
+  const timestamp = Date.parse(value);
+
+  if (Number.isNaN(timestamp)) {
+    throw new DepositsFallbackError(
+      400,
+      "deposits_fallback_invalid_window",
+      "Fallback window boundaries must be parseable dates.",
+      { field, value },
+    );
+  }
+
+  return timestamp;
+}
+
+/**
  * Normaliza a janela operacional enviada pelo operador.
  *
- * A API Eulen aceita `YYYY-MM-DD` ou RFC3339. Validamos apenas presenca e
- * ordenacao lexica segura para ISO/RFC3339 quando `Date.parse` conseguir ler
- * ambos os lados; a validacao semantica final continua pertencendo a Eulen.
+ * A API Eulen aceita `YYYY-MM-DD` ou RFC3339. Aqui exigimos datas parseaveis,
+ * ordem crescente e janela maxima de 24h. Esse limite mantem a rota adequada
+ * para reconciliacao manual curta, sem transformar um fallback em varredura
+ * ampla de extrato remoto.
  *
  * @param {Record<string, unknown>} body Corpo parseado.
  * @returns {{ start: string, end: string, status?: string }} Janela validada.
@@ -119,15 +149,28 @@ export function readDepositsFallbackWindow(body) {
   const status = typeof body.status === "string" && body.status.trim().length > 0
     ? body.status.trim()
     : undefined;
-  const parsedStart = Date.parse(start);
-  const parsedEnd = Date.parse(end);
+  const parsedStart = readWindowBoundaryTimestamp(start, "start");
+  const parsedEnd = readWindowBoundaryTimestamp(end, "end");
 
-  if (!Number.isNaN(parsedStart) && !Number.isNaN(parsedEnd) && parsedStart >= parsedEnd) {
+  if (parsedStart >= parsedEnd) {
     throw new DepositsFallbackError(
       400,
       "deposits_fallback_invalid_window",
       "Fallback window start must be earlier than end.",
       { start, end },
+    );
+  }
+
+  if (parsedEnd - parsedStart > DEPOSITS_FALLBACK_MAX_WINDOW_MS) {
+    throw new DepositsFallbackError(
+      400,
+      "deposits_fallback_window_too_large",
+      "Fallback window must be 24 hours or less.",
+      {
+        start,
+        end,
+        maxWindowHours: DEPOSITS_FALLBACK_MAX_WINDOW_MS / 60 / 60 / 1000,
+      },
     );
   }
 
@@ -178,6 +221,18 @@ export function normalizeEulenDepositsListPayload(payload) {
 
   if (!Array.isArray(payload)) {
     return [];
+  }
+
+  if (payload.length > DEPOSITS_FALLBACK_MAX_REMOTE_ROWS) {
+    throw new DepositsFallbackError(
+      502,
+      "deposits_fallback_remote_row_limit_exceeded",
+      "Eulen deposits response exceeded the supported reconciliation row limit.",
+      {
+        remoteRows: payload.length,
+        maxRemoteRows: DEPOSITS_FALLBACK_MAX_REMOTE_ROWS,
+      },
+    );
   }
 
   return payload
