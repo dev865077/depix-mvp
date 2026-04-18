@@ -23,9 +23,9 @@ const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_PATCH_CHARS_PER_FILE = 3000;
 const MAX_PR_BODY_CHARS = 3000;
 const MAX_REVIEW_INPUT_CHARS = 18000;
-const MAX_SYNTHESIS_INPUT_CHARS = 12000;
-const MAX_AGENT_MEMO_CHARS = 1600;
-const MAX_OUTPUT_TOKENS = 1400;
+const MAX_SYNTHESIS_INPUT_CHARS = 16000;
+const MAX_AGENT_MEMO_CHARS = 2600;
+const MAX_OUTPUT_TOKENS = 2200;
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
 const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
@@ -1472,8 +1472,8 @@ export function buildPullRequestCommentBody({ model, gate, review, discussionUrl
 /**
  * Build a safe fallback note when the richer Discussion cannot be published.
  *
- * The model review still lands on the PR, so transient Discussion/API problems
- * do not block reviewer visibility or merge progress.
+ * The model review still lands on the PR before the check fails, so transient
+ * Discussion/API problems remain visible instead of silently losing context.
  *
  * @param {Error | unknown} error Publication failure.
  * @returns {string} Markdown fallback section.
@@ -1485,7 +1485,7 @@ export function buildDiscussionPublicationFallback(error) {
     "## Discussion publication fallback",
     "",
     "The multi-role review completed, but GitHub Discussion publication failed.",
-    "This PR comment contains the synthesis so review can continue without blocking on Discussion infrastructure.",
+    "This PR comment contains the synthesis, but the check should fail until Discussion publication is complete.",
     "",
     `Failure: \`${truncateText(message, 500).replace(/`/g, "'")}\``,
   ].join("\n");
@@ -1725,6 +1725,7 @@ async function main() {
   const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate);
   let review = "";
   let discussionUrl = null;
+  let discussionPublicationFailure = null;
 
   if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
@@ -1757,6 +1758,7 @@ async function main() {
     discussionUrl = discussionPublication.url;
 
     if (discussionPublication.failure) {
+      discussionPublicationFailure = discussionPublication.failure;
       review = [
         buildDiscussionPublicationFallback(discussionPublication.failure),
         "",
@@ -1779,6 +1781,10 @@ async function main() {
   });
 
   await publishPullRequestCommentOrSummary(repository, pullRequest.number, commentBody);
+
+  if (discussionPublicationFailure) {
+    throw discussionPublicationFailure;
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

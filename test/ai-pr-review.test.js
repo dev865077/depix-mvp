@@ -303,11 +303,11 @@ describe("ai pr review discussion rendering", () => {
     expect(body).not.toContain("[noise](https://example.com)");
   });
 
-  it("renders a non-blocking fallback when discussion publication fails", () => {
+  it("renders a visible fallback when discussion publication fails", () => {
     const body = buildDiscussionPublicationFallback(new Error("GraphQL timeout"));
 
     expect(body).toContain("Discussion publication fallback");
-    expect(body).toContain("review can continue");
+    expect(body).toContain("check should fail");
     expect(body).toContain("GraphQL timeout");
   });
 
