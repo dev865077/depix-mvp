@@ -228,6 +228,7 @@ export function resolveTenantIdFromPath(path) {
     /^\/telegram\/([^/]+)\/webhook$/,
     /^\/webhooks\/eulen\/([^/]+)\/deposit$/,
     /^\/ops\/([^/]+)\/recheck\/deposit$/,
+    /^\/ops\/([^/]+)\/reconcile\/deposits$/,
     /^\/ops\/([^/]+)\/telegram\/webhook-info$/,
     /^\/ops\/([^/]+)\/telegram\/register-webhook$/,
     /^\/ops\/([^/]+)\/eulen\/ping$/,

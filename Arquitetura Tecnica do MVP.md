@@ -207,8 +207,9 @@ Sem `splitConfig` completo, o tenant fica invalido para criacao de cobranca.
 ### 4. Recheck
 
 1. Se o webhook falhar ou ficar duvidoso, `recheck service` consulta `deposit-status`.
-2. Se a divergencia for maior, consulta `deposits` por janela.
-3. O resultado corrige o estado interno.
+2. Se a divergencia for de janela, o fallback operacional consulta `deposits`.
+3. Linhas de `deposits` sao compactas e usam `qrId`; por isso o runtime so aplica a verdade remota quando o `qrId` ja existe no tenant local.
+4. O resultado grava `deposit_events.source = "recheck_deposits_list"` e corrige `deposits` + `orders` sem regredir agregados locais ja concluidos.
 
 ## Logs
 

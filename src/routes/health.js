@@ -74,6 +74,11 @@ export function handleHealth(c) {
           ready: runtimeConfig.operations.depositRecheck.ready,
           tenantOverrides: runtimeConfig.operations.depositRecheck.tenantOverrides,
         },
+        depositsFallback: {
+          state: runtimeConfig.operations.depositsFallback.state,
+          ready: runtimeConfig.operations.depositsFallback.ready,
+          tenantOverrides: runtimeConfig.operations.depositsFallback.tenantOverrides,
+        },
       },
     },
   });

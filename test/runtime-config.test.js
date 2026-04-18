@@ -61,6 +61,7 @@ function createRuntimeEnv(overrides = {}) {
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "1.00%",
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
+    ENABLE_OPS_DEPOSITS_FALLBACK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-token",
     ...overrides,
   };
@@ -110,6 +111,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
+    expect(runtimeConfig.operations.depositsFallback.state).toBe("ready");
+    expect(runtimeConfig.operations.depositsFallback.ready).toBe(true);
   });
 
   it("marks deposit recheck invalid when the feature flag has an unknown value", () => {
@@ -119,6 +122,26 @@ describe("runtime config", () => {
 
     expect(runtimeConfig.operations.depositRecheck.state).toBe("invalid_config");
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
+  });
+
+  it("keeps deposits fallback disabled unless its explicit flag is enabled", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      ENABLE_OPS_DEPOSITS_FALLBACK: undefined,
+    }));
+
+    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
+    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
+    expect(runtimeConfig.operations.depositsFallback.state).toBe("disabled");
+    expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
+  });
+
+  it("marks deposits fallback invalid when its feature flag has an unknown value", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      ENABLE_OPS_DEPOSITS_FALLBACK: "sim",
+    }));
+
+    expect(runtimeConfig.operations.depositsFallback.state).toBe("invalid_config");
+    expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
   });
 
   it("marks deposit recheck missing_secret when the global token is empty", () => {

@@ -53,7 +53,7 @@ function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
 }
 
 /**
- * Resume um estado operacional redigido para a feature de recheck.
+ * Resume um estado operacional redigido para uma rota operacional.
  *
  * O objetivo e dar sinal claro para operadores em `/health` sem expor nomes de
  * bindings, inventario de tenants ou valores crus de configuracao sensivel.
@@ -63,7 +63,7 @@ function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
  * @param {boolean} globalBearerBindingConfigured Se o token global existe no ambiente.
  * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret"} Estado global redigido.
  */
-export function describeDepositRecheckState(featureFlag, enabled, globalBearerBindingConfigured) {
+export function describeOpsRouteState(featureFlag, enabled, globalBearerBindingConfigured) {
   if (featureFlag.configured && !featureFlag.recognized) {
     return "invalid_config";
   }
@@ -78,6 +78,8 @@ export function describeDepositRecheckState(featureFlag, enabled, globalBearerBi
 
   return "ready";
 }
+
+export const describeDepositRecheckState = describeOpsRouteState;
 
 /**
  * Normaliza uma flag textual de runtime.
@@ -219,6 +221,21 @@ export function assertPositiveInteger(value, key) {
  *         state: "ready" | "invalid_config",
  *         invalidCount: number
  *       }
+ *     },
+ *     depositsFallback: {
+ *       enabled: boolean,
+ *       featureFlag: {
+ *         configured: boolean,
+ *         recognized: boolean,
+ *         rawValue: string | null
+ *       },
+ *       state: "ready" | "disabled" | "invalid_config" | "missing_secret",
+ *       ready: boolean,
+ *       globalBearerBindingConfigured: boolean,
+ *       tenantOverrides: {
+ *         state: "ready" | "invalid_config",
+ *         invalidCount: number
+ *       }
  *     }
  *   }
  * }} Configuracao consolidada do runtime.
@@ -245,11 +262,21 @@ export function readRuntimeConfig(env) {
   ));
   const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
   const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
+  const depositsFallbackEnabled = readBooleanFlag(
+    env.ENABLE_OPS_DEPOSITS_FALLBACK,
+    "ENABLE_OPS_DEPOSITS_FALLBACK",
+  );
+  const depositsFallbackFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSITS_FALLBACK);
   const globalBearerBindingConfigured = isSecretBindingConfigured(env.OPS_ROUTE_BEARER_TOKEN);
   const invalidTenantOverrideCount = countInvalidTenantScopedDepositRecheckOverrides(env, tenants);
-  const depositRecheckState = describeDepositRecheckState(
+  const depositRecheckState = describeOpsRouteState(
     depositRecheckFlagState,
     depositRecheckEnabled,
+    globalBearerBindingConfigured,
+  );
+  const depositsFallbackState = describeOpsRouteState(
+    depositsFallbackFlagState,
+    depositsFallbackEnabled,
     globalBearerBindingConfigured,
   );
 
@@ -273,6 +300,17 @@ export function readRuntimeConfig(env) {
         featureFlag: depositRecheckFlagState,
         state: depositRecheckState,
         ready: depositRecheckState === "ready",
+        globalBearerBindingConfigured,
+        tenantOverrides: {
+          state: invalidTenantOverrideCount > 0 ? "invalid_config" : "ready",
+          invalidCount: invalidTenantOverrideCount,
+        },
+      },
+      depositsFallback: {
+        enabled: depositsFallbackEnabled,
+        featureFlag: depositsFallbackFlagState,
+        state: depositsFallbackState,
+        ready: depositsFallbackState === "ready",
         globalBearerBindingConfigured,
         tenantOverrides: {
           state: invalidTenantOverrideCount > 0 ? "invalid_config" : "ready",

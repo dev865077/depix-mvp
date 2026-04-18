@@ -43,7 +43,7 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - persistencia base: avancada
 - fluxo funcional completo do bot: pendente
 - webhook principal real: avancado
-- recheck real: pendente
+- recheck real: avancado, com `deposit-status` por deposito e `deposits` por janela
 - CI automatizado estavel: em backlog proprio
 
 ## Fonte de verdade
