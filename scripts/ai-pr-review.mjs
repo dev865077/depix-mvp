@@ -18,11 +18,11 @@ const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
 const RUN_MODE_DISCUSSION = "discussion";
-const MAX_FILES = 24;
+const MAX_FILES = 12;
 const MAX_DISCUSSION_LOOKBACK = 100;
-const MAX_PATCH_CHARS_PER_FILE = 5000;
+const MAX_PATCH_CHARS_PER_FILE = 3000;
 const MAX_PR_BODY_CHARS = 3000;
-const MAX_REVIEW_INPUT_CHARS = 42000;
+const MAX_REVIEW_INPUT_CHARS = 18000;
 const MAX_SYNTHESIS_INPUT_CHARS = 16000;
 const MAX_AGENT_MEMO_CHARS = 2600;
 const MAX_OUTPUT_TOKENS = 2200;
@@ -59,16 +59,6 @@ const REVIEW_SIGNAL_BY_CATEGORY = {
   prompt: 2,
   config: 2,
   other: 2,
-};
-
-const REVIEW_FILE_PRIORITY_BY_CATEGORY = {
-  source: 70,
-  tests: 60,
-  config: 50,
-  workflow: 45,
-  prompt: 40,
-  docs: 30,
-  other: 10,
 };
 
 /**
@@ -845,32 +835,6 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
 }
 
 /**
- * Sort files so the model sees executable behavior and tests before prose.
- *
- * GitHub returns PR files in path order. For broad PRs, that can spend most of
- * the context window on docs and hide the source/test files that prove whether
- * an older concern is still true. Review payload ordering must favor current
- * behavioral evidence over repository path order.
- *
- * @param {any[]} files Changed files from GitHub.
- * @returns {any[]} Files ordered for model review.
- */
-export function sortFilesForReview(files) {
-  return [...files].sort((left, right) => {
-    const leftCategory = classifyReviewFile(left.filename);
-    const rightCategory = classifyReviewFile(right.filename);
-    const priorityDelta = (REVIEW_FILE_PRIORITY_BY_CATEGORY[rightCategory] ?? 0)
-      - (REVIEW_FILE_PRIORITY_BY_CATEGORY[leftCategory] ?? 0);
-
-    if (priorityDelta !== 0) {
-      return priorityDelta;
-    }
-
-    return String(left.filename).localeCompare(String(right.filename));
-  });
-}
-
-/**
  * Summarize the scope of the PR so the merge gate can stay deterministic.
  *
  * @param {any[]} files Changed files from GitHub.
@@ -1009,7 +973,8 @@ export function assessDiscussionGate(files) {
  * @returns {string} Compact file digest.
  */
 function buildChangedFilesDigest(files) {
-  return sortFilesForReview(files)
+  return files
+    .slice(0, MAX_FILES)
     .map((file) => `- ${file.filename} (${file.status}, +${file.additions}/-${file.deletions})`)
     .join("\n");
 }
@@ -1021,8 +986,7 @@ function buildChangedFilesDigest(files) {
  * @returns {string} Compact diff payload.
  */
 function buildFilesReviewPayload(files) {
-  const orderedFiles = sortFilesForReview(files);
-  const selectedFiles = orderedFiles.slice(0, MAX_FILES);
+  const selectedFiles = files.slice(0, MAX_FILES);
   const sections = selectedFiles.map((file) => {
     const patch = truncateText(file.patch ?? "[no patch available]", MAX_PATCH_CHARS_PER_FILE);
 
@@ -1038,8 +1002,8 @@ function buildFilesReviewPayload(files) {
     ].join("\n");
   });
 
-  if (orderedFiles.length > MAX_FILES) {
-    sections.push(`### Additional files omitted\nOnly the top ${MAX_FILES} review-priority files were sent to the model.`);
+  if (files.length > MAX_FILES) {
+    sections.push(`### Additional files omitted\nOnly the first ${MAX_FILES} changed files were sent to the model.`);
   }
 
   return truncateText(sections.join("\n\n"), MAX_REVIEW_INPUT_CHARS);

@@ -14,6 +14,7 @@ import {
   updateDepositByDepositEntryId,
 } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
+import { reconcileOrderPatch } from "../src/services/eulen-deposit-webhook.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -132,6 +133,23 @@ afterEach(function restoreWebhookMocks() {
 });
 
 describe("eulen deposit webhook", () => {
+  it("preserves terminal-safe order fields while protecting terminal currentStep", function assertTerminalSafeOrderPatch() {
+    const patch = reconcileOrderPatch(
+      {
+        status: "paid",
+        currentStep: "completed",
+      },
+      {
+        status: "under_review",
+        currentStep: "manual_review",
+      },
+    );
+
+    expect(patch).toEqual({
+      status: "under_review",
+    });
+  });
+
   it("processes a valid webhook and applies payment truth", async function assertValidWebhookProcessing() {
     await seedDepositAggregate();
 
