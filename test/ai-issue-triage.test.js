@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidIssueTriagePlan,
   buildDiscussionBody,
+  buildIssueCommentBody,
   extractDiscussionUrlFromComment,
   parseIssueTriageResponse,
   selectDiscussionCategory,
@@ -97,6 +98,24 @@ describe("ai issue triage validation", () => {
     expect(extractDiscussionUrlFromComment(comment)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
   });
 
+  it("marks discussion-routed issue comments as requiring an operational reply before PR work", () => {
+    const body = buildIssueCommentBody({
+      impact: "alto",
+      route: "discussion_before_pr",
+      justification: "Escopo amplo.",
+      productView: "Precisa alinhar escopo.",
+      technicalView: "Precisa dividir PRs.",
+      riskView: "Pode misturar riscos.",
+      decision: "Responder a Discussion antes de PR.",
+      nextSteps: ["confirmar ordem"],
+    }, "gpt-test", "https://github.com/dev865077/depix-mvp/discussions/97");
+
+    expect(body).toContain("## Discussion");
+    expect(body).toContain("## Resposta operacional requerida");
+    expect(body).toContain("Antes de abrir branch ou PR");
+    expect(body).toContain("https://github.com/dev865077/depix-mvp/discussions/97");
+  });
+
   it("builds a discussion body with the structured debate", () => {
     const body = buildDiscussionBody({
       number: 51,
@@ -115,6 +134,8 @@ describe("ai issue triage validation", () => {
 
     expect(body).toContain("## Debate");
     expect(body).toContain("## Sintese final");
+    expect(body).toContain("## Resposta operacional requerida");
+    expect(body).toContain("Antes de abrir branch ou PR");
     expect(body).toContain("Issue origem: #51");
   });
 });
