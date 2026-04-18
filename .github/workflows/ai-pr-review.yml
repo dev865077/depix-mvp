@@ -10,18 +10,22 @@ on:
 
 permissions:
   contents: read
-  discussions: write
-  issues: write
-  pull-requests: write
+  pull-requests: read
 
 concurrency:
   group: ai-pr-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  review:
+  classify:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      requires_discussion: ${{ steps.gate.outputs.requires_discussion }}
+      route: ${{ steps.gate.outputs.route }}
 
     steps:
       - name: Checkout repository
@@ -32,14 +36,68 @@ jobs:
         with:
           node-version: 20
 
-      - name: Run AI PR review
+      - name: Classify PR review lane
+        id: gate
         env:
+          AI_PR_REVIEW_MODE: classify
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ai-pr-review.mjs
+
+  direct-review:
+    needs: classify
+    if: github.event.pull_request.draft == false && needs.classify.outputs.requires_discussion == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run direct AI PR review
+        env:
+          AI_PR_REVIEW_MODE: direct
+          AI_REVIEW_PROMPT_PATH: .github/prompts/ai-pr-review.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}
+        run: node scripts/ai-pr-review.mjs
+
+  discussion-review:
+    needs: classify
+    if: github.event.pull_request.draft == false && needs.classify.outputs.requires_discussion == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      discussions: write
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run multi-bot Discussion PR review
+        env:
+          AI_PR_REVIEW_MODE: discussion
+          AI_PR_DISCUSSION_CATEGORY: ${{ vars.AI_PR_DISCUSSION_CATEGORY }}
           AI_PR_DISCUSSION_DOCTRINE_PATH: .github/prompts/ai-pr-review-doctrine.md
           AI_PR_DISCUSSION_PRODUCT_PROMPT_PATH: .github/prompts/ai-pr-discussion-product.md
           AI_PR_DISCUSSION_RISK_PROMPT_PATH: .github/prompts/ai-pr-discussion-risk.md
           AI_PR_DISCUSSION_SYNTHESIS_PROMPT_PATH: .github/prompts/ai-pr-discussion-synthesis.md
           AI_PR_DISCUSSION_TECHNICAL_PROMPT_PATH: .github/prompts/ai-pr-discussion-technical.md
-          AI_REVIEW_PROMPT_PATH: .github/prompts/ai-pr-review.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}

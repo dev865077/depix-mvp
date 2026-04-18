@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidReviewRecommendation,
   assessDiscussionGate,
+  buildDiscussionPublicationFallback,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
+  sanitizePublishedMarkdown,
   selectDiscussionCategory,
   summarizePullRequestScope,
 } from "../scripts/ai-pr-review.mjs";
@@ -69,6 +71,24 @@ describe("ai pr review discussion gate", () => {
     expect(gate.route).toBe("direct_review");
   });
 
+  it("keeps the direct lane inclusive at the documented boundary", () => {
+    const gate = assessDiscussionGate([
+      { filename: "README.md", additions: 40, deletions: 0 },
+      { filename: "docs/wiki/Runbook.md", additions: 40, deletions: 0 },
+      { filename: "docs/wiki/Architecture.md", additions: 40, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+  });
+
+  it("routes docs-only pull requests to discussion when they exceed the size boundary", () => {
+    const gate = assessDiscussionGate([
+      { filename: "README.md", additions: 121, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
   it("routes implementation changes into discussion before merge", () => {
     const gate = assessDiscussionGate([
       { filename: "src/routes/telegram.js", additions: 40, deletions: 8 },
@@ -78,6 +98,23 @@ describe("ai pr review discussion gate", () => {
     expect(gate.requiresDiscussion).toBe(true);
     expect(gate.route).toBe("discussion_before_merge");
     expect(gate.reason).toContain("Meaningful PR scope");
+  });
+
+  it("routes workflow-only changes into discussion even when tiny", () => {
+    const gate = assessDiscussionGate([
+      { filename: ".github/workflows/ai-pr-review.yml", additions: 1, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
+  it("routes mixed docs and source changes into discussion", () => {
+    const gate = assessDiscussionGate([
+      { filename: "docs/wiki/Runbook.md", additions: 4, deletions: 0 },
+      { filename: "src/index.js", additions: 1, deletions: 0 },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
   });
 
   it("summarizes categories and top-level areas deterministically", () => {
@@ -143,11 +180,61 @@ describe("ai pr review discussion rendering", () => {
     expect(extractDiscussionUrlFromComment(body)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
   });
 
+  it("sanitizes model-authored mentions, images, and markdown links", () => {
+    const sanitized = sanitizePublishedMarkdown(
+      "Ping @dev865077 and @org/team. See [link](https://example.com) ![x](https://example.com/x.png)",
+    );
+
+    expect(sanitized).toContain("@<!-- -->dev865077");
+    expect(sanitized).toContain("@<!-- -->org/team");
+    expect(sanitized).toContain("link (https://example.com)");
+    expect(sanitized).toContain("Image omitted");
+  });
+
+  it("sanitizes untrusted PR text inside discussion bodies", () => {
+    const body = buildPullRequestDiscussionBody(
+      {
+        number: 57,
+        title: "Ping @team",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/57",
+        body: "Notify @dev865077 with [noise](https://example.com).",
+      },
+      gate,
+      {
+        product: "## Perspective\nScoped correctly.",
+        technical: "## Perspective\nArchitecture is coherent.",
+        risk: "## Perspective\nOperationally acceptable.",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      },
+      "gpt-5.4-mini",
+    );
+
+    expect(body).toContain("@<!-- -->dev865077");
+    expect(body).not.toContain("[noise](https://example.com)");
+  });
+
+  it("renders a non-blocking fallback when discussion publication fails", () => {
+    const body = buildDiscussionPublicationFallback(new Error("GraphQL timeout"));
+
+    expect(body).toContain("Discussion publication fallback");
+    expect(body).toContain("review can continue");
+    expect(body).toContain("GraphQL timeout");
+  });
+
   it("selects a safe discussion category", () => {
     const category = selectDiscussionCategory([
       { id: "1", name: "Announcements", isAnswerable: true },
       { id: "2", name: "Ideas", isAnswerable: false },
     ], "Missing");
+
+    expect(category.id).toBe("2");
+  });
+
+  it("prefers the configured discussion category when available", () => {
+    const category = selectDiscussionCategory([
+      { id: "1", name: "General", isAnswerable: false },
+      { id: "2", name: "Architecture", isAnswerable: false },
+    ], "Architecture");
 
     expect(category.id).toBe("2");
   });

@@ -12,6 +12,10 @@ import { fileURLToPath } from "node:url";
 const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
 const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
+const RUN_MODE_AUTO = "auto";
+const RUN_MODE_CLASSIFY = "classify";
+const RUN_MODE_DIRECT = "direct";
+const RUN_MODE_DISCUSSION = "discussion";
 const MAX_FILES = 12;
 const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_PATCH_CHARS_PER_FILE = 3000;
@@ -26,7 +30,7 @@ const FORBIDDEN_RECOMMENDATIONS = ["Approve with minor follow-up", "Approve with
 const DIRECT_REVIEW_MAX_FILES = 3;
 const DIRECT_REVIEW_MAX_TOTAL_LINES = 120;
 const DIRECT_REVIEW_MAX_AREAS = 2;
-const DISCUSSION_CATEGORY_DEFAULT = "Ideas";
+const DISCUSSION_CATEGORY_DEFAULT = "";
 
 const REVIEW_SIGNAL_BY_CATEGORY = {
   docs: 0,
@@ -172,6 +176,41 @@ function truncateText(value, maxLength) {
   }
 
   return `${value.slice(0, maxLength)}\n... [truncated]`;
+}
+
+/**
+ * Sanitize model-generated markdown before publishing it back to GitHub.
+ *
+ * Pull request titles, descriptions, and patches are untrusted model input. This
+ * sanitizer keeps reviewer text readable while preventing generated output from
+ * creating noisy mentions, active model-authored links, or markdown images.
+ *
+ * @param {string} markdown Raw model-generated markdown.
+ * @returns {string} Markdown safe enough for automated public comments.
+ */
+export function sanitizePublishedMarkdown(markdown) {
+  if (typeof markdown !== "string" || markdown.length === 0) {
+    return "";
+  }
+
+  return markdown
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "Image omitted: $1 ($2)")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .replace(/<((?:https?|mailto):[^>\s]+)>/gi, "`$1`")
+    .replace(/(^|[^\w`])@([A-Za-z0-9][A-Za-z0-9-]*(?:\/[A-Za-z0-9][A-Za-z0-9-]*)?)/g, "$1@<!-- -->$2");
+}
+
+/**
+ * Reduce untrusted text before using it in a GitHub Discussion title.
+ *
+ * @param {string} value Raw title text.
+ * @returns {string} Single-line title-safe text.
+ */
+function sanitizePlainTextForGitHubTitle(value) {
+  return sanitizePublishedMarkdown(value)
+    .replace(/[#*_`[\]()<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -915,7 +954,7 @@ async function generateModelMarkdown(systemPrompt, userPrompt, model, options = 
     assertValidReviewRecommendation(reviewText);
   }
 
-  return reviewText;
+  return sanitizePublishedMarkdown(reviewText);
 }
 
 /**
@@ -984,7 +1023,7 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
  */
 export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model) {
   return [
-    `Pull request origem: [#${pullRequest.number} - ${pullRequest.title}](${pullRequest.html_url})`,
+    `Pull request origem: #${pullRequest.number} - ${sanitizePlainTextForGitHubTitle(pullRequest.title)} (${pullRequest.html_url})`,
     "",
     "## Discussion gate",
     `- Route: \`${gate.route}\``,
@@ -996,7 +1035,7 @@ export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model)
     `- Model: \`${model}\``,
     "",
     "## PR description",
-    truncateText(pullRequest.body ?? "[no description provided]", MAX_PR_BODY_CHARS),
+    sanitizePublishedMarkdown(truncateText(pullRequest.body ?? "[no description provided]", MAX_PR_BODY_CHARS)),
     "",
     "## Product and scope review",
     debate.product,
@@ -1044,6 +1083,28 @@ export function buildPullRequestCommentBody({ model, gate, review, discussionUrl
 }
 
 /**
+ * Build a safe fallback note when the richer Discussion cannot be published.
+ *
+ * The model review still lands on the PR, so transient Discussion/API problems
+ * do not block reviewer visibility or merge progress.
+ *
+ * @param {Error | unknown} error Publication failure.
+ * @returns {string} Markdown fallback section.
+ */
+export function buildDiscussionPublicationFallback(error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return [
+    "## Discussion publication fallback",
+    "",
+    "The multi-role review completed, but GitHub Discussion publication failed.",
+    "This PR comment contains the synthesis so review can continue without blocking on Discussion infrastructure.",
+    "",
+    `Failure: \`${truncateText(message, 500).replace(/`/g, "'")}\``,
+  ].join("\n");
+}
+
+/**
  * Create or update the single sticky PR review comment.
  *
  * @param {string} repoFullName Repository in owner/name form.
@@ -1083,6 +1144,70 @@ async function upsertPullRequestComment(repoFullName, issueNumber, body) {
 }
 
 /**
+ * Write one GitHub Actions output when the workflow exposes GITHUB_OUTPUT.
+ *
+ * @param {string} key Output key.
+ * @param {string} value Output value.
+ * @returns {Promise<void>} Resolves when written or skipped.
+ */
+async function writeGitHubOutput(key, value) {
+  const outputPath = process.env.GITHUB_OUTPUT;
+
+  if (!outputPath) {
+    return;
+  }
+
+  await fs.appendFile(outputPath, `${key}=${value}\n`, "utf8");
+}
+
+/**
+ * Create or update the GitHub Discussion, returning null when publication
+ * fails. A failed Discussion write should degrade to a PR comment instead of
+ * turning transient infrastructure trouble into a hard merge blocker.
+ *
+ * @param {string} repository Repository in owner/name form.
+ * @param {any} pullRequest GitHub pull request payload.
+ * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
+ * @param {{ product: string, technical: string, risk: string, synthesis: string }} debate Debate output.
+ * @param {string} model Explicit model name.
+ * @param {string} preferredDiscussionCategory Configured category name.
+ * @returns {Promise<{ url: string | null, failure: Error | null }>} Publication result.
+ */
+async function publishDiscussionOrFallback(repository, pullRequest, gate, debate, model, preferredDiscussionCategory) {
+  try {
+    const [owner, name] = repository.split("/");
+    const [comments, repositoryMetadata] = await Promise.all([
+      fetchPullRequestComments(repository, pullRequest.number),
+      fetchRepositoryDiscussionMetadata(owner, name),
+    ]);
+    const discussionTitle = `[PR #${pullRequest.number}] ${sanitizePlainTextForGitHubTitle(pullRequest.title)}`;
+    const discussionBody = buildPullRequestDiscussionBody(pullRequest, gate, debate, model);
+    const existingDiscussion = findExistingDiscussionTarget(
+      pullRequest.number,
+      comments,
+      repositoryMetadata.discussions.nodes,
+    );
+
+    if (!existingDiscussion) {
+      const category = selectDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredDiscussionCategory);
+      const createdDiscussion = await createDiscussion(repositoryMetadata.id, category.id, discussionTitle, discussionBody);
+
+      return { url: createdDiscussion.url, failure: null };
+    }
+
+    if (existingDiscussion.id) {
+      const updatedDiscussion = await updateDiscussion(existingDiscussion.id, discussionTitle, discussionBody);
+
+      return { url: updatedDiscussion.url, failure: null };
+    }
+
+    return { url: existingDiscussion.url, failure: null };
+  } catch (error) {
+    return { url: null, failure: error instanceof Error ? error : new Error(String(error)) };
+  }
+}
+
+/**
  * Main workflow entrypoint.
  *
  * @returns {Promise<void>} Resolves when the PR comment is updated.
@@ -1090,7 +1215,7 @@ async function upsertPullRequestComment(repoFullName, issueNumber, body) {
 async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
-  const model = readConfiguredModel();
+  const runMode = process.env.AI_PR_REVIEW_MODE?.trim() || RUN_MODE_AUTO;
   const reviewPromptPath = process.env.AI_REVIEW_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-review.md";
   const doctrinePromptPath = process.env.AI_PR_DISCUSSION_DOCTRINE_PATH?.trim() || ".github/prompts/ai-pr-review-doctrine.md";
   const productPromptPath = process.env.AI_PR_DISCUSSION_PRODUCT_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-product.md";
@@ -1105,22 +1230,38 @@ async function main() {
     throw new Error("This workflow only supports pull_request events.");
   }
 
-  const [reviewPrompt, doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt, files] = await Promise.all([
-    readPrompt(reviewPromptPath),
-    readPrompt(doctrinePromptPath),
-    readPrompt(productPromptPath),
-    readPrompt(technicalPromptPath),
-    readPrompt(riskPromptPath),
-    readPrompt(synthesisPromptPath),
-    fetchPullRequestFiles(repository, pullRequest.number),
-  ]);
-
+  const files = await fetchPullRequestFiles(repository, pullRequest.number);
   const gate = assessDiscussionGate(files);
+
+  if (runMode === RUN_MODE_CLASSIFY) {
+    await writeGitHubOutput("route", gate.route);
+    await writeGitHubOutput("requires_discussion", String(gate.requiresDiscussion));
+    await writeGitHubOutput("reason", gate.reason);
+
+    return;
+  }
+
+  if (runMode === RUN_MODE_DIRECT && gate.requiresDiscussion) {
+    return;
+  }
+
+  if (runMode === RUN_MODE_DISCUSSION && !gate.requiresDiscussion) {
+    return;
+  }
+
+  const model = readConfiguredModel();
   const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate);
   let review = "";
   let discussionUrl = null;
 
   if (gate.requiresDiscussion) {
+    const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
+      readPrompt(doctrinePromptPath),
+      readPrompt(productPromptPath),
+      readPrompt(technicalPromptPath),
+      readPrompt(riskPromptPath),
+      readPrompt(synthesisPromptPath),
+    ]);
     const debate = await generateDiscussionDebate(
       {
         doctrine,
@@ -1132,34 +1273,29 @@ async function main() {
       userPrompt,
       model,
     );
-    const [owner, name] = repository.split("/");
-    const [comments, repositoryMetadata] = await Promise.all([
-      fetchPullRequestComments(repository, pullRequest.number),
-      fetchRepositoryDiscussionMetadata(owner, name),
-    ]);
-    const discussionTitle = `[PR #${pullRequest.number}] ${pullRequest.title}`;
-    const discussionBody = buildPullRequestDiscussionBody(pullRequest, gate, debate, model);
-    const existingDiscussion = findExistingDiscussionTarget(
-      pullRequest.number,
-      comments,
-      repositoryMetadata.discussions.nodes,
+    const discussionPublication = await publishDiscussionOrFallback(
+      repository,
+      pullRequest,
+      gate,
+      debate,
+      model,
+      preferredDiscussionCategory,
     );
 
-    if (!existingDiscussion) {
-      const category = selectDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredDiscussionCategory);
-      const createdDiscussion = await createDiscussion(repositoryMetadata.id, category.id, discussionTitle, discussionBody);
+    discussionUrl = discussionPublication.url;
 
-      discussionUrl = createdDiscussion.url;
-    } else if (existingDiscussion.id) {
-      const updatedDiscussion = await updateDiscussion(existingDiscussion.id, discussionTitle, discussionBody);
-
-      discussionUrl = updatedDiscussion.url;
+    if (discussionPublication.failure) {
+      review = [
+        buildDiscussionPublicationFallback(discussionPublication.failure),
+        "",
+        debate.synthesis,
+      ].join("\n");
     } else {
-      discussionUrl = existingDiscussion.url;
+      review = debate.synthesis;
     }
-
-    review = debate.synthesis;
   } else {
+    const reviewPrompt = await readPrompt(reviewPromptPath);
+
     review = await generateModelMarkdown(reviewPrompt, userPrompt, model, { expectRecommendation: true });
   }
 
