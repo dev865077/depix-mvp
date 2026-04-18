@@ -1199,11 +1199,12 @@ export function getReviewGateFailure(recommendation) {
  * }} Unanimity result.
  */
 export function evaluateDiscussionRecommendation(debate) {
+  const synthesisRecommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
   const recommendations = {
     product: assertValidReviewRecommendation(debate.product),
     technical: assertValidReviewRecommendation(debate.technical),
     risk: assertValidReviewRecommendation(debate.risk),
-    synthesis: assertValidReviewRecommendation(debate.synthesis),
+    synthesis: synthesisRecommendation,
   };
   const blockingRoles = Object.entries({
     product: recommendations.product,
@@ -1217,8 +1218,8 @@ export function evaluateDiscussionRecommendation(debate) {
   return {
     recommendations,
     blockingRoles,
-    synthesisRecommendation: recommendations.synthesis,
-    synthesisMatchesSpecialists: recommendations.synthesis === recommendation,
+    synthesisRecommendation,
+    synthesisMatchesSpecialists: synthesisRecommendation === recommendation,
     recommendation,
   };
 }

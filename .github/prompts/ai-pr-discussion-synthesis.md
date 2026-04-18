@@ -20,6 +20,7 @@ Output requirements:
   - `## Recommendation`
 - In `## Findings`, use 0-4 flat bullets.
 - If there are no material findings, write `- No material findings.`
+- Always include the final `## Recommendation` section exactly once, even when the verdict line already says the same thing.
 - In `## Recommendation`, say one of:
   - `Approve`
   - `Request changes`
