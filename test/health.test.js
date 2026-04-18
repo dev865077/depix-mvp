@@ -83,7 +83,17 @@ export async function assertHealthResponse() {
   expect(body.environment).toBe("local");
   expect(body.configuration.database.bindingConfigured).toBe(true);
   expect(body.configuration.tenants.alpha.displayName).toBe("Alpha");
+  expect(body.configuration.tenants.alpha.tenantId).toBe("alpha");
+  expect(body.configuration.tenants.alpha.eulenPartnerConfigured).toBe(true);
+  expect(body.configuration.tenants.alpha.splitConfigConfigured).toBe(true);
+  expect(body.configuration.tenants.alpha.secretBindingsConfigured).toBe(true);
+  expect(typeof body.configuration.tenants.alpha.opsDepositRecheckOverrideConfigured).toBe("boolean");
   expect(body.configuration.tenants.beta.displayName).toBe("Beta");
+  expect(body.configuration.tenants.beta.tenantId).toBe("beta");
+  expect(body.configuration.tenants.beta.eulenPartnerConfigured).toBe(true);
+  expect(body.configuration.tenants.beta.splitConfigConfigured).toBe(true);
+  expect(body.configuration.tenants.beta.secretBindingsConfigured).toBe(true);
+  expect(body.configuration.tenants.beta.opsDepositRecheckOverrideConfigured).toBe(false);
   expect(body.configuration.tenantSummary.configured).toBe(true);
   expect(body.configuration.tenantSummary.count).toBe(2);
   expect(body.configuration.secrets.registryConfigured).toBe(true);
@@ -100,6 +110,31 @@ describe("health route", () => {
   });
 
   it("returns the runtime status", assertHealthResponse);
+
+  it("redacts tenant binding names from the public health payload", async function assertTenantInventoryRedaction() {
+    const response = await createApp().fetch(
+      new Request("https://example.com/health"),
+      createHealthEnv(),
+    );
+    const body = await response.json();
+    const serializedBody = JSON.stringify(body);
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(body.configuration.tenants.alpha).sort()).toEqual([
+      "displayName",
+      "eulenPartnerConfigured",
+      "opsDepositRecheckOverrideConfigured",
+      "secretBindingsConfigured",
+      "splitConfigConfigured",
+      "tenantId",
+    ]);
+    expect(serializedBody).not.toContain('"secretBindings":');
+    expect(serializedBody).not.toContain('"splitConfigBindings":');
+    expect(serializedBody).not.toContain('"opsBindings":');
+    expect(serializedBody).not.toContain("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+    expect(serializedBody).not.toContain("ALPHA_TELEGRAM_BOT_TOKEN");
+    expect(serializedBody).not.toContain("ALPHA_DEPIX_SPLIT_ADDRESS");
+  });
 
   it("keeps global readiness when a tenant-scoped override is broken", async function assertTenantOverrideHealthIsolation() {
     vi.spyOn(console, "log").mockImplementation(() => {});
