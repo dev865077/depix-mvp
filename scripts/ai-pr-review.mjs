@@ -656,42 +656,6 @@ async function addDiscussionComment(discussionId, body) {
 }
 
 /**
- * Best-effort close for answerable/resolved Discussions. GitHub API support can
- * differ by repository/category, so failure is logged but never blocks review
- * publication.
- *
- * @param {string} discussionId Discussion node id.
- * @returns {Promise<boolean>} True when the close mutation succeeds.
- */
-async function closeDiscussionResolved(discussionId) {
-  const mutation = `
-    mutation($discussionId: ID!) {
-      closeDiscussion(input: {
-        discussionId: $discussionId,
-        reason: RESOLVED
-      }) {
-        discussion {
-          id
-          closed
-        }
-      }
-    }
-  `;
-
-  try {
-    const data = await githubGraphqlRequest(mutation, { discussionId });
-
-    return data?.closeDiscussion?.discussion?.closed === true;
-  } catch (error) {
-    logOperationalEvent("ai_pr_review.discussion.close_failed", {
-      reason: error instanceof Error ? error.message : String(error),
-    });
-
-    return false;
-  }
-}
-
-/**
  * Classify one changed file into a repository-specific review category.
  *
  * @param {string} filename GitHub file path.
@@ -1331,19 +1295,16 @@ export function buildDiscussionReviewComments(debate) {
  * Build the final visible lifecycle comment for the Discussion.
  *
  * @param {string} synthesis Final synthesis markdown.
- * @param {boolean} wasClosed Whether the Discussion close mutation succeeded.
  * @returns {string} Final Discussion status comment.
  */
-export function buildDiscussionCompletionComment(synthesis, wasClosed = false) {
+export function buildDiscussionCompletionComment(synthesis) {
   const recommendation = extractReviewRecommendation(synthesis) ?? "Request changes";
   const isApproved = recommendation === "Approve";
   const statusLine = isApproved
     ? "Discussion concluded: all automated reviewer roles completed and no unresolved blockers remain."
     : "Discussion concluded: automated reviewers still request changes before merge.";
   const closeLine = isApproved
-    ? wasClosed
-      ? "GitHub marked this Discussion as resolved."
-      : "GitHub did not expose a close action for this Discussion, so this comment is the visible closure marker."
+    ? "This append-only comment is the visible closure marker for the automated review."
     : "The Discussion remains open because the synthesis is not approved.";
 
   return [
@@ -1571,14 +1532,12 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
-    const wasClosed = recommendation === "Approve" ? await closeDiscussionResolved(discussion.id) : false;
-    const finalCommentBody = buildDiscussionCompletionComment(debate.synthesis, wasClosed);
+    const finalCommentBody = buildDiscussionCompletionComment(debate.synthesis);
     await addDiscussionComment(discussion.id, finalCommentBody);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
       action: "created",
       recommendation,
-      closed: wasClosed,
       discussionUrl: discussion.url,
     });
 

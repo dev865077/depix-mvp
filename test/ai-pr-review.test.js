@@ -201,17 +201,15 @@ describe("ai pr review discussion rendering", () => {
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment(
       "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
-      true,
     );
     const blocked = buildDiscussionCompletionComment(
       "Request changes\n\n## Findings\n- Fix timeout handling.\n\n## Recommendation\nRequest changes",
-      false,
     );
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
     expect(approved).toContain("Discussion concluded");
     expect(approved).toContain("Final recommendation: `Approve`");
-    expect(approved).toContain("marked this Discussion as resolved");
+    expect(approved).toContain("visible closure marker");
     expect(blocked).toContain("Final recommendation: `Request changes`");
     expect(blocked).toContain("remains open");
   });
@@ -226,6 +224,7 @@ describe("ai pr review discussion rendering", () => {
     expect(memo.length).toBeLessThan(900);
     expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
     expect(synthesis).toContain("Rerun the discussion review");
+    expect(buildDiscussionCompletionComment(synthesis)).toContain("Final recommendation: `Request changes`");
   });
 
   it("builds the model payload from the GitHub pull_request shape", () => {
