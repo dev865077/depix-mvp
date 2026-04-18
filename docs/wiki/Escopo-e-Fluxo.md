@@ -33,8 +33,11 @@
 - as fronteiras canonicas de rota ja existem
 - a resolucao de tenant no path ja existe
 - a persistencia base ja existe
+- a maquina XState da progressao inicial ja existe como modulo puro
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta
 
 Esta pagina descreve o fluxo alvo do MVP, nao a lista de handlers ja implementados em producao.
+
+Para o desenho atual da maquina de pedidos, veja [XState e Fluxo de Pedidos](XState-e-Fluxo-de-Pedidos).
