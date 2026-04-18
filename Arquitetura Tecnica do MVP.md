@@ -79,7 +79,7 @@ Separacao minima recomendada:
 
 - `order service`: cria e atualiza o pedido
 - `deposit service`: chama `deposit`, aplica split e persiste cobranca
-- `webhook service`: processa evento da Eulen
+- `webhook service`: valida `Authorization`, persiste evento da Eulen e aplica a verdade externa em `orders` e `deposits`
 - `recheck service`: usa `deposit-status` e `deposits` quando preciso
 
 ### 4. `XState`
@@ -117,6 +117,9 @@ Responsabilidades:
 - `Authorization`
 - `X-Nonce`
 - `X-Async`
+
+> [!note]
+> O webhook principal de deposito da Eulen valida o segredo no header `Authorization` na borda da requisicao. O recheck operacional continua como trabalho separado.
 
 ### 7. Saida externa de entrega
 
