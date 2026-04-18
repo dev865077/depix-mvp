@@ -23,7 +23,8 @@ const MAX_PR_BODY_CHARS = 3000;
 const MAX_REVIEW_INPUT_CHARS = 18000;
 const MAX_SYNTHESIS_INPUT_CHARS = 26000;
 const MAX_AGENT_MEMO_CHARS = 5000;
-const MAX_OUTPUT_TOKENS = 25000;
+const MAX_OUTPUT_TOKENS = 8000;
+const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
 const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
 const FORBIDDEN_RECOMMENDATIONS = ["Approve with minor follow-up", "Approve with later changes"];
@@ -211,6 +212,19 @@ function sanitizePlainTextForGitHubTitle(value) {
     .replace(/[#*_`[\]()<>]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Create an AbortSignal for external API calls that must not hang CI forever.
+ *
+ * @returns {AbortSignal | undefined} Timeout signal when supported by Node.
+ */
+function createOpenAIRequestSignal() {
+  if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") {
+    return undefined;
+  }
+
+  return AbortSignal.timeout(OPENAI_REQUEST_TIMEOUT_MS);
 }
 
 /**
@@ -899,6 +913,7 @@ async function generateModelMarkdown(systemPrompt, userPrompt, model, options = 
   const boundedUserPrompt = truncateText(userPrompt, options.maxInputChars ?? MAX_REVIEW_INPUT_CHARS);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
+    signal: createOpenAIRequestSignal(),
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
@@ -996,12 +1011,14 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
  * @returns {Promise<{ product: string, technical: string, risk: string, synthesis: string }>} Debate output.
  */
 async function generateDiscussionDebate(promptBundle, userPrompt, model) {
+  console.log("Starting multi-role PR discussion review.");
   const [product, technical, risk] = await Promise.all([
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt), userPrompt, model),
   ]);
 
+  console.log("Specialist PR review memos completed. Starting synthesis.");
   const synthesis = await generateModelMarkdown(
     composeSystemPrompt(promptBundle.doctrine, promptBundle.synthesisPrompt),
     buildSynthesisUserPrompt(userPrompt, { product, technical, risk }),
@@ -1009,6 +1026,7 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
     { expectRecommendation: true, maxInputChars: MAX_SYNTHESIS_INPUT_CHARS },
   );
 
+  console.log("Multi-role PR discussion synthesis completed.");
   return { product, technical, risk, synthesis };
 }
 
@@ -1243,9 +1261,15 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     if (existingDiscussion.id) {
-      const updatedDiscussion = await updateDiscussion(existingDiscussion.id, discussionTitle, discussionBody);
+      try {
+        const updatedDiscussion = await updateDiscussion(existingDiscussion.id, discussionTitle, discussionBody);
 
-      return { url: updatedDiscussion.url, failure: null };
+        return { url: updatedDiscussion.url, failure: null };
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+
+        return { url: existingDiscussion.url, failure };
+      }
     }
 
     return { url: existingDiscussion.url, failure: null };
