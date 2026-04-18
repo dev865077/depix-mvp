@@ -59,7 +59,10 @@ describe("telegram runtime bootstrap", () => {
   it("creates a Cloudflare-compatible webhook callback for the tenant runtime", function assertWebhookCallbackCreation() {
     const tenants = readTenantRegistry(TEST_ENV);
     const runtime = getTelegramRuntime(tenants.alpha);
-    const callback = runtime.createWebhookCallback("123456:telegram-token");
+    const callback = runtime.createWebhookCallback({
+      telegramBotToken: "123456:telegram-token",
+      telegramWebhookSecret: "alpha-telegram-secret",
+    });
 
     expect(callback).toBeTypeOf("function");
   });

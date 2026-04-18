@@ -17,19 +17,15 @@ async function fetchJson(url, init = {}) {
 function createTelegramUpdate() {
   return {
     update_id: 10000,
-    message: {
-      message_id: 1,
-      date: 1_700_000_000,
-      text: "hello",
-      chat: {
-        id: 42,
-        type: "private",
-      },
+    callback_query: {
+      id: "callback-1",
       from: {
         id: 7,
         is_bot: false,
         first_name: "Tester",
       },
+      chat_instance: "chat-instance-1",
+      data: "noop",
     },
   };
 }
@@ -96,6 +92,7 @@ describe("tenant routing", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
         },
         body: JSON.stringify(createTelegramUpdate()),
       },

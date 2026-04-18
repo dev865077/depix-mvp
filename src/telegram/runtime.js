@@ -1,18 +1,14 @@
 /**
  * Bootstrap e cache do runtime Telegram baseado em grammY.
  *
- * Esta camada existe para separar:
- * - a presenca do bot/runtime dentro do Worker
- * - a futura logica de webhook da issue seguinte
- *
- * Assim, a aplicacao passa a ter uma fronteira explicita para o runtime do
- * Telegram sem ja acoplar transporte, regras de negocio e maquina de estados.
- *
- * Nesta fase o bootstrap e propositalmente "lazy": o Worker registra o runtime
- * do grammY e deixa a criacao efetiva do bot para a issue seguinte, quando o
- * webhook real entrar em cena com os segredos e middlewares corretos.
+ * A responsabilidade deste modulo e:
+ * - bootstrapar o runtime por tenant
+ * - instalar o fluxo minimo de resposta do bot
+ * - manter a fronteira explicita entre rota HTTP e comportamento do bot
  */
 import { Bot, webhookCallback } from "grammy";
+
+import { installTelegramReplyFlow } from "./reply-flow.js";
 
 const telegramRuntimeCache = new Map();
 
@@ -38,9 +34,8 @@ function buildBootstrapUsername(tenantId) {
 /**
  * Monta um botInfo sintetico para o bootstrap do grammY.
  *
- * O bot real ainda nao esta fazendo `getMe()` nem processando updates nesta
- * issue. Mesmo assim, deixamos um `botInfo` estavel para que o runtime exista
- * de forma previsivel e sem depender de chamada remota no bootstrap.
+ * O runtime roda em ambiente serverless e nao deve depender de `getMe()` para
+ * cada request. Por isso, deixamos um `botInfo` estavel no bootstrap.
  *
  * @param {{ tenantId: string, displayName: string }} tenantConfig Tenant atual.
  * @returns {{ id: number, is_bot: true, first_name: string, username: string, can_join_groups: boolean, can_read_all_group_messages: false, supports_inline_queries: false }} Identidade sintetica do bot.
@@ -60,18 +55,30 @@ function buildBootstrapBotInfo(tenantConfig) {
 /**
  * Cria um bot grammY real para o tenant.
  *
- * O bootstrap do runtime nao chama este helper automaticamente. Isso permite
- * que a issue atual introduza grammY no Worker sem acoplar o caminho de
- * roteamento a segredos que ainda serao validados e usados no webhook real.
- *
  * @param {{ tenantId: string, displayName: string }} tenantConfig Tenant resolvido.
  * @param {string} telegramBotToken Token real do bot no Telegram.
+ * @param {{
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} [options] Instrumentacao do request atual.
  * @returns {Bot} Instancia do bot pronta para uso futuro.
  */
-export function createTelegramBot(tenantConfig, telegramBotToken) {
-  return new Bot(telegramBotToken, {
+export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) {
+  const bot = new Bot(telegramBotToken, {
     botInfo: buildBootstrapBotInfo(tenantConfig),
   });
+
+  installTelegramReplyFlow(bot, {
+    tenant: tenantConfig,
+    runtimeConfig: options.runtimeConfig,
+    requestContext: options.requestContext,
+  });
+
+  return bot;
 }
 
 /**
@@ -82,8 +89,31 @@ export function createTelegramBot(tenantConfig, telegramBotToken) {
  *   engine: "grammy",
  *   tenantId: string,
  *   botInfo: ReturnType<typeof buildBootstrapBotInfo>,
- *   createBot: (telegramBotToken: string) => Bot,
- *   createWebhookCallback: (telegramBotToken: string) => (request: Request) => Promise<Response>
+ *   createBot: (
+ *     telegramBotToken: string,
+ *     options?: {
+ *       runtimeConfig?: Record<string, unknown>,
+ *       requestContext?: {
+ *         requestId?: string,
+ *         method?: string,
+ *         path?: string
+ *       }
+ *     }
+ *   ) => Bot,
+ *   createWebhookCallback: (
+ *     input:
+ *       | string
+ *       | {
+ *           telegramBotToken: string,
+ *           telegramWebhookSecret?: string,
+ *           runtimeConfig?: Record<string, unknown>,
+ *           requestContext?: {
+ *             requestId?: string,
+ *             method?: string,
+ *             path?: string
+ *           }
+ *         }
+ *   ) => (request: Request) => Promise<Response>
  * }} Runtime pronto para ser reutilizado.
  */
 export function createTelegramRuntime(tenantConfig) {
@@ -93,23 +123,21 @@ export function createTelegramRuntime(tenantConfig) {
     engine: "grammy",
     tenantId: tenantConfig.tenantId,
     botInfo,
-    createBot(telegramBotToken) {
-      return createTelegramBot(tenantConfig, telegramBotToken);
+    createBot(telegramBotToken, options) {
+      return createTelegramBot(tenantConfig, telegramBotToken, options);
     },
-    createWebhookCallback(telegramBotToken) {
-      const bot = createTelegramBot(tenantConfig, telegramBotToken);
-
-      bot.use(async function attachTenantContext(ctx, next) {
-        ctx.state ??= {};
-        ctx.state.tenant = {
-          tenantId: tenantConfig.tenantId,
-          displayName: tenantConfig.displayName,
-        };
-
-        await next();
+    createWebhookCallback(input) {
+      const options = typeof input === "string"
+        ? { telegramBotToken: input }
+        : input;
+      const bot = createTelegramBot(tenantConfig, options.telegramBotToken, {
+        runtimeConfig: options.runtimeConfig,
+        requestContext: options.requestContext,
       });
 
-      return webhookCallback(bot, "cloudflare-mod");
+      return webhookCallback(bot, "cloudflare-mod", {
+        secretToken: options.telegramWebhookSecret,
+      });
     },
   };
 }
@@ -123,8 +151,31 @@ export function createTelegramRuntime(tenantConfig) {
  *   engine: "grammy",
  *   tenantId: string,
  *   botInfo: ReturnType<typeof buildBootstrapBotInfo>,
- *   createBot: (telegramBotToken: string) => Bot,
- *   createWebhookCallback: (telegramBotToken: string) => (request: Request) => Promise<Response>
+ *   createBot: (
+ *     telegramBotToken: string,
+ *     options?: {
+ *       runtimeConfig?: Record<string, unknown>,
+ *       requestContext?: {
+ *         requestId?: string,
+ *         method?: string,
+ *         path?: string
+ *       }
+ *     }
+ *   ) => Bot,
+ *   createWebhookCallback: (
+ *     input:
+ *       | string
+ *       | {
+ *           telegramBotToken: string,
+ *           telegramWebhookSecret?: string,
+ *           runtimeConfig?: Record<string, unknown>,
+ *           requestContext?: {
+ *             requestId?: string,
+ *             method?: string,
+ *             path?: string
+ *           }
+ *         }
+ *   ) => (request: Request) => Promise<Response>
  * }} Runtime do tenant.
  */
 export function getTelegramRuntime(tenantConfig) {
