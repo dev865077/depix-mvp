@@ -67,8 +67,8 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 ## Ambientes de lancamento
 
 - `local`: pode habilitar para desenvolvimento e testes locais
-- `test`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional antes da validacao real
-- `production`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional antes de qualquer uso de suporte
+- `test`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional por configuracao de ambiente antes da validacao real; o valor nao fica ligado no `wrangler.jsonc` versionado
+- `production`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional por configuracao de ambiente antes de qualquer uso de suporte; o valor nao fica ligado no `wrangler.jsonc` versionado
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 

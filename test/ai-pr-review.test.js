@@ -460,6 +460,84 @@ describe("ai pr review discussion rendering", () => {
     expect(body).not.toContain("### docs/wiki/Noise-8.md");
   });
 
+  it("sends complete current evidence for critical discussion-review files", () => {
+    const files = [
+      ...Array.from({ length: 20 }, (_, index) => ({
+        filename: `docs/wiki/Long-${index}.md`,
+        status: "modified",
+        additions: 200,
+        deletions: 0,
+        patch: ["@@", ...Array.from({ length: 200 }, () => "+documentation noise")].join("\n"),
+      })),
+      {
+        filename: "src/services/ops-route-authorization.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenant override declared\n+missing binding fails closed\n+AUTH_SENTINEL",
+      },
+      {
+        filename: "src/services/eulen-deposit-recheck.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+D1 batch persists audit event\n+aggregate updates stay idempotent\n+RECHECK_SENTINEL",
+      },
+      {
+        filename: "src/routes/health.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenantOverrides redacted\n+tenantSummary preserves compatibility\n+HEALTH_SENTINEL",
+      },
+      {
+        filename: "test/deposit-recheck.test.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+override missing returns 503\n+fetch is not called\n+DEPOSIT_TEST_SENTINEL",
+      },
+      {
+        filename: "test/health.test.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenantOverrides only state and invalidCount\n+tenant inventory remains available\n+HEALTH_TEST_SENTINEL",
+      },
+    ];
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      files,
+      gate,
+    );
+
+    for (const sentinel of [
+      "AUTH_SENTINEL",
+      "RECHECK_SENTINEL",
+      "HEALTH_SENTINEL",
+      "DEPOSIT_TEST_SENTINEL",
+      "HEALTH_TEST_SENTINEL",
+    ]) {
+      expect(body).toContain(sentinel);
+    }
+
+    expect(body.indexOf("### src/services/eulen-deposit-recheck.js")).toBeLessThan(
+      body.indexOf("### docs/wiki/Long-0.md"),
+    );
+    expect(body.indexOf("### src/services/ops-route-authorization.js")).toBeLessThan(
+      body.indexOf("### docs/wiki/Long-0.md"),
+    );
+  });
+
   it("builds the sticky comment with a discussion link when present", () => {
     const body = buildPullRequestCommentBody({
       model: "gpt-5.4-mini",

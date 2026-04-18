@@ -7,6 +7,7 @@ export const healthRouter = new Hono();
 
 export function handleHealth(c) {
   const runtimeConfig = c.get("runtimeConfig");
+  const tenantIds = Object.keys(runtimeConfig.tenants);
 
   return c.json({
     status: "ok",
@@ -17,9 +18,10 @@ export function handleHealth(c) {
     configuration: {
       eulenApiBaseUrl: runtimeConfig.eulenApiBaseUrl,
       database: runtimeConfig.database,
-      tenants: {
-        configured: Object.keys(runtimeConfig.tenants).length > 0,
-        count: Object.keys(runtimeConfig.tenants).length,
+      tenants: runtimeConfig.tenants,
+      tenantSummary: {
+        configured: tenantIds.length > 0,
+        count: tenantIds.length,
       },
       secrets: runtimeConfig.secrets,
       operations: {

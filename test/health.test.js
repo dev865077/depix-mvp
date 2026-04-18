@@ -82,11 +82,13 @@ export async function assertHealthResponse() {
   expect(body.status).toBe("ok");
   expect(body.environment).toBe("local");
   expect(body.configuration.database.bindingConfigured).toBe(true);
-  expect(body.configuration.tenants.configured).toBe(true);
-  expect(body.configuration.tenants.count).toBe(2);
+  expect(body.configuration.tenants.alpha.displayName).toBe("Alpha");
+  expect(body.configuration.tenants.beta.displayName).toBe("Beta");
+  expect(body.configuration.tenantSummary.configured).toBe(true);
+  expect(body.configuration.tenantSummary.count).toBe(2);
   expect(body.configuration.secrets.registryConfigured).toBe(true);
   expect(body.configuration.secrets.tenantSecretBindingsConfigured).toBe(true);
-  expect(body.configuration.operations.depositRecheck.state).toBe("missing_secret");
+  expect(body.configuration.operations.depositRecheck.state).toBe("disabled");
   expect(body.configuration.operations.depositRecheck.ready).toBe(false);
   expect(body.configuration.operations.depositRecheck.tenantOverrides.state).toBe("ready");
   expect(body.configuration.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);

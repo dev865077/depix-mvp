@@ -82,8 +82,8 @@
 
 ## Rollout e rollback
 
-- rollout: provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
-- rollout atual esperado: `test` e `production` so ficam operacionalmente ativos depois da provisao explicita desses bindings; sem isso, a rota permanece escura por desenho
+- rollout: manter `ENABLE_OPS_DEPOSIT_RECHECK` fora do `wrangler.jsonc` versionado; provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
+- rollout atual esperado: `local`, `test` e `production` ficam desligados por padrao no config versionado; cada ambiente so fica operacionalmente ativo depois da provisao explicita da flag e dos secrets
 - rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` para `false`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
 - rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
 - rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
@@ -102,7 +102,8 @@
 - `production` habilitado so depois do smoke test autenticado em `test`
 - `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config` ou `missing_secret`
 - `/health` confirma `configuration.operations.depositRecheck.tenantOverrides.state` como sinal redigido de overrides locais; `invalid_config` nesse campo nao derruba a prontidao global, mas indica que ao menos um tenant com override declarado falhara fechado ate o segredo ser corrigido
-- `/health` nao lista nomes de tenants nem nomes de bindings de overrides operacionais; o contrato publico e agregado e redigido por desenho: `{ state, invalidCount }`. A trilha tenant-level fica nos logs estruturados de request/config, com `requestId`, `tenantId`, `authScope`, `bindingName` operacional e outcome.
+- `/health` mantem `configuration.tenants` como inventario legado de tenants para compatibilidade operacional e adiciona `configuration.tenantSummary` para checagens agregadas novas
+- `/health` nao lista detalhes tenant-level dentro de `tenantOverrides`; esse contrato e redigido por desenho: `{ state, invalidCount }`. A trilha tenant-level fica nos logs estruturados de request/config, com `requestId`, `tenantId`, `authScope`, `bindingName` operacional e outcome.
 - operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
 - rollback rapido documentado por flag e por rotacao/remocao do segredo
 
