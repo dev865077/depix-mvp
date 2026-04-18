@@ -8,6 +8,7 @@ import {
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
   buildDiscussionGateReview,
+  buildDiscussionHistoryContext,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
@@ -480,6 +481,49 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("Base branch: main");
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
     expect(body).toContain("scripts/ai-pr-review.mjs");
+  });
+
+  it("includes prior append-only Discussion comments in the reviewer prompt", () => {
+    const discussionContext = buildDiscussionHistoryContext([
+      {
+        author: { login: "dev865077" },
+        publishedAt: "2026-04-18T22:14:58Z",
+        body: "Atualizacao append-only: retry sequencial testado e `npm test` passou.",
+      },
+      {
+        author: { login: "github-actions" },
+        publishedAt: "2026-04-18T22:15:13Z",
+        body: "Final recommendation: `Request changes`",
+      },
+    ]);
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      [
+        {
+          filename: "test/deposit-recheck.test.js",
+          status: "modified",
+          additions: 20,
+          deletions: 0,
+          patch: "@@\n+retry sequencial testado",
+        },
+      ],
+      gate,
+      discussionContext,
+    );
+
+    expect(body).toContain("## Existing Discussion context");
+    expect(body).toContain("2026-04-18T22:14:58Z by dev865077");
+    expect(body).toContain("retry sequencial testado");
+    expect(body).toContain("Final recommendation: `Request changes`");
+    expect(body.indexOf("## Existing Discussion context")).toBeLessThan(body.indexOf("## Changed files digest"));
   });
 
   it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {

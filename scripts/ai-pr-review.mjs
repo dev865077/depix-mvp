@@ -20,6 +20,9 @@ const RUN_MODE_DIRECT = "direct";
 const RUN_MODE_DISCUSSION = "discussion";
 const MAX_FILES = 24;
 const MAX_DISCUSSION_LOOKBACK = 100;
+const MAX_DISCUSSION_CONTEXT_COMMENTS = 20;
+const MAX_DISCUSSION_CONTEXT_CHARS = 16000;
+const MAX_DISCUSSION_CONTEXT_COMMENT_CHARS = 1400;
 const MAX_PATCH_CHARS_PER_FILE = 7000;
 const MAX_CRITICAL_PATCH_CHARS_PER_FILE = 50000;
 const MAX_PR_BODY_CHARS = 3000;
@@ -458,6 +461,38 @@ async function fetchRepositoryDiscussionMetadata(owner, name) {
 }
 
 /**
+ * Fetch recent comments from an existing GitHub Discussion.
+ *
+ * @param {string} discussionId GitHub GraphQL node id.
+ * @returns {Promise<Array<{ author?: { login?: string }, publishedAt?: string, body?: string }>>} Recent comments.
+ */
+async function fetchDiscussionComments(discussionId) {
+  const query = `
+    query($discussionId: ID!, $limit: Int!) {
+      node(id: $discussionId) {
+        ... on Discussion {
+          comments(last: $limit) {
+            nodes {
+              publishedAt
+              author {
+                login
+              }
+              body
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, {
+    discussionId,
+    limit: MAX_DISCUSSION_CONTEXT_COMMENTS,
+  });
+
+  return data?.node?.comments?.nodes ?? [];
+}
+
+/**
  * Choose the safest discussion category for automated design debate.
  *
  * @param {Array<{ id: string, name: string, isAnswerable: boolean }>} categories Repository categories.
@@ -592,6 +627,72 @@ function findExistingDiscussionTarget(pullRequestNumber, comments, discussions) 
     typeof discussion.title === "string" && discussion.title.includes(issueMarker));
 
   return matchingDiscussion ? { id: matchingDiscussion.id, url: matchingDiscussion.url } : null;
+}
+
+/**
+ * Build a bounded, model-readable context block from prior Discussion comments.
+ *
+ * The review workflow is append-only by design, so the newest run must be able
+ * to read prior operator updates and earlier automated findings. This context is
+ * not treated as source code truth; it is operational history that prevents the
+ * agents from asking again for evidence already posted in the Discussion.
+ *
+ * @param {Array<{ author?: { login?: string }, publishedAt?: string, body?: string }>} comments Discussion comments.
+ * @returns {string} Bounded context block.
+ */
+export function buildDiscussionHistoryContext(comments) {
+  if (!Array.isArray(comments) || comments.length === 0) {
+    return "";
+  }
+
+  const sections = comments
+    .filter((comment) => typeof comment?.body === "string" && comment.body.trim().length > 0)
+    .map((comment) => {
+      const author = comment.author?.login ?? "unknown";
+      const publishedAt = comment.publishedAt ?? "unknown time";
+      const body = truncateText(sanitizePublishedMarkdown(comment.body), MAX_DISCUSSION_CONTEXT_COMMENT_CHARS);
+
+      return [
+        `### ${publishedAt} by ${author}`,
+        body,
+      ].join("\n");
+    });
+
+  return truncateText(sections.join("\n\n"), MAX_DISCUSSION_CONTEXT_CHARS);
+}
+
+/**
+ * Resolve existing Discussion context for a PR before generating new memos.
+ *
+ * @param {string} repository Repository in owner/name form.
+ * @param {number} pullRequestNumber PR number.
+ * @returns {Promise<{ discussionUrl: string | null, context: string }>} Existing Discussion context.
+ */
+async function resolveExistingDiscussionContext(repository, pullRequestNumber) {
+  const [owner, name] = repository.split("/");
+  const [comments, repositoryMetadata] = await Promise.all([
+    fetchPullRequestComments(repository, pullRequestNumber),
+    fetchRepositoryDiscussionMetadata(owner, name),
+  ]);
+  const existingDiscussion = findExistingDiscussionTarget(
+    pullRequestNumber,
+    comments,
+    repositoryMetadata.discussions.nodes,
+  );
+
+  if (!existingDiscussion?.id) {
+    return {
+      discussionUrl: existingDiscussion?.url ?? null,
+      context: "",
+    };
+  }
+
+  const discussionComments = await fetchDiscussionComments(existingDiscussion.id);
+
+  return {
+    discussionUrl: existingDiscussion.url,
+    context: buildDiscussionHistoryContext(discussionComments),
+  };
 }
 
 /**
@@ -1116,9 +1217,20 @@ function buildFilesReviewPayload(files) {
  * @param {any} pullRequest GitHub pull request payload.
  * @param {any[]} files Changed files from GitHub.
  * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
+ * @param {string} [discussionContext] Prior Discussion context for append-only reruns.
  * @returns {string} Final user payload.
  */
-export function buildPullRequestUserPrompt(repository, pullRequest, files, gate) {
+export function buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext = "") {
+  const boundedDiscussionContext = discussionContext.trim()
+    ? [
+      "## Existing Discussion context",
+      "These comments are append-only operational history from the linked Discussion. Use them to understand what was already answered, but treat the current changed-files payload as the technical source of truth.",
+      "",
+      discussionContext.trim(),
+      "",
+    ]
+    : [];
+
   return truncateText([
     `Repository: ${repository}`,
     `PR: #${pullRequest.number} - ${pullRequest.title}`,
@@ -1137,6 +1249,7 @@ export function buildPullRequestUserPrompt(repository, pullRequest, files, gate)
     "## PR description",
     truncateText(pullRequest.body ?? "", MAX_PR_BODY_CHARS) || "[no description provided]",
     "",
+    ...boundedDiscussionContext,
     "## Changed files digest",
     buildChangedFilesDigest(files) || "[no changed files reported]",
     "",
@@ -1985,10 +2098,24 @@ async function main() {
   }
 
   const model = readConfiguredModel();
-  const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate);
   let review = "";
   let discussionUrl = null;
   let discussionPublicationFailure = null;
+  let discussionContext = "";
+
+  if (gate.requiresDiscussion) {
+    const existingDiscussionContext = await resolveExistingDiscussionContext(repository, pullRequest.number);
+
+    discussionUrl = existingDiscussionContext.discussionUrl;
+    discussionContext = existingDiscussionContext.context;
+
+    logOperationalEvent("ai_pr_review.discussion_context.loaded", {
+      hasExistingDiscussion: Boolean(existingDiscussionContext.discussionUrl),
+      contextChars: discussionContext.length,
+    });
+  }
+
+  const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext);
 
   if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
