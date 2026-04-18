@@ -221,6 +221,14 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("GraphQL timeout");
   });
 
+  it("keeps publication fallback messages bounded and markdown-safe", () => {
+    const body = buildDiscussionPublicationFallback(new Error("GitHub said `nope` ".repeat(60)));
+
+    expect(body).toContain("Discussion publication fallback");
+    expect(body.length).toBeLessThan(900);
+    expect(body).not.toContain("`nope`");
+  });
+
   it("selects a safe discussion category", () => {
     const category = selectDiscussionCategory([
       { id: "1", name: "Announcements", isAnswerable: true },

@@ -1144,6 +1144,53 @@ async function upsertPullRequestComment(repoFullName, issueNumber, body) {
 }
 
 /**
+ * Write an Actions step summary when available.
+ *
+ * @param {string} markdown Markdown summary.
+ * @returns {Promise<void>} Resolves when written or skipped.
+ */
+async function writeStepSummary(markdown) {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
+  if (!summaryPath) {
+    return;
+  }
+
+  await fs.appendFile(summaryPath, `${markdown}\n`, "utf8");
+}
+
+/**
+ * Publish the PR comment without making comment write failures fail the check.
+ *
+ * GitHub may refuse to update older bot comments when the token identity or
+ * event context changes. The review result is still useful, so we degrade to
+ * the job summary instead of turning a reporting failure into a merge blocker.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber PR number as issue number.
+ * @param {string} body Markdown comment body.
+ * @returns {Promise<void>} Completes after comment or summary publication.
+ */
+async function publishPullRequestCommentOrSummary(repoFullName, issueNumber, body) {
+  try {
+    await upsertPullRequestComment(repoFullName, issueNumber, body);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.warn(`Unable to publish AI PR review comment; writing step summary instead: ${message}`);
+    await writeStepSummary([
+      "## AI PR Review comment fallback",
+      "",
+      "GitHub refused the PR comment write/update, so the review content is available in this job summary.",
+      "",
+      `Failure: \`${truncateText(message, 500).replace(/`/g, "'")}\``,
+      "",
+      body,
+    ].join("\n"));
+  }
+}
+
+/**
  * Write one GitHub Actions output when the workflow exposes GITHUB_OUTPUT.
  *
  * @param {string} key Output key.
@@ -1306,7 +1353,7 @@ async function main() {
     discussionUrl,
   });
 
-  await upsertPullRequestComment(repository, pullRequest.number, commentBody);
+  await publishPullRequestCommentOrSummary(repository, pullRequest.number, commentBody);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

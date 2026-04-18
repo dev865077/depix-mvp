@@ -50,7 +50,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -78,7 +78,7 @@ jobs:
       contents: read
       discussions: write
       issues: write
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Checkout repository
