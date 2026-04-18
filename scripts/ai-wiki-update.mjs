@@ -19,7 +19,8 @@ const MAX_PR_BODY_CHARS = 4000;
 const MAX_WIKI_PAGE_CHARS = 7000;
 const MAX_WIKI_INPUT_CHARS = 60000;
 const MAX_MODEL_INPUT_CHARS = 90000;
-const MAX_OUTPUT_TOKENS = 12000;
+const MAX_OUTPUT_TOKENS = 25000;
+const REASONING_EFFORT = "low";
 
 /**
  * Assert that an environment variable exists.
@@ -312,6 +313,9 @@ async function generateWikiUpdate(systemPrompt, userPrompt, model) {
     body: JSON.stringify({
       model,
       max_output_tokens: MAX_OUTPUT_TOKENS,
+      reasoning: {
+        effort: REASONING_EFFORT,
+      },
       text: {
         format: {
           type: "json_object",
