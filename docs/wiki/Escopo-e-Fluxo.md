@@ -13,13 +13,16 @@
 9. O webhook da Eulen confirma o status.
 10. O sistema atualiza `deposit_events`, `deposits` e `orders`.
 
-## Regas de dados importantes
+## Regras de dados importantes
 
 - `tenantId` deve existir nas tabelas operacionais
 - `nonce` representa a intencao da cobranca
 - `depositEntryId` corresponde ao `response.id` da Eulen
 - `qrId` pode existir como identificador distinto depois e deve ser persistido sem sobrescrever `depositEntryId`
 - escritas criticas multi-tabela devem usar `env.DB.batch()`
+- o fluxo Telegram agora coleta o valor do pedido em `amount` antes de avancar para `wallet`
+- valores BRL simples aceitos no chat devem ser conservadores e nao ambíguos
+- replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `wallet`
 
 ## Fora de escopo
 
@@ -35,7 +38,9 @@
 - a persistencia base ja existe
 - a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
 - o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
-- ` /start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
+- `/start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
+- a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
+- mensagens invalidas mantem o pedido em `amount` e orientam o usuario a reenviar o valor
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta

@@ -51,6 +51,8 @@
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
 - quando o pedido aberto estiver em `draft`, o comando `/start` avanca o agregado para `amount` sem criar uma nova linha
+- quando o pedido estiver em `amount`, o valor BRL recebido no Telegram deve atualizar `amount_in_cents` e avancar o `current_step` para `wallet`
+- replays de mensagens antigas nao devem sobrescrever `amount_in_cents` quando o pedido ja saiu de `amount`
 
 ## Guardas de transicao
 

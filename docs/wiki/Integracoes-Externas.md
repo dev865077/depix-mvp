@@ -16,6 +16,9 @@ Estado atual:
 - o bot ja tem um fluxo inicial de resposta para `/start` e mensagens de texto
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
+- o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
+- mensagens invalidas de valor nao avancam o pedido e retornam orientacao de correcao
+- replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 
 ## Eulen
