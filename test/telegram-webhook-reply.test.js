@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { getDatabase } from "../src/db/client.js";
-import { getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
+import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
@@ -312,6 +312,7 @@ describe("telegram webhook reply flow", () => {
     expect(logRecords.some((record) => record.message === "telegram.outbound.succeeded")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.handler.completed")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.order.created")).toBe(true);
+    expect(logRecords.some((record) => record.message === "telegram.order.started")).toBe(true);
 
     const savedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501");
 
@@ -319,7 +320,7 @@ describe("telegram webhook reply flow", () => {
     expect(savedOrder?.userId).toBe("501");
     expect(savedOrder?.channel).toBe("telegram");
     expect(savedOrder?.productType).toBe("depix");
-    expect(savedOrder?.currentStep).toBe("draft");
+    expect(savedOrder?.currentStep).toBe("amount");
     expect(savedOrder?.status).toBe("draft");
     expect(typeof savedOrder?.orderId).toBe("string");
     expect(savedOrder?.orderId.length).toBeGreaterThan(6);
@@ -453,8 +454,158 @@ describe("telegram webhook reply flow", () => {
     const resumedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "701");
 
     expect(resumedOrder?.orderId).toBe(firstOrder?.orderId);
-    expect(resumedOrder?.currentStep).toBe("draft");
+    expect(resumedOrder?.currentStep).toBe("amount");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not duplicate or regress the order when /start is replayed", async function assertStartReplayIsIdempotent() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/sendMessage");
+      expect(payload.text).toBe(buildTelegramStartReply({
+        displayName: "Alpha",
+      }));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 10,
+          date: 1713434411,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8008,
+          fromId: 801,
+          updateId: 31,
+        }),
+      },
+      workerEnv,
+    );
+    const firstOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "801");
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8008,
+          fromId: 801,
+          updateId: 32,
+        }),
+      },
+      workerEnv,
+    );
+
+    const replayedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "801");
+    const count = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ? AND channel = ?")
+      .bind("alpha", "801", "telegram")
+      .first();
+
+    expect(firstOrder?.orderId).toBeTruthy();
+    expect(replayedOrder?.orderId).toBe(firstOrder?.orderId);
+    expect(replayedOrder?.currentStep).toBe("amount");
+    expect(count?.count).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers from the current open step without creating a duplicate order", async function assertExistingStepReply() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    await createOrder(getDatabase(env), {
+      tenantId: "beta",
+      orderId: "order_existing_wallet",
+      userId: "901",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 10000,
+      currentStep: "wallet",
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+      expect(payload.chat_id).toBe(9009);
+      expect(payload.text).toContain("já tem um valor registrado");
+      expect(payload.text).toContain("endereço DePix/Liquid");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 11,
+          date: 1713434412,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 9009,
+          fromId: 901,
+          updateId: 33,
+        }),
+      },
+      workerEnv,
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "901");
+    const count = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ? AND channel = ?")
+      .bind("beta", "901", "telegram")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(currentOrder?.orderId).toBe("order_existing_wallet");
+    expect(currentOrder?.currentStep).toBe("wallet");
+    expect(count?.count).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("handles callback queries through answerCallbackQuery", async function assertCallbackQueryFallback() {

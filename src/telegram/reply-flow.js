@@ -8,7 +8,8 @@
  * - logs suficientes permitem rastrear o caminho inteiro
  */
 import { log } from "../lib/logger.js";
-import { ensureTelegramOrderRegistration } from "../services/order-registration.js";
+import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
+import { startTelegramOrderConversation } from "../services/order-registration.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
 
@@ -55,8 +56,8 @@ export function installTelegramReplyFlow(bot, input) {
     input,
     "start_command",
     async function replyToStart(ctx) {
-      await ensureTelegramConversationOrder(ctx, input);
-      await ctx.reply(buildTelegramStartReply(input.tenant));
+      const orderSession = await startTelegramConversationOrder(ctx, input);
+      await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
     },
   ));
 
@@ -68,8 +69,8 @@ export function installTelegramReplyFlow(bot, input) {
       input,
       "text_message_reply",
       async function replyToTextMessage(ctx) {
-        await ensureTelegramConversationOrder(ctx, input);
-        await ctx.reply(buildTelegramTextReply(input.tenant));
+        const orderSession = await startTelegramConversationOrder(ctx, input);
+        await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
       },
     ),
   );
@@ -125,23 +126,73 @@ export function installTelegramReplyFlow(bot, input) {
  * @returns {string} Texto final para o usuario.
  */
 export function buildTelegramStartReply(tenant) {
-  return [
-    `Olá! Este é o bot ${tenant.displayName} da DePix.`,
-    "A resposta inicial do bot já está ativa.",
-    "Agora podemos evoluir o fluxo conversacional completo com segurança.",
-  ].join("\n\n");
+  return buildTelegramAmountPrompt(tenant);
 }
 
 /**
- * Mensagem de confirmacao para texto comum.
+ * Mensagem para texto comum durante a etapa inicial.
+ *
+ * Enquanto o parser de valor ainda nao faz parte do recorte, texto livre deve
+ * manter o usuario no mesmo contrato conversacional: pedir um valor em BRL.
  *
  * @param {{ displayName: string }} tenant Tenant atual.
  * @returns {string} Texto final para o usuario.
  */
 export function buildTelegramTextReply(tenant) {
+  return buildTelegramAmountPrompt(tenant);
+}
+
+/**
+ * Seleciona a resposta conversacional a partir do passo persistido.
+ *
+ * O bot nunca deve criar um novo pedido so para explicar o proximo passo. Se
+ * ja existe um pedido aberto, a resposta reflete o estado atual do agregado e
+ * evita regredir ou duplicar a conversa.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ currentStep?: unknown }} order Pedido aberto da conversa.
+ * @returns {string} Texto final para o usuario.
+ */
+export function buildTelegramOrderStepReply(tenant, order) {
+  switch (order?.currentStep) {
+    case ORDER_PROGRESS_STATES.AMOUNT:
+      return buildTelegramAmountPrompt(tenant);
+    case ORDER_PROGRESS_STATES.WALLET:
+      return [
+        `Seu pedido ${tenant.displayName} já tem um valor registrado.`,
+        "Agora envie seu endereço DePix/Liquid para continuarmos.",
+      ].join("\n\n");
+    case ORDER_PROGRESS_STATES.CONFIRMATION:
+      return [
+        `Seu pedido ${tenant.displayName} está aguardando confirmação.`,
+        "Revise os dados e confirme quando estiver tudo certo.",
+      ].join("\n\n");
+    case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
+      return [
+        `Seu pedido ${tenant.displayName} já está criando o depósito Pix.`,
+        "Aguarde um instante enquanto finalizo essa etapa.",
+      ].join("\n\n");
+    case ORDER_PROGRESS_STATES.AWAITING_PAYMENT:
+      return [
+        `Seu pedido ${tenant.displayName} já está aguardando pagamento.`,
+        "Use o QR code Pix mais recente enviado nesta conversa.",
+      ].join("\n\n");
+    default:
+      return buildTelegramAmountPrompt(tenant);
+  }
+}
+
+/**
+ * Mensagem que inicia a coleta de valor em BRL.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramAmountPrompt(tenant) {
   return [
-    `Recebi sua mensagem no canal ${tenant.displayName}.`,
-    "O caminho de resposta do bot está ativo e pronto para as próximas etapas do fluxo.",
+    `Olá! Este é o bot ${tenant.displayName} da DePix.`,
+    "Para começar, envie o valor em BRL que você quer comprar.",
+    "Exemplo: 100,00",
   ].join("\n\n");
 }
 
@@ -191,9 +242,14 @@ export function buildTelegramUnsupportedCallbackReply(tenant) {
  *     path?: string
  *   }
  * }} input Contexto operacional do runtime.
- * @returns {Promise<{ order: Record<string, unknown>, created: boolean }>} Pedido ativo da conversa.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   created: boolean,
+ *   started: boolean,
+ *   conflict: boolean
+ * }>} Pedido ativo da conversa.
  */
-async function ensureTelegramConversationOrder(ctx, input) {
+async function startTelegramConversationOrder(ctx, input) {
   ctx.state ??= {};
 
   if (ctx.state.telegramOrderSession) {
@@ -226,7 +282,7 @@ async function ensureTelegramConversationOrder(ctx, input) {
     );
   }
 
-  const orderSession = await ensureTelegramOrderRegistration({
+  const orderSession = await startTelegramOrderConversation({
     db: input.db,
     tenant: input.tenant,
     telegramUserId,
@@ -241,6 +297,26 @@ async function ensureTelegramConversationOrder(ctx, input) {
     currentStep: orderSession.order.currentStep,
     status: orderSession.order.status,
   });
+
+  if (orderSession.started) {
+    logTelegramEvent(input, "info", "telegram.order.started", {
+      handlerName: ctx.state.telegramHandler,
+      orderId: orderSession.order.orderId,
+      userId: orderSession.order.userId,
+      currentStep: orderSession.order.currentStep,
+      status: orderSession.order.status,
+    });
+  }
+
+  if (orderSession.conflict) {
+    logTelegramEvent(input, "warn", "telegram.order.start_conflict", {
+      handlerName: ctx.state.telegramHandler,
+      orderId: orderSession.order.orderId,
+      userId: orderSession.order.userId,
+      currentStep: orderSession.order.currentStep,
+      status: orderSession.order.status,
+    });
+  }
 
   return orderSession;
 }

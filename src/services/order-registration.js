@@ -10,8 +10,18 @@
  * O service continua deliberadamente sem acoplamento a grammY. A borda do
  * Telegram apenas extrai `tenant`, `userId` e `db`, e delega para este modulo.
  */
-import { createOrder, getLatestOpenOrderByUser } from "../db/repositories/orders-repository.js";
-import { createInitialOrderProgression } from "../order-flow/order-progress-machine.js";
+import {
+  createOrder,
+  getLatestOpenOrderByUser,
+  updateOrderByIdWithStepGuard,
+} from "../db/repositories/orders-repository.js";
+import {
+  advanceOrderProgression,
+  createInitialOrderProgression,
+  ORDER_PROGRESS_EVENTS,
+  ORDER_PROGRESS_STATES,
+  normalizePersistedOrderProgressStep,
+} from "../order-flow/order-progress-machine.js";
 
 const DEFAULT_ORDER_CHANNEL = "telegram";
 const DEFAULT_PRODUCT_TYPE = "depix";
@@ -106,5 +116,71 @@ export async function ensureTelegramOrderRegistration(input) {
   return {
     order: createdOrder,
     created: true,
+  };
+}
+
+/**
+ * Materializa o pedido conversacional e aplica o primeiro evento de negocio.
+ *
+ * `ensureTelegramOrderRegistration()` cuida apenas de encontrar/criar o
+ * agregado. Esta funcao adiciona a semantica do comando de entrada do bot:
+ * quando o pedido ainda esta em `draft`, o evento canonico `START_ORDER`
+ * avanca a maquina para `amount` e a persistencia usa compare-and-set pelo
+ * passo lido. Assim, retries do Telegram e dois webhooks concorrentes nao
+ * criam pedidos duplicados nem sobrescrevem uma transicao mais nova.
+ *
+ * @param {Parameters<typeof ensureTelegramOrderRegistration>[0]} input Dependencias e contexto da chamada atual.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   created: boolean,
+ *   started: boolean,
+ *   conflict: boolean
+ * }>} Pedido aberto apos a tentativa idempotente de inicio.
+ */
+export async function startTelegramOrderConversation(input) {
+  const registration = await ensureTelegramOrderRegistration(input);
+  const tenantId = input.tenant.tenantId;
+  const currentStep = normalizePersistedOrderProgressStep(registration.order.currentStep);
+
+  if (currentStep !== ORDER_PROGRESS_STATES.DRAFT) {
+    return {
+      order: registration.order,
+      created: registration.created,
+      started: false,
+      conflict: false,
+    };
+  }
+
+  const progression = advanceOrderProgression({
+    currentStep: registration.order.currentStep,
+    context: {
+      tenantId,
+      orderId: registration.order.orderId,
+      userId: registration.order.userId,
+      amountInCents: registration.order.amountInCents,
+      walletAddress: registration.order.walletAddress,
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.START_ORDER,
+      tenantId,
+    },
+  });
+  const write = await updateOrderByIdWithStepGuard(
+    input.db,
+    tenantId,
+    registration.order.orderId,
+    registration.order.currentStep,
+    progression.orderPatch,
+  );
+
+  if (write.notFound) {
+    throw new Error("Telegram order start failed because the registered order disappeared before update.");
+  }
+
+  return {
+    order: write.order,
+    created: registration.created,
+    started: write.didUpdate,
+    conflict: write.conflict,
   };
 }
