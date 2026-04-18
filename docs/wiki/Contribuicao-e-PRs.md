@@ -46,6 +46,7 @@ Explicitar:
 - PR grande de docs/testes tambem entra em Discussion, porque tamanho por si so aumenta risco de revisao
 - a Discussion e um artefato de revisao: produto/escopo, tecnica/arquitetura, risco/operacao e sintese final
 - a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
+- comentarios antigos nunca devem ser editados ou removidos; o comentario final de status mais recente e sempre o estado canonico da automacao
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - a PR so fica pronta para merge quando a sintese nao trouxer blocker material ou quando um mantenedor registrar explicitamente que aceitou o risco residual
 - a Discussion nao substitui os checks obrigatorios; ela documenta decisao, risco e alinhamento antes do merge

@@ -20,6 +20,9 @@ Repository automation contract:
 - Discussion creation failure is operational noise, not a reason to hide the review; the synthesis must still be published on the PR.
 - Model-authored public output must avoid active mentions, images, and links unless the repository explicitly whitelists them later.
 - Discussion review must leave a visible lifecycle trail: role comments, final synthesis, and an explicit concluded/request-changes status.
+- Discussion comments are append-only by product policy. Do not ask the implementation to edit, deduplicate, delete, upsert, or API-close older Discussion comments.
+- The newest final-status comment is the canonical automation state and supersedes earlier final-status comments in the same Discussion.
+- Model timeout or failure is intentionally fail-closed as `Request changes`; maintainers recover by rerunning the check or explicitly accepting the operational risk.
 
 Reference doctrine adapted from:
 - Google Engineering Practices code review guide: https://google.github.io/eng-practices/review/

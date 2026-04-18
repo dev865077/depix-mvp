@@ -206,8 +206,10 @@ describe("ai pr review discussion rendering", () => {
     expect(approved).toContain("Discussion concluded");
     expect(approved).toContain("Final recommendation: `Approve`");
     expect(approved).toContain("visible closure marker");
+    expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
     expect(blocked).toContain("Final recommendation: `Request changes`");
     expect(blocked).toContain("remains open");
+    expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
   });
 
   it("turns model timeouts into bounded request-changes output", () => {

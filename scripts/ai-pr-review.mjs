@@ -1305,6 +1305,8 @@ export function buildDiscussionCompletionComment(recommendation) {
   const closeLine = isApproved
     ? "This append-only comment is the visible closure marker for the automated review."
     : "The Discussion remains open because the synthesis is not approved.";
+  const canonicalLine =
+    "Because this workflow is append-only, this newest final-status comment supersedes earlier automated final-status comments in this Discussion.";
 
   return [
     DISCUSSION_FINAL_COMMENT_MARKER,
@@ -1312,6 +1314,7 @@ export function buildDiscussionCompletionComment(recommendation) {
     "",
     statusLine,
     closeLine,
+    canonicalLine,
     "",
     `Final recommendation: \`${recommendation}\``,
   ].join("\n");
