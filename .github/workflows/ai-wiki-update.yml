@@ -54,8 +54,35 @@ jobs:
           git push
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish GitHub Wiki
+      - name: Detect GitHub Wiki availability
         if: steps.commit_docs.outputs.changed == 'true'
+        id: wiki_meta
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}")"
+          has_wiki="$(node -e "const repo = JSON.parse(process.argv[1]); process.stdout.write(String(Boolean(repo.has_wiki)));" "$response")"
+
+          echo "has_wiki=${has_wiki}" >> "$GITHUB_OUTPUT"
+
+          if [ "$has_wiki" != "true" ]; then
+            {
+              echo "## GitHub Wiki publication"
+              echo ""
+              echo "Skipped publish because this repository does not currently expose GitHub Wiki."
+              echo "The versioned source of truth remains \`docs/wiki\` in the main repository."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish GitHub Wiki
+        if: steps.commit_docs.outputs.changed == 'true' && steps.wiki_meta.outputs.has_wiki == 'true'
         env:
           WIKI_PUSH_TOKEN: ${{ secrets.WIKI_PUSH_TOKEN || github.token }}
         shell: bash

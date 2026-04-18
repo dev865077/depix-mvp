@@ -2,6 +2,8 @@
 
 Esta pasta e o espelho reviewavel da `Wiki 2.0` do projeto.
 
+Se a GitHub Wiki nao estiver habilitada para a visibilidade ou plano atual do repositorio, esta pasta continua como fonte de verdade documental.
+
 ## Por que ela existe
 
 O GitHub Wiki e um repositorio Git separado e nao oferece um fluxo normal de `Issues` e `Pull Requests` como o repositorio principal. Por isso, esta pasta permite:
@@ -28,7 +30,7 @@ Esta proposta se apoia em quatro referencias principais:
 - footer fixo com fonte de verdade e caminho de manutencao
 - pagina nova de `Roadmap e Backlog`
 - linguagem mais consistente entre produto, arquitetura, engenharia e operacao
-- atualizacao automatica da pasta `docs/wiki` apos merge de PR, com publicacao da wiki real quando houver mudanca
+- atualizacao automatica da pasta `docs/wiki` apos merge de PR, com publicacao da wiki real so quando ela estiver habilitada
 
 ## Paginas
 
@@ -56,7 +58,7 @@ Esta proposta se apoia em quatro referencias principais:
 
 Depois da aprovacao:
 
-1. sincronizar esta pasta com `depix-mvp.wiki.git`
-2. publicar no branch default da wiki
-3. validar links, sidebar e footer na wiki real
+1. sincronizar esta pasta com `depix-mvp.wiki.git` quando a GitHub Wiki estiver habilitada
+2. publicar no branch default da wiki quando a GitHub Wiki estiver habilitada
+3. validar links, sidebar e footer na wiki real quando ela existir
 4. manter a sincronizacao automatica via workflow de atualizacao da wiki quando um PR for mergeado
