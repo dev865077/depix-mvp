@@ -194,6 +194,18 @@ export function findDuplicateWebhookEvent(savedEvents, incomingEvent) {
 }
 
 /**
+ * Heuristica minima para reconhecer falha de unicidade do SQLite/D1.
+ *
+ * @param {unknown} error Erro capturado durante a persistencia.
+ * @returns {boolean} Verdadeiro quando o erro parece ser de unicidade.
+ */
+export function isLikelyUniqueConstraintError(error) {
+  const message = String(error?.message ?? error ?? "");
+
+  return /unique/i.test(message) || /constraint failed/i.test(message);
+}
+
+/**
  * Decide se vale sobrescrever o currentStep atual do pedido.
  *
  * @param {Record<string, unknown>} order Pedido atual.
@@ -212,6 +224,47 @@ export function reconcileOrderPatch(order, patch) {
   }
 
   return patch;
+}
+
+/**
+ * Aplica a verdade externa atual no agregado interno do pedido.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {Record<string, unknown>} deposit Deposito atual.
+ * @param {Record<string, unknown>} order Pedido atual.
+ * @param {string} externalStatus Status vindo da Eulen.
+ * @returns {Promise<{ updatedDeposit: Record<string, unknown> | null, updatedOrder: Record<string, unknown> | null }>} Agregado atualizado.
+ */
+export async function applyWebhookTruthToAggregate(db, tenantId, deposit, order, externalStatus) {
+  const updatedDeposit = await updateDepositById(db, tenantId, deposit.depositId, {
+    externalStatus,
+  });
+  const updatedOrder = await updateOrderById(
+    db,
+    tenantId,
+    deposit.orderId,
+    reconcileOrderPatch(order, mapOrderPatchFromExternalStatus(externalStatus)),
+  );
+
+  return {
+    updatedDeposit,
+    updatedOrder,
+  };
+}
+
+/**
+ * Decide se um evento duplicado ainda e o mais recente no historico.
+ *
+ * Quando o evento duplicado e o ultimo salvo, um retry pode reparar um fluxo
+ * que falhou depois de gravar o dedupe marker e antes de atualizar o agregado.
+ *
+ * @param {Record<string, unknown> | undefined} duplicateEvent Evento duplicado encontrado.
+ * @param {Record<string, unknown>[]} savedEvents Historico do deposito em ordem decrescente.
+ * @returns {boolean} Verdadeiro quando o duplicado ainda e o evento mais recente.
+ */
+export function isLatestDuplicateEvent(duplicateEvent, savedEvents) {
+  return Boolean(duplicateEvent && savedEvents[0]?.id === duplicateEvent.id);
 }
 
 /**
@@ -325,20 +378,66 @@ export async function processEulenDepositWebhook(input) {
     throw new Error(`Missing order for deposit ${deposit.depositId}.`);
   }
 
-  const duplicateEvent = findDuplicateWebhookEvent(
-    await listDepositEventsByDepositId(input.db, input.tenant.tenantId, deposit.depositId),
-    {
-      externalStatus: payload.status,
-      bankTxId: payload.bankTxId,
-      blockchainTxId: payload.blockchainTxId,
-      rawPayload: input.rawBody,
-    },
-  );
+  const incomingEvent = {
+    externalStatus: payload.status,
+    bankTxId: payload.bankTxId,
+    blockchainTxId: payload.blockchainTxId,
+    rawPayload: input.rawBody,
+  };
 
-  if (duplicateEvent) {
+  let savedEvent;
+
+  try {
+    savedEvent = await createDepositEvent(input.db, {
+      tenantId: input.tenant.tenantId,
+      orderId: deposit.orderId,
+      depositId: deposit.depositId,
+      source: WEBHOOK_SOURCE,
+      externalStatus: payload.status,
+      bankTxId: payload.bankTxId ?? null,
+      blockchainTxId: payload.blockchainTxId ?? null,
+      rawPayload: input.rawBody,
+    });
+  } catch (error) {
+    if (!isLikelyUniqueConstraintError(error)) {
+      throw error;
+    }
+
+    const savedEvents = await listDepositEventsByDepositId(input.db, input.tenant.tenantId, deposit.depositId);
+    const duplicateEvent = findDuplicateWebhookEvent(savedEvents, incomingEvent);
+
+    if (!duplicateEvent) {
+      throw error;
+    }
+
+    let updatedDeposit = deposit;
+    let updatedOrder = order;
+    const repairedAggregate = isLatestDuplicateEvent(duplicateEvent, savedEvents);
+
+    if (repairedAggregate) {
+      const currentDeposit = await getDepositById(input.db, input.tenant.tenantId, deposit.depositId);
+      const currentOrder = await getOrderById(input.db, input.tenant.tenantId, deposit.orderId);
+
+      if (!currentDeposit) {
+        throw new Error(`Missing deposit for duplicate event ${duplicateEvent.id}.`);
+      }
+
+      if (!currentOrder) {
+        throw new Error(`Missing order for duplicate event ${duplicateEvent.id}.`);
+      }
+
+      ({ updatedDeposit, updatedOrder } = await applyWebhookTruthToAggregate(
+        input.db,
+        input.tenant.tenantId,
+        currentDeposit,
+        currentOrder,
+        payload.status,
+      ));
+    }
+
     log(input.runtimeConfig, {
       level: "info",
-      message: "webhook.eulen.duplicate_ignored",
+      message: repairedAggregate ? "webhook.eulen.duplicate_repaired" : "webhook.eulen.duplicate_ignored",
       tenantId: input.tenant.tenantId,
       requestId: input.requestId,
       details: {
@@ -352,35 +451,28 @@ export async function processEulenDepositWebhook(input) {
       ok: true,
       status: 200,
       code: "duplicate_webhook_ignored",
-      message: "Duplicate webhook ignored.",
+      message: repairedAggregate
+        ? "Duplicate webhook reconciled from the latest persisted event."
+        : "Duplicate webhook ignored.",
       details: {
         duplicate: true,
+        repairedAggregate,
         eventId: duplicateEvent.id,
-        depositId: deposit.depositId,
-        orderId: deposit.orderId,
+        depositId: updatedDeposit?.depositId ?? deposit.depositId,
+        orderId: updatedOrder?.orderId ?? deposit.orderId,
         externalStatus: payload.status,
+        orderStatus: updatedOrder?.status,
+        orderCurrentStep: updatedOrder?.currentStep,
       },
     };
   }
 
-  const savedEvent = await createDepositEvent(input.db, {
-    tenantId: input.tenant.tenantId,
-    orderId: deposit.orderId,
-    depositId: deposit.depositId,
-    source: WEBHOOK_SOURCE,
-    externalStatus: payload.status,
-    bankTxId: payload.bankTxId ?? null,
-    blockchainTxId: payload.blockchainTxId ?? null,
-    rawPayload: input.rawBody,
-  });
-  const updatedDeposit = await updateDepositById(input.db, input.tenant.tenantId, deposit.depositId, {
-    externalStatus: payload.status,
-  });
-  const updatedOrder = await updateOrderById(
+  const { updatedDeposit, updatedOrder } = await applyWebhookTruthToAggregate(
     input.db,
     input.tenant.tenantId,
-    deposit.orderId,
-    reconcileOrderPatch(order, mapOrderPatchFromExternalStatus(payload.status)),
+    deposit,
+    order,
+    payload.status,
   );
 
   log(input.runtimeConfig, {

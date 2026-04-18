@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { getDatabase } from "../src/db/client.js";
-import { listDepositEventsByDepositId } from "../src/db/repositories/deposit-events-repository.js";
-import { createDeposit, getDepositById } from "../src/db/repositories/deposits-repository.js";
-import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
+import { createDepositEvent, listDepositEventsByDepositId } from "../src/db/repositories/deposit-events-repository.js";
+import { createDeposit, getDepositById, updateDepositById } from "../src/db/repositories/deposits-repository.js";
+import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -164,6 +164,111 @@ describe("eulen deposit webhook", () => {
     expect(secondResponse.status).toBe(200);
     expect(secondBody.duplicate).toBe(true);
     expect(savedEvents).toHaveLength(1);
+  });
+
+  it("repairs aggregate state when the latest duplicate event is retried", async function assertDuplicateRepair() {
+    await seedDepositAggregate();
+
+    const db = getDatabase(env);
+    const payload = {
+      webhookType: "deposit",
+      qrId: "qr_alpha_001",
+      status: "depix_sent",
+      bankTxId: "bank_tx_alpha_001",
+      blockchainTxID: "blockchain_tx_alpha_001",
+    };
+
+    await createDepositEvent(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      depositId: "qr_alpha_001",
+      source: "webhook",
+      externalStatus: "depix_sent",
+      bankTxId: "bank_tx_alpha_001",
+      blockchainTxId: "blockchain_tx_alpha_001",
+      rawPayload: JSON.stringify(payload),
+    });
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      payload,
+    });
+    const body = await response.json();
+    const repairedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const repairedDeposit = await getDepositById(db, "alpha", "qr_alpha_001");
+    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.duplicate).toBe(true);
+    expect(body.repairedAggregate).toBe(true);
+    expect(repairedOrder?.status).toBe("paid");
+    expect(repairedOrder?.currentStep).toBe("completed");
+    expect(repairedDeposit?.externalStatus).toBe("depix_sent");
+    expect(savedEvents).toHaveLength(1);
+  });
+
+  it("does not regress state when an older duplicate event is retried", async function assertOlderDuplicateSafety() {
+    await seedDepositAggregate();
+
+    const db = getDatabase(env);
+    const olderPayload = {
+      webhookType: "deposit",
+      qrId: "qr_alpha_001",
+      status: "pending",
+      bankTxId: "bank_tx_alpha_001",
+    };
+    const latestPayload = {
+      webhookType: "deposit",
+      qrId: "qr_alpha_001",
+      status: "depix_sent",
+      bankTxId: "bank_tx_alpha_001",
+      blockchainTxID: "blockchain_tx_alpha_001",
+    };
+
+    await createDepositEvent(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      depositId: "qr_alpha_001",
+      source: "webhook",
+      externalStatus: "pending",
+      bankTxId: "bank_tx_alpha_001",
+      blockchainTxId: null,
+      rawPayload: JSON.stringify(olderPayload),
+    });
+    await createDepositEvent(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      depositId: "qr_alpha_001",
+      source: "webhook",
+      externalStatus: "depix_sent",
+      bankTxId: "bank_tx_alpha_001",
+      blockchainTxId: "blockchain_tx_alpha_001",
+      rawPayload: JSON.stringify(latestPayload),
+    });
+    await updateDepositById(db, "alpha", "qr_alpha_001", {
+      externalStatus: "depix_sent",
+    });
+    await updateOrderById(db, "alpha", "order_alpha_001", {
+      status: "paid",
+      currentStep: "completed",
+    });
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      payload: olderPayload,
+    });
+    const body = await response.json();
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const currentDeposit = await getDepositById(db, "alpha", "qr_alpha_001");
+    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.duplicate).toBe(true);
+    expect(body.repairedAggregate).toBe(false);
+    expect(currentOrder?.status).toBe("paid");
+    expect(currentOrder?.currentStep).toBe("completed");
+    expect(currentDeposit?.externalStatus).toBe("depix_sent");
+    expect(savedEvents).toHaveLength(2);
   });
 
   it("fails explicitly on tenant mismatch signaled by partnerId", async function assertTenantMismatchHandling() {

@@ -66,6 +66,15 @@ const INITIAL_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS deposit_events_source_idx ON deposit_events (source)",
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_id_idx ON deposit_events (tenant_id)",
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_idx ON deposit_events (tenant_id, deposit_id)",
+  `CREATE UNIQUE INDEX IF NOT EXISTS deposit_events_idempotency_unique_idx ON deposit_events (
+    tenant_id,
+    deposit_id,
+    source,
+    external_status,
+    IFNULL(bank_tx_id, ''),
+    IFNULL(blockchain_tx_id, ''),
+    raw_payload
+  )`,
 ];
 
 export function readInitialMigrationSql() {
