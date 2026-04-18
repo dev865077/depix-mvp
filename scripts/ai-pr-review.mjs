@@ -656,87 +656,6 @@ async function addDiscussionComment(discussionId, body) {
 }
 
 /**
- * Fetch existing top-level Discussion comments so reruns update the automation
- * trail instead of spamming duplicate reviewer comments.
- *
- * @param {string} discussionId Discussion node id.
- * @returns {Promise<Array<{ id: string, body: string }>>} Existing comments.
- */
-async function fetchDiscussionComments(discussionId) {
-  const query = `
-    query($discussionId: ID!) {
-      node(id: $discussionId) {
-        ... on Discussion {
-          comments(first: 100) {
-            nodes {
-              id
-              body
-            }
-          }
-        }
-      }
-    }
-  `;
-  const data = await githubGraphqlRequest(query, { discussionId });
-
-  return data?.node?.comments?.nodes ?? [];
-}
-
-/**
- * Update one top-level GitHub Discussion comment.
- *
- * @param {string} commentId Discussion comment node id.
- * @param {string} body Markdown comment body.
- * @returns {Promise<{ id: string, url: string }>} Updated comment.
- */
-async function updateDiscussionComment(commentId, body) {
-  const mutation = `
-    mutation($commentId: ID!, $body: String!) {
-      updateDiscussionComment(input: {
-        commentId: $commentId,
-        body: $body
-      }) {
-        comment {
-          id
-          url
-        }
-      }
-    }
-  `;
-  const data = await githubGraphqlRequest(mutation, { commentId, body });
-  const comment = data?.updateDiscussionComment?.comment;
-
-  if (!comment?.id) {
-    throw new Error("GitHub GraphQL response did not include the updated discussion comment.");
-  }
-
-  return comment;
-}
-
-/**
- * Create or update a single automation-owned Discussion comment.
- *
- * @param {string} discussionId Discussion node id.
- * @param {Array<{ id: string, body: string }>} existingComments Existing comments.
- * @param {string} marker Stable marker that identifies this automation comment.
- * @param {string} body Markdown body.
- * @returns {Promise<"created" | "updated">} Publication action.
- */
-async function upsertDiscussionComment(discussionId, existingComments, marker, body) {
-  const existingComment = existingComments.find((comment) => typeof comment.body === "string" && comment.body.includes(marker));
-
-  if (existingComment) {
-    await updateDiscussionComment(existingComment.id, body);
-
-    return "updated";
-  }
-
-  await addDiscussionComment(discussionId, body);
-
-  return "created";
-}
-
-/**
  * Best-effort close for answerable/resolved Discussions. GitHub API support can
  * differ by repository/category, so failure is logged but never blocks review
  * publication.
@@ -1641,12 +1560,11 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const discussionComments = buildDiscussionReviewComments(debate);
-    const existingComments = await fetchDiscussionComments(discussion.id);
 
     for (const comment of discussionComments) {
-      const action = await upsertDiscussionComment(discussion.id, existingComments, comment.marker, comment.body);
+      await addDiscussionComment(discussion.id, comment.body);
       logOperationalEvent("ai_pr_review.discussion_comment.published", {
-        action,
+        action: "created",
         role: comment.role,
         discussionUrl: discussion.url,
       });
@@ -1655,15 +1573,10 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
     const wasClosed = recommendation === "Approve" ? await closeDiscussionResolved(discussion.id) : false;
     const finalCommentBody = buildDiscussionCompletionComment(debate.synthesis, wasClosed);
-    const finalCommentAction = await upsertDiscussionComment(
-      discussion.id,
-      existingComments,
-      DISCUSSION_FINAL_COMMENT_MARKER,
-      finalCommentBody,
-    );
+    await addDiscussionComment(discussion.id, finalCommentBody);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
-      action: finalCommentAction,
+      action: "created",
       recommendation,
       closed: wasClosed,
       discussionUrl: discussion.url,
