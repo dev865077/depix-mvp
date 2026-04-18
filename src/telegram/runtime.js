@@ -12,7 +12,7 @@
  * do grammY e deixa a criacao efetiva do bot para a issue seguinte, quando o
  * webhook real entrar em cena com os segredos e middlewares corretos.
  */
-import { Bot } from "grammy";
+import { Bot, webhookCallback } from "grammy";
 
 const telegramRuntimeCache = new Map();
 
@@ -82,7 +82,8 @@ export function createTelegramBot(tenantConfig, telegramBotToken) {
  *   engine: "grammy",
  *   tenantId: string,
  *   botInfo: ReturnType<typeof buildBootstrapBotInfo>,
- *   createBot: (telegramBotToken: string) => Bot
+ *   createBot: (telegramBotToken: string) => Bot,
+ *   createWebhookCallback: (telegramBotToken: string) => (request: Request) => Promise<Response>
  * }} Runtime pronto para ser reutilizado.
  */
 export function createTelegramRuntime(tenantConfig) {
@@ -94,6 +95,21 @@ export function createTelegramRuntime(tenantConfig) {
     botInfo,
     createBot(telegramBotToken) {
       return createTelegramBot(tenantConfig, telegramBotToken);
+    },
+    createWebhookCallback(telegramBotToken) {
+      const bot = createTelegramBot(tenantConfig, telegramBotToken);
+
+      bot.use(async function attachTenantContext(ctx, next) {
+        ctx.state ??= {};
+        ctx.state.tenant = {
+          tenantId: tenantConfig.tenantId,
+          displayName: tenantConfig.displayName,
+        };
+
+        await next();
+      });
+
+      return webhookCallback(bot, "cloudflare-mod");
     },
   };
 }
@@ -107,7 +123,8 @@ export function createTelegramRuntime(tenantConfig) {
  *   engine: "grammy",
  *   tenantId: string,
  *   botInfo: ReturnType<typeof buildBootstrapBotInfo>,
- *   createBot: (telegramBotToken: string) => Bot
+ *   createBot: (telegramBotToken: string) => Bot,
+ *   createWebhookCallback: (telegramBotToken: string) => (request: Request) => Promise<Response>
  * }} Runtime do tenant.
  */
 export function getTelegramRuntime(tenantConfig) {

@@ -7,11 +7,31 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
-async function fetchJson(url) {
-  const response = await SELF.fetch(url, { method: "POST" });
+async function fetchJson(url, init = {}) {
+  const response = await SELF.fetch(url, { method: "POST", ...init });
   const body = await response.json();
 
   return { response, body };
+}
+
+function createTelegramUpdate() {
+  return {
+    update_id: 10000,
+    message: {
+      message_id: 1,
+      date: 1_700_000_000,
+      text: "hello",
+      chat: {
+        id: 42,
+        type: "private",
+      },
+      from: {
+        id: 7,
+        is_bot: false,
+        first_name: "Tester",
+      },
+    },
+  };
 }
 
 function createWorkerEnv() {
@@ -52,11 +72,11 @@ function createWorkerEnv() {
         },
       },
     }),
-    ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
+    ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
-    BETA_TELEGRAM_BOT_TOKEN: "beta-bot-token",
+    BETA_TELEGRAM_BOT_TOKEN: "123456:beta-test-token",
     BETA_TELEGRAM_WEBHOOK_SECRET: "beta-telegram-secret",
     BETA_EULEN_API_TOKEN: "beta-eulen-token",
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
@@ -64,13 +84,23 @@ function createWorkerEnv() {
 }
 
 describe("tenant routing", () => {
-  it("resolves tenant on telegram webhook path", async function assertTelegramTenantRouting() {
-    const { response, body } = await fetchJson("https://example.com/telegram/alpha/webhook");
+  it("routes Telegram webhook traffic into the grammY runtime", async function assertTelegramTenantRouting() {
+    const app = createApp();
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(createTelegramUpdate()),
+      },
+      createWorkerEnv(),
+    );
 
-    expect(response.status).toBe(501);
-    expect(body.tenantId).toBe("alpha");
-    expect(body.error.details.tenantDisplayName).toBe("Alpha");
-    expect(body.error.details.telegramRuntime).toBe("grammy");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBeTruthy();
+    expect(await response.text()).toBe("");
   });
 
   it("resolves tenant on eulen webhook path", async function assertEulenTenantRouting() {
