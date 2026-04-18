@@ -65,6 +65,10 @@ export function assertPositiveInteger(value, key) {
  *     tenantId: string,
  *     displayName: string,
  *     eulenPartnerId?: string,
+ *     splitConfig: {
+ *       depixSplitAddress: string,
+ *       splitFee: string
+ *     },
  *     secretBindings: Record<string, string>
  *   }>,
  *   secrets: {
