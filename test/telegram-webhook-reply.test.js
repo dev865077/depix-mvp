@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { getDatabase } from "../src/db/client.js";
+import { getLatestDepositByOrderId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
@@ -24,6 +25,14 @@ import {
   buildTelegramUnsupportedMessageReply,
 } from "../src/telegram/reply-flow.js";
 import { clearTelegramRuntimeCache } from "../src/telegram/runtime.js";
+
+const SIDESWAP_LQ_ADDRESS = "lq1qqt6tf80s4c8k5n5v88smk40d5cqh6wp63025cwypeemlh3ra84xgfng64m08lv69d9wau62vag5alxyvzv8hq8qqn9sjtr4pd";
+const EX_ADDRESS = "ex1qhuq5u7udzwskhaz45fy80kdaxjytqd99ju5yfn";
+const GROUPED_SIDESWAP_LQ_ADDRESS = [
+  "lq1qqt6tf80s4c8k5n5v88smk40d5cqh6wp63025",
+  "cwypeemlh3ra84xgfng64m08lv69d9wau62vag5al",
+  "xyvzv8hq8qqn9sjtr4pd",
+].join(" \n ");
 
 /**
  * Monta um `env` minimo para os testes do webhook do Telegram.
@@ -76,13 +85,13 @@ function createWorkerEnv(overrides = {}) {
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
-    ALPHA_DEPIX_SPLIT_ADDRESS: "alpha-split-address",
+    ALPHA_DEPIX_SPLIT_ADDRESS: SIDESWAP_LQ_ADDRESS,
     ALPHA_DEPIX_SPLIT_FEE: "1.00%",
     BETA_TELEGRAM_BOT_TOKEN: "654321:beta-test-token",
     BETA_TELEGRAM_WEBHOOK_SECRET: "beta-telegram-secret",
     BETA_EULEN_API_TOKEN: "beta-eulen-token",
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
-    BETA_DEPIX_SPLIT_ADDRESS: "beta-split-address",
+    BETA_DEPIX_SPLIT_ADDRESS: EX_ADDRESS,
     BETA_DEPIX_SPLIT_FEE: "1.00%",
     ...overrides,
   };
@@ -551,8 +560,8 @@ describe("telegram webhook reply flow", () => {
     expect(updatedOrder?.amountInCents).toBe(1050);
     expect(secondReply.text).toContain("Valor recebido: R$ 10,50.");
     expect(secondReply.text).toContain("endereço DePix/Liquid");
-    expect(thirdReply.text).toContain("Valor recebido: R$ 10,50.");
-    expect(thirdReply.text).toContain("endereço DePix/Liquid");
+    expect(thirdReply.text).toContain("Não reconheci esse endereço.");
+    expect(thirdReply.text).toContain("começando com lq1 ou ex1");
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
@@ -626,6 +635,593 @@ describe("telegram webhook reply flow", () => {
     expect(secondReply.text).toContain("limite inicial");
     expect(secondReply.text).toContain("R$ 10.000,00");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("stores a normalized wallet address and advances the order to confirmation", async function assertWalletCollection() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 12,
+          date: 1713434413,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8303,
+          fromId: 833,
+          updateId: 45,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "R$ 10,50",
+          chatId: 8303,
+          fromId: 833,
+          updateId: 46,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: GROUPED_SIDESWAP_LQ_ADDRESS,
+          chatId: 8303,
+          fromId: 833,
+          updateId: 47,
+        }),
+      },
+      workerEnv,
+    );
+
+    const confirmedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "833");
+    const thirdReply = JSON.parse(String(fetchSpy.mock.calls[2][1]?.body));
+
+    expect(confirmedOrder?.currentStep).toBe("confirmation");
+    expect(confirmedOrder?.status).toBe("draft");
+    expect(confirmedOrder?.amountInCents).toBe(1050);
+    expect(confirmedOrder?.walletAddress).toBe(SIDESWAP_LQ_ADDRESS);
+    expect(thirdReply.text).toContain("Confira seu pedido:");
+    expect(thirdReply.text).toContain("Valor: R$ 10,50");
+    expect(thirdReply.text).toContain(`Endereço: ${SIDESWAP_LQ_ADDRESS}`);
+    expect(thirdReply.text).toContain("Se estiver tudo certo, envie: sim, confirmar ou ok.");
+    expect(thirdReply.text).toContain("Se quiser encerrar este pedido, envie: cancelar.");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the order in wallet when the wallet address is invalid", async function assertInvalidWalletStaysInWallet() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    await createOrder(getDatabase(env), {
+      tenantId: "beta",
+      orderId: "order_invalid_wallet",
+      userId: "844",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 2500,
+      currentStep: "wallet",
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+      expect(payload.text).toContain("Não reconheci esse endereço.");
+      expect(payload.text).toContain("começando com lq1 ou ex1");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 13,
+          date: 1713434414,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+          chatId: 8404,
+          fromId: 844,
+          updateId: 48,
+        }),
+      },
+      workerEnv,
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "844");
+
+    expect(response.status).toBe(200);
+    expect(currentOrder?.currentStep).toBe("wallet");
+    expect(currentOrder?.walletAddress).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms the order, creates exactly one deposit, and reuses the awaiting-payment state on replay", async function assertConfirmationCreatesSingleDeposit() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramCalls = [];
+    const eulenCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockConfirmFlow(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        eulenCalls.push(JSON.parse(String(init?.body)));
+
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_entry_alpha_001",
+            qrCopyPaste: "0002010102122688pix-alpha-001",
+            qrImageUrl: "https://example.com/qr/alpha-001.png",
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          kind: "photo",
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 20,
+            date: 1713434420,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          kind: "message",
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 21,
+            date: 1713434421,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in confirmation flow: ${url}`);
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8505,
+          fromId: 855,
+          updateId: 51,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "10,50",
+          chatId: 8505,
+          fromId: 855,
+          updateId: 52,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: GROUPED_SIDESWAP_LQ_ADDRESS,
+          chatId: 8505,
+          fromId: 855,
+          updateId: 53,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8505,
+          fromId: 855,
+          updateId: 54,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8505,
+          fromId: 855,
+          updateId: 55,
+        }),
+      },
+      workerEnv,
+    );
+
+    const finalOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "855");
+    const savedDeposit = await getLatestDepositByOrderId(getDatabase(env), "alpha", finalOrder.orderId);
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", finalOrder.orderId)
+      .first();
+    const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
+    const copyPasteReply = telegramCalls.find((entry) => entry.kind === "message" && entry.payload.text?.includes("Pix copia e cola:"));
+    const replayReply = telegramCalls[telegramCalls.length - 1];
+
+    expect(eulenCalls).toHaveLength(1);
+    expect(eulenCalls[0]).toEqual({
+      amountInCents: 1050,
+      depixSplitAddress: SIDESWAP_LQ_ADDRESS,
+      splitFee: "1.00%",
+    });
+    expect(finalOrder?.currentStep).toBe("awaiting_payment");
+    expect(finalOrder?.status).toBe("pending");
+    expect(finalOrder?.splitAddress).toBe(SIDESWAP_LQ_ADDRESS);
+    expect(finalOrder?.splitFee).toBe("1.00%");
+    expect(savedDeposit?.depositEntryId).toBe("deposit_entry_alpha_001");
+    expect(savedDeposit?.qrCopyPaste).toBe("0002010102122688pix-alpha-001");
+    expect(persistedDeposits?.count).toBe(1);
+    expect(photoReply?.payload.photo).toBe("https://example.com/qr/alpha-001.png");
+    expect(photoReply?.payload.caption).toContain("Pedido confirmado em Alpha.");
+    expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-alpha-001");
+    expect(replayReply.payload.text).toContain("já está aguardando pagamento");
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("resolves async Eulen deposit creation before replying to the user", async function assertAsyncConfirmationFlow() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockAsyncConfirmFlow(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        return new Response(JSON.stringify({
+          async: true,
+          urlResponse: "https://example.com/eulen-async/beta-001",
+          expiration: "2026-04-18T12:00:00.000Z",
+        }), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url === "https://example.com/eulen-async/beta-001") {
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_entry_beta_001",
+            qrCopyPaste: "0002010102122688pix-beta-001",
+            qrImageUrl: "https://example.com/qr/beta-001.png",
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 30,
+            date: 1713434430,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id ?? 8606,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in async confirmation flow: ${url}`);
+    });
+
+    for (const [text, updateId] of [
+      ["/start", 61],
+      ["10,50", 62],
+      [SIDESWAP_LQ_ADDRESS, 63],
+      ["sim", 64],
+    ]) {
+      await app.request(
+        "https://example.com/telegram/beta/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text,
+            chatId: 8606,
+            fromId: 866,
+            updateId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    const finalOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "866");
+    const savedDeposit = await getLatestDepositByOrderId(getDatabase(env), "beta", finalOrder.orderId);
+
+    expect(fetchSpy.mock.calls.some(([url]) => String(url) === "https://example.com/eulen-async/beta-001")).toBe(true);
+    expect(finalOrder?.currentStep).toBe("awaiting_payment");
+    expect(savedDeposit?.depositEntryId).toBe("deposit_entry_beta_001");
+  });
+
+  it("marks the order as failed and replies with a restart instruction when Eulen create-deposit fails", async function assertConfirmationFailureFlow() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramMessages = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockFailureFlow(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        return new Response(JSON.stringify({
+          error: "upstream failed",
+        }), {
+          status: 502,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramMessages.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 40,
+            date: 1713434440,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in failed confirmation flow: ${url}`);
+    });
+
+    for (const [text, updateId] of [
+      ["/start", 71],
+      ["10,50", 72],
+      [SIDESWAP_LQ_ADDRESS, 73],
+      ["ok", 74],
+    ]) {
+      await app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text,
+            chatId: 8707,
+            fromId: 877,
+            updateId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    const failedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status AS status FROM orders WHERE tenant_id = ? AND user_id = ? LIMIT 1")
+      .bind("alpha", "877")
+      .first();
+
+    expect(failedOrder?.currentStep).toBe("failed");
+    expect(failedOrder?.status).toBe("failed");
+    expect(telegramMessages[telegramMessages.length - 1]).toContain("Nao consegui criar seu Pix agora.");
+    expect(telegramMessages[telegramMessages.length - 1]).toContain("Envie /start para recomecar");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(1);
+  });
+
+  it("cancels the order from confirmation when the user sends cancelar", async function assertConfirmationCancellation() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+    };
+    const telegramMessages = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockCancellationFlow(input, init) {
+      const url = String(input);
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramMessages.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 50,
+            date: 1713434450,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in cancellation flow: ${url}`);
+    });
+
+    for (const [text, updateId] of [
+      ["/start", 81],
+      ["10,50", 82],
+      [SIDESWAP_LQ_ADDRESS, 83],
+      ["cancelar", 84],
+    ]) {
+      await app.request(
+        "https://example.com/telegram/beta/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text,
+            chatId: 8808,
+            fromId: 888,
+            updateId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    const canceledOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status AS status FROM orders WHERE tenant_id = ? AND user_id = ? LIMIT 1")
+      .bind("beta", "888")
+      .first();
+
+    expect(canceledOrder?.currentStep).toBe("canceled");
+    expect(canceledOrder?.status).toBe("canceled");
+    expect(telegramMessages[telegramMessages.length - 1]).toContain("Pedido cancelado com sucesso.");
   });
 
   it("does not duplicate or regress the order when /start is replayed", async function assertStartReplayIsIdempotent() {
@@ -726,8 +1322,8 @@ describe("telegram webhook reply flow", () => {
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
       expect(payload.chat_id).toBe(9009);
-      expect(payload.text).toContain("Valor recebido: R$ 100,00.");
-      expect(payload.text).toContain("endereço DePix/Liquid");
+      expect(payload.text).toContain("Não reconheci esse endereço.");
+      expect(payload.text).toContain("começando com lq1 ou ex1");
 
       return new Response(JSON.stringify({
         ok: true,

@@ -23,6 +23,7 @@ import {
   normalizePersistedOrderProgressStep,
 } from "../order-flow/order-progress-machine.js";
 import { parseTelegramBrlAmount } from "../telegram/brl-amount.js";
+import { parseTelegramWalletAddress } from "../telegram/wallet-address.js";
 
 const DEFAULT_ORDER_CHANNEL = "telegram";
 const DEFAULT_PRODUCT_TYPE = "depix";
@@ -263,5 +264,151 @@ export async function receiveTelegramOrderAmount(input) {
     accepted: write.didUpdate,
     conflict: write.conflict,
     parseResult,
+  };
+}
+
+/**
+ * Aplica o endereco DePix/Liquid informado pelo usuario ao pedido aberto.
+ *
+ * A escrita segue o mesmo padrao das demais transicoes conversacionais: parser
+ * conservador na borda, evento canonico da maquina XState e persistencia com
+ * guarda de passo. Se uma mensagem antiga chegar depois do pedido avancar para
+ * `confirmation`, a funcao devolve o pedido atual sem sobrescrever o endereco.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   tenant: { tenantId: string },
+ *   order: Record<string, unknown>,
+ *   rawText: string
+ * }} input Dependencias e mensagem recebida.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   conflict: boolean,
+ *   parseResult: ReturnType<typeof parseTelegramWalletAddress> | null
+ * }>} Resultado da tentativa de gravar o endereco.
+ */
+export async function receiveTelegramOrderWallet(input) {
+  const currentStep = normalizePersistedOrderProgressStep(input.order.currentStep);
+
+  if (currentStep !== ORDER_PROGRESS_STATES.WALLET) {
+    return {
+      order: input.order,
+      accepted: false,
+      conflict: false,
+      parseResult: null,
+    };
+  }
+
+  const parseResult = parseTelegramWalletAddress(input.rawText);
+
+  if (!parseResult.ok) {
+    return {
+      order: input.order,
+      accepted: false,
+      conflict: false,
+      parseResult,
+    };
+  }
+
+  const progression = advanceOrderProgression({
+    currentStep: input.order.currentStep,
+    context: {
+      tenantId: input.tenant.tenantId,
+      orderId: input.order.orderId,
+      userId: input.order.userId,
+      amountInCents: input.order.amountInCents,
+      walletAddress: input.order.walletAddress,
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.WALLET_RECEIVED,
+      tenantId: input.tenant.tenantId,
+      walletAddress: parseResult.walletAddress,
+    },
+  });
+  const write = await updateOrderByIdWithStepGuard(
+    input.db,
+    input.tenant.tenantId,
+    input.order.orderId,
+    input.order.currentStep,
+    progression.orderPatch,
+  );
+
+  if (write.notFound) {
+    throw new Error("Telegram wallet update failed because the order disappeared before update.");
+  }
+
+  return {
+    order: write.order,
+    accepted: write.didUpdate,
+    conflict: write.conflict,
+    parseResult,
+  };
+}
+
+/**
+ * Cancela um pedido aberto do Telegram por compare-and-set do passo atual.
+ *
+ * A rotina cobre apenas estados ainda abertos para intervencao do usuario.
+ * Isso evita sobrescrever agregados ja pagos, falhos ou encerrados por outra
+ * parte do sistema.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   tenant: { tenantId: string },
+ *   order: Record<string, unknown>
+ * }} input Dependencias do pedido atual.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   conflict: boolean
+ * }>} Resultado da tentativa de cancelamento.
+ */
+export async function cancelTelegramOpenOrder(input) {
+  const currentStep = normalizePersistedOrderProgressStep(input.order.currentStep);
+  const cancellableSteps = new Set([
+    ORDER_PROGRESS_STATES.AMOUNT,
+    ORDER_PROGRESS_STATES.WALLET,
+    ORDER_PROGRESS_STATES.CONFIRMATION,
+  ]);
+
+  if (!cancellableSteps.has(currentStep)) {
+    return {
+      order: input.order,
+      accepted: false,
+      conflict: false,
+    };
+  }
+
+  const progression = advanceOrderProgression({
+    currentStep: input.order.currentStep,
+    context: {
+      tenantId: input.tenant.tenantId,
+      orderId: input.order.orderId,
+      userId: input.order.userId,
+      amountInCents: input.order.amountInCents,
+      walletAddress: input.order.walletAddress,
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.CANCEL_ORDER,
+      tenantId: input.tenant.tenantId,
+    },
+  });
+  const write = await updateOrderByIdWithStepGuard(
+    input.db,
+    input.tenant.tenantId,
+    input.order.orderId,
+    input.order.currentStep,
+    progression.orderPatch,
+  );
+
+  if (write.notFound) {
+    throw new Error("Telegram order cancellation failed because the order disappeared before update.");
+  }
+
+  return {
+    order: write.order,
+    accepted: write.didUpdate,
+    conflict: write.conflict,
   };
 }
