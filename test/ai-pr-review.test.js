@@ -161,12 +161,12 @@ describe("ai pr review discussion gate", () => {
       },
       {
         filename: "scripts/ai-pr-review.mjs",
-        additions: 80,
+        additions: 230,
         deletions: 0,
         patch: [
           "@@",
           "+function isSmallReviewAutomationPolicyChange(files, summary) {",
-          "+  return summary.totalChangedLines <= 160;",
+          "+  return summary.totalChangedLines <= 320;",
           "+}",
         ].join("\n"),
       },
