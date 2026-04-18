@@ -6,8 +6,10 @@
  */
 import { Hono } from "hono";
 
-import { readSecretBindingValue } from "../config/tenants.js";
+import { readTenantSecret } from "../config/tenants.js";
+import { jsonError } from "../lib/http.js";
 import { log } from "../lib/logger.js";
+import { normalizeTelegramWebhookError } from "../telegram/errors.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
 
 export const telegramRouter = new Hono();
@@ -23,12 +25,40 @@ export async function handleTelegramWebhook(c) {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (!tenant) {
-    throw new Error("Telegram webhook requires a resolved tenant.");
+    log(runtimeConfig, {
+      level: "warn",
+      message: "telegram.webhook.ignored",
+      requestId: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
+      status: 204,
+      details: {
+        reason: "tenant_not_resolved",
+      },
+    });
+
+    c.res = new Response(null, {
+      status: 204,
+    });
+
+    return c.res;
   }
 
   const telegramRuntime = getTelegramRuntime(tenant);
-  const telegramBotToken = await readSecretBindingValue(c.env, tenant.secretBindings.telegramBotToken);
-  const webhookHandler = telegramRuntime.createWebhookCallback(telegramBotToken);
+  const [telegramBotToken, telegramWebhookSecret] = await Promise.all([
+    readTenantSecret(c.env, tenant, "telegramBotToken"),
+    readTenantSecret(c.env, tenant, "telegramWebhookSecret"),
+  ]);
+  const webhookHandler = telegramRuntime.createWebhookCallback({
+    telegramBotToken,
+    telegramWebhookSecret,
+    runtimeConfig,
+    requestContext: {
+      requestId: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
+    },
+  });
 
   log(runtimeConfig, {
     level: "info",
@@ -42,7 +72,29 @@ export async function handleTelegramWebhook(c) {
     },
   });
 
-  const response = await webhookHandler(c.req.raw);
+  let response;
+
+  try {
+    response = await webhookHandler(c.req.raw);
+  } catch (error) {
+    const telegramError = normalizeTelegramWebhookError(error);
+
+    log(runtimeConfig, {
+      level: "error",
+      message: "telegram.webhook.failed",
+      tenantId: tenant.tenantId,
+      requestId: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
+      status: telegramError.status,
+      details: {
+        code: telegramError.code,
+        ...telegramError.details,
+      },
+    });
+
+    return jsonError(c, telegramError.status, telegramError.code, telegramError.message, telegramError.details);
+  }
 
   log(runtimeConfig, {
     level: "info",

@@ -13,6 +13,7 @@
 - `test/health.test.js`
 - `test/tenant-routing.test.js`
 - `test/telegram-runtime.test.js`
+- `test/telegram-webhook-reply.test.js`
 - `test/eulen-client.test.js`
 - `test/eulen-webhook.test.js`
 - `test/ops-diagnostics.test.js`

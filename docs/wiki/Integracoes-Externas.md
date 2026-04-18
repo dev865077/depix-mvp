@@ -13,6 +13,8 @@ Estado atual:
 - runtime `grammY` bootstrapado existe
 - rota canonica existe
 - o webhook ja despacha o update real para o runtime do tenant
+- o bot ja tem um fluxo inicial de resposta para `/start` e mensagens de texto
+- outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 
 ## Eulen
 
