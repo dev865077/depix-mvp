@@ -81,7 +81,3 @@ Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel p
 ## Regra operacional
 
 Secrets e dados financeiros operacionais nao devem morar em codigo, `vars` versionadas ou arquivos reais commitados.
-
-## Regra de leitura
-
-Configuracao de ambiente e segredo por tenant sao parte da arquitetura, nao detalhe de deploy.

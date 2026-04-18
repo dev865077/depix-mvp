@@ -36,7 +36,7 @@ flowchart LR
 - `Hono` e middleware multi-tenant ja existem
 - runtime Telegram em `grammY` ja recebe despacho real do webhook
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
-- recheck de deposito ainda retorna `501`
+- recheck operacional de deposito via `POST /ops/:tenantId/recheck/deposit` ja existe
 - `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
 
 ## Principios arquiteturais
