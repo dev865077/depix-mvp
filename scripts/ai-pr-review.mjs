@@ -760,7 +760,7 @@ function buildFilesReviewPayload(files) {
  * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
  * @returns {string} Final user payload.
  */
-function buildPullRequestUserPrompt(repository, pullRequest, files, gate) {
+export function buildPullRequestUserPrompt(repository, pullRequest, files, gate) {
   return truncateText([
     `Repository: ${repository}`,
     `PR: #${pullRequest.number} - ${pullRequest.title}`,

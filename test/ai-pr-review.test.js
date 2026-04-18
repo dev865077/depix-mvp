@@ -9,6 +9,7 @@ import {
   buildDiscussionPublicationFallback,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
+  buildPullRequestUserPrompt,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
   sanitizePublishedMarkdown,
@@ -166,6 +167,36 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("## Technical and architecture review");
     expect(body).toContain("## Risk, security, and operations review");
     expect(body).toContain("## Synthesis");
+  });
+
+  it("builds the model payload from the GitHub pull_request shape", () => {
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-57-multi-bot-debate" },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          status: "modified",
+          additions: 20,
+          deletions: 5,
+          patch: "@@ -1 +1 @@",
+        },
+      ],
+      gate,
+    );
+
+    expect(body).toContain("Repository: dev865077/depix-mvp");
+    expect(body).toContain("PR: #60 - Automate review");
+    expect(body).toContain("Base branch: main");
+    expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
+    expect(body).toContain("scripts/ai-pr-review.mjs");
   });
 
   it("builds the sticky comment with a discussion link when present", () => {
