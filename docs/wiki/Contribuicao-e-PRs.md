@@ -48,11 +48,11 @@ Explicitar:
 - a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
 - comentarios antigos nunca devem ser editados ou removidos; o comentario final de status mais recente e sempre o estado canonico da automacao
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
-- a PR so fica pronta para merge quando a sintese nao trouxer blocker material ou quando um mantenedor registrar explicitamente que aceitou o risco residual
+- a PR so fica pronta para merge quando a sintese final for `Approve`; `Request changes` sempre falha o check, mesmo quando todos os comentarios publicos foram escritos corretamente
 - a Discussion nao substitui os checks obrigatorios; ela documenta decisao, risco e alinhamento antes do merge
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
 - se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
-- timeout do modelo nao derruba o job quando a Discussion foi publicada; ele vira sintese `Request changes`, e o mantenedor pode rerodar o check ou aceitar explicitamente o risco
+- timeout do modelo publica sintese `Request changes` e falha o check; o mantenedor pode rerodar o check ou aceitar explicitamente o risco em um fluxo manual separado
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
 - a automacao nao fecha Discussions via API; o fechamento operacional e o comentario final append-only de status
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional

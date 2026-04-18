@@ -16,6 +16,7 @@ import {
   buildPullRequestUserPrompt,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
+  getReviewGateFailure,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
   summarizePullRequestScope,
@@ -62,6 +63,11 @@ describe("ai pr review recommendation parser", () => {
     ].join("\n");
 
     expect(() => assertValidReviewRecommendation(review)).toThrow(/Forbidden recommendation/);
+  });
+
+  it("turns Request changes into a failing GitHub check verdict", () => {
+    expect(getReviewGateFailure("Approve")).toBeNull();
+    expect(getReviewGateFailure("Request changes")?.message).toContain("final recommendation is blocking");
   });
 });
 

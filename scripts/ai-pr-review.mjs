@@ -999,6 +999,25 @@ export function assertValidReviewRecommendation(reviewText) {
 }
 
 /**
+ * Convert the model's final recommendation into the GitHub check outcome.
+ *
+ * The workflow must publish the review first so humans can see why it failed,
+ * but `Request changes` is still a blocking verdict. A green check with a
+ * blocking recommendation is worse than a failed job because it lets the PR
+ * appear merge-ready while the public review says the opposite.
+ *
+ * @param {string} recommendation Parsed final recommendation.
+ * @returns {Error | null} Error to throw after publishing, or null when approved.
+ */
+export function getReviewGateFailure(recommendation) {
+  if (recommendation !== "Request changes") {
+    return null;
+  }
+
+  return new Error("AI PR review requested changes. The check failed because the final recommendation is blocking.");
+}
+
+/**
  * Send one prompt to OpenAI and return markdown text.
  *
  * @param {string} systemPrompt Final system prompt.
@@ -1647,6 +1666,7 @@ async function main() {
     review = await generateModelMarkdown(reviewPrompt, userPrompt, model, { expectRecommendation: true });
   }
 
+  const reviewRecommendation = assertValidReviewRecommendation(review);
   const commentBody = buildPullRequestCommentBody({
     model,
     gate,
@@ -1658,6 +1678,12 @@ async function main() {
 
   if (discussionPublicationFailure) {
     throw discussionPublicationFailure;
+  }
+
+  const reviewGateFailure = getReviewGateFailure(reviewRecommendation);
+
+  if (reviewGateFailure) {
+    throw reviewGateFailure;
   }
 }
 
