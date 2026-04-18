@@ -13,6 +13,13 @@
 - PR documental deve ser propria
 - se mudar arquitetura, schema, integracao, operacao ou observabilidade, a documentacao muda na mesma PR
 
+## Fluxo de issue para PR
+
+- issue pequena, clara e de baixo impacto pode seguir direto para branch e PR
+- issue com impacto `medio` ou `alto` deve passar por Discussion curta antes da PR
+- a triagem automatica registra justificativa, debate resumido e proximo passo na propria issue
+- a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
+
 ## Corpo obrigatorio da PR
 
 - Objetivo
