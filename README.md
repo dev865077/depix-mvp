@@ -18,6 +18,7 @@
 
 - Wiki institucional: [GitHub Wiki](https://github.com/dev865077/depix-mvp/wiki)
 - Documentacao tecnica do repo: [docs/README.md](./docs/README.md)
+- Runbook de segredos operacionais: [docs/Cloudflare Secrets Store - Runbook.md](./docs/Cloudflare%20Secrets%20Store%20-%20Runbook.md)
 - Contexto consolidado historico: [Contexto Consolidado.md](./Contexto%20Consolidado.md)
 
 ## Estrutura principal
