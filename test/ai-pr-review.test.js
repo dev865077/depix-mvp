@@ -7,6 +7,7 @@ import {
   assertValidReviewRecommendation,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
+  buildDiscussionReviewComments,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
@@ -145,7 +146,7 @@ describe("ai pr review discussion rendering", () => {
     },
   };
 
-  it("builds the discussion body with all reviewer sections", () => {
+  it("builds the discussion body as an index for reviewer comments", () => {
     const body = buildPullRequestDiscussionBody(
       {
         number: 57,
@@ -163,10 +164,29 @@ describe("ai pr review discussion rendering", () => {
       "gpt-5.4-mini",
     );
 
-    expect(body).toContain("## Product and scope review");
-    expect(body).toContain("## Technical and architecture review");
-    expect(body).toContain("## Risk, security, and operations review");
-    expect(body).toContain("## Synthesis");
+    expect(body).toContain("## Review comments");
+    expect(body).toContain("- Product and scope");
+    expect(body).toContain("- Technical and architecture");
+    expect(body).toContain("- Risk, security, and operations");
+    expect(body).not.toContain("Scoped correctly.");
+  });
+
+  it("builds one discussion comment per reviewer role", () => {
+    const roleComments = buildDiscussionReviewComments({
+      product: "Product memo",
+      technical: "Technical memo",
+      risk: "Risk memo",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+
+    expect(roleComments).toHaveLength(4);
+    expect(roleComments.map((comment) => comment.role)).toEqual([
+      "Product and scope",
+      "Technical and architecture",
+      "Risk, security, and operations",
+      "Synthesis",
+    ]);
+    expect(roleComments.every((comment) => comment.body.includes("<!-- ai-pr-discussion-review:openai -->"))).toBe(true);
   });
 
   it("builds the model payload from the GitHub pull_request shape", () => {

@@ -4,7 +4,7 @@
  * This workflow keeps two lanes:
  * - small, low-risk pull requests receive a direct sticky review comment
  * - broader pull requests are routed into a GitHub Discussion before merge,
- *   backed by multiple AI reviewer roles plus a synthesis step
+ *   with one comment per AI reviewer role plus a synthesis comment
  */
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
 const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
+const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
 const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
@@ -349,7 +350,7 @@ async function fetchPullRequestComments(repoFullName, issueNumber) {
 
 /**
  * Fetch repository discussion metadata needed for category selection and
- * discussion deduplication/update.
+ * discussion deduplication/commenting.
  *
  * @param {string} owner Repository owner.
  * @param {string} name Repository name.
@@ -570,6 +571,37 @@ async function updateDiscussion(discussionId, title, body) {
   }
 
   return discussion;
+}
+
+/**
+ * Add one top-level comment to a GitHub Discussion.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @param {string} body Markdown comment body.
+ * @returns {Promise<{ id: string, url: string }>} Created comment metadata.
+ */
+async function addDiscussionComment(discussionId, body) {
+  const mutation = `
+    mutation($discussionId: ID!, $body: String!) {
+      addDiscussionComment(input: {
+        discussionId: $discussionId,
+        body: $body
+      }) {
+        comment {
+          id
+          url
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(mutation, { discussionId, body });
+  const comment = data?.addDiscussionComment?.comment;
+
+  if (!comment?.url) {
+    throw new Error("GitHub GraphQL response did not include the created discussion comment URL.");
+  }
+
+  return comment;
 }
 
 /**
@@ -1055,18 +1087,40 @@ export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model)
     "## PR description",
     sanitizePublishedMarkdown(truncateText(pullRequest.body ?? "[no description provided]", MAX_PR_BODY_CHARS)),
     "",
-    "## Product and scope review",
-    debate.product,
-    "",
-    "## Technical and architecture review",
-    debate.technical,
-    "",
-    "## Risk, security, and operations review",
-    debate.risk,
-    "",
-    "## Synthesis",
-    debate.synthesis,
+    "## Review comments",
+    "The automation posts one top-level comment per reviewer role in this Discussion:",
+    "- Product and scope",
+    "- Technical and architecture",
+    "- Risk, security, and operations",
+    "- Synthesis",
   ].join("\n");
+}
+
+/**
+ * Build top-level Discussion comments for each AI reviewer role.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis: string }} debate Debate output.
+ * @returns {Array<{ role: string, body: string }>} Comment bodies to publish.
+ */
+export function buildDiscussionReviewComments(debate) {
+  return [
+    {
+      role: "Product and scope",
+      body: [DISCUSSION_COMMENT_MARKER, "## Product and scope review", "", debate.product].join("\n"),
+    },
+    {
+      role: "Technical and architecture",
+      body: [DISCUSSION_COMMENT_MARKER, "## Technical and architecture review", "", debate.technical].join("\n"),
+    },
+    {
+      role: "Risk, security, and operations",
+      body: [DISCUSSION_COMMENT_MARKER, "## Risk, security, and operations review", "", debate.risk].join("\n"),
+    },
+    {
+      role: "Synthesis",
+      body: [DISCUSSION_COMMENT_MARKER, "## Synthesis", "", debate.synthesis].join("\n"),
+    },
+  ];
 }
 
 /**
@@ -1253,26 +1307,26 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
       repositoryMetadata.discussions.nodes,
     );
 
-    if (!existingDiscussion) {
+    let discussion = existingDiscussion;
+
+    if (!discussion) {
       const category = selectDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredDiscussionCategory);
       const createdDiscussion = await createDiscussion(repositoryMetadata.id, category.id, discussionTitle, discussionBody);
 
-      return { url: createdDiscussion.url, failure: null };
+      discussion = createdDiscussion;
     }
 
-    if (existingDiscussion.id) {
-      try {
-        const updatedDiscussion = await updateDiscussion(existingDiscussion.id, discussionTitle, discussionBody);
-
-        return { url: updatedDiscussion.url, failure: null };
-      } catch (error) {
-        const failure = error instanceof Error ? error : new Error(String(error));
-
-        return { url: existingDiscussion.url, failure };
-      }
+    if (!discussion.id) {
+      return { url: discussion.url, failure: null };
     }
 
-    return { url: existingDiscussion.url, failure: null };
+    const discussionComments = buildDiscussionReviewComments(debate);
+
+    for (const comment of discussionComments) {
+      await addDiscussionComment(discussion.id, comment.body);
+    }
+
+    return { url: discussion.url, failure: null };
   } catch (error) {
     return { url: null, failure: error instanceof Error ? error : new Error(String(error)) };
   }
