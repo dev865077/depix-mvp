@@ -82,6 +82,9 @@ flowchart LR
 6. A Eulen confirma o pagamento via webhook.
 7. O sistema atualiza o pedido e decide a saida final.
 
+> [!note]
+> O webhook principal de deposito agora faz validacao do segredo no header `Authorization`, persiste o callback em `deposit_events` e aplica o status externo em `deposits` e `orders`. O fallback por `deposit-status` e `deposits` continua como etapa separada.
+
 ## Status que importam
 
 | Status externo | Tratamento interno |

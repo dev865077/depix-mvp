@@ -6,7 +6,9 @@
  */
 import { Hono } from "hono";
 
-import { jsonNotImplemented } from "../lib/http.js";
+import { readTenantSecrets } from "../config/tenants.js";
+import { jsonError } from "../lib/http.js";
+import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
 
 export const webhooksRouter = new Hono();
 
@@ -14,15 +16,45 @@ export const webhooksRouter = new Hono();
  * Placeholder do webhook principal de confirmacao de deposito da Eulen.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
- * @returns {Response} Resposta 501 padronizada.
+ * @returns {Promise<Response>} Resposta operacional do webhook.
  */
-export function handleEulenDepositWebhook(c) {
+export async function handleEulenDepositWebhook(c) {
   const tenant = c.get("tenant");
+  const db = c.get("db");
+  const runtimeConfig = c.get("runtimeConfig");
 
-  return jsonNotImplemented(c, "Eulen deposit webhook", {
-    tenantId: tenant?.tenantId,
-    eulenPartnerId: tenant?.eulenPartnerId,
+  if (!tenant) {
+    return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this webhook.");
+  }
+
+  if (!db) {
+    throw new Error("Database binding is required to process the Eulen webhook.");
+  }
+
+  const tenantSecrets = await readTenantSecrets(c.env, tenant);
+  const result = await processEulenDepositWebhook({
+    db,
+    runtimeConfig,
+    tenant,
+    authorizationHeader: c.req.header("authorization"),
+    expectedSecret: tenantSecrets.eulenWebhookSecret,
+    rawBody: await c.req.text(),
+    requestId: c.get("requestId"),
   });
+
+  if (!result.ok) {
+    return jsonError(c, result.status, result.code, result.message, result.details);
+  }
+
+  return c.json(
+    {
+      ok: true,
+      requestId: c.get("requestId"),
+      tenantId: tenant.tenantId,
+      ...result.details,
+    },
+    result.status,
+  );
 }
 
 // Este path foi escolhido como borda canonica do webhook por tenant.
