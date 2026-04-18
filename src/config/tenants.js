@@ -13,10 +13,29 @@ const REQUIRED_TENANT_SECRET_BINDINGS = [
   "eulenWebhookSecret",
 ];
 
-const REQUIRED_TENANT_SPLIT_CONFIG_FIELDS = [
+const REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS = [
   "depixSplitAddress",
   "splitFee",
 ];
+
+/**
+ * Garante que um valor do registry seja um objeto JSON simples.
+ *
+ * O `TENANT_REGISTRY` vem de uma string JSON versionada/configurada no
+ * Wrangler. Validar o shape logo na borda de configuracao evita que rotas de
+ * negocio precisem lidar com estados parciais ou campos silenciosamente nulos.
+ *
+ * @param {unknown} value Valor bruto a validar.
+ * @param {string} field Caminho logico do campo.
+ * @returns {Record<string, unknown>} Objeto validado.
+ */
+function assertTenantObject(value, field) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Invalid tenant object: ${field}`);
+  }
+
+  return value;
+}
 
 /**
  * Valida um campo textual dentro do TENANT_REGISTRY.
@@ -34,27 +53,48 @@ function assertTenantString(value, field) {
 }
 
 /**
- * Normaliza a configuracao obrigatoria de split por tenant.
+ * Normaliza um mapa obrigatorio de bindings por tenant.
+ *
+ * A funcao recebe o objeto bruto de uma secao do registry e devolve somente
+ * os pares esperados. Ela tambem monta caminhos de erro precisos, por exemplo:
+ * `TENANT_REGISTRY.alpha.splitConfigBindings.depixSplitAddress`.
  *
  * @param {string} tenantId Chave do tenant no registro.
- * @param {Record<string, unknown>} input Conteudo bruto do split.
- * @returns {{ depixSplitAddress: string, splitFee: string }} Split validado.
+ * @param {Record<string, unknown>} input Conteudo bruto da secao de bindings.
+ * @param {string} registryField Nome da secao dentro do registry.
+ * @param {string[]} requiredKeys Chaves obrigatorias esperadas.
+ * @returns {Record<string, string>} Mapa de bindings normalizado.
  */
-function normalizeTenantSplitConfig(tenantId, input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`Missing splitConfig for tenant: ${tenantId}`);
-  }
+function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys) {
+  const bindingMap = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.${registryField}`);
 
-  const normalizedSplitConfig = {};
+  return Object.fromEntries(
+    requiredKeys.map((bindingKey) => [
+      bindingKey,
+      assertTenantString(
+        bindingMap[bindingKey],
+        `TENANT_REGISTRY.${tenantId}.${registryField}.${bindingKey}`,
+      ),
+    ]),
+  );
+}
 
-  for (const field of REQUIRED_TENANT_SPLIT_CONFIG_FIELDS) {
-    normalizedSplitConfig[field] = assertTenantString(
-      input[field],
-      `TENANT_REGISTRY.${tenantId}.splitConfig.${field}`,
-    );
-  }
-
-  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (normalizedSplitConfig);
+/**
+ * Normaliza os bindings secretos obrigatorios da configuracao de split.
+ *
+ * Endereco de split e fee sao dados financeiros operacionais. Mesmo nao sendo
+ * credenciais de gasto, eles nao devem ficar versionados no `TENANT_REGISTRY`.
+ * O registry guarda apenas nomes de bindings; os valores reais sao lidos do
+ * Secrets Store quando uma cobranca precisa ser criada.
+ *
+ * @param {string} tenantId Chave do tenant no registro.
+ * @param {Record<string, unknown>} input Conteudo bruto dos bindings de split.
+ * @returns {{ depixSplitAddress: string, splitFee: string }} Bindings validados.
+ */
+function normalizeTenantSplitConfigBindings(tenantId, input) {
+  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (
+    normalizeTenantBindingMap(tenantId, input, "splitConfigBindings", REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS)
+  );
 }
 
 /**
@@ -65,7 +105,7 @@ function normalizeTenantSplitConfig(tenantId, input) {
  * - nome de exibicao
  * - parceiro Eulen opcional
  * - nomes dos bindings secretos obrigatorios
- * - configuracao obrigatoria de split para cobranca
+ * - nomes dos bindings secretos obrigatorios de split para cobranca
  *
  * @param {string} tenantId Chave do tenant no registro.
  * @param {Record<string, unknown>} input Conteudo bruto da entrada.
@@ -73,7 +113,7 @@ function normalizeTenantSplitConfig(tenantId, input) {
  *   tenantId: string,
  *   displayName: string,
  *   eulenPartnerId?: string,
- *   splitConfig: {
+ *   splitConfigBindings: {
  *     depixSplitAddress: string,
  *     splitFee: string
  *   },
@@ -81,33 +121,21 @@ function normalizeTenantSplitConfig(tenantId, input) {
  * }} Tenant validado.
  */
 function normalizeTenantConfig(tenantId, input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error(`Invalid TENANT_REGISTRY entry for tenant: ${tenantId}`);
-  }
-
-  const secretBindings = input.secretBindings;
-
-  if (!secretBindings || typeof secretBindings !== "object" || Array.isArray(secretBindings)) {
-    throw new Error(`Missing secretBindings for tenant: ${tenantId}`);
-  }
-
-  const normalizedSecretBindings = {};
-
-  for (const bindingKey of REQUIRED_TENANT_SECRET_BINDINGS) {
-    normalizedSecretBindings[bindingKey] = assertTenantString(
-      secretBindings[bindingKey],
-      `TENANT_REGISTRY.${tenantId}.secretBindings.${bindingKey}`,
-    );
-  }
+  const tenantConfig = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}`);
 
   return {
     tenantId,
-    displayName: assertTenantString(input.displayName ?? tenantId, `TENANT_REGISTRY.${tenantId}.displayName`),
-    eulenPartnerId: typeof input.eulenPartnerId === "string" && input.eulenPartnerId.trim().length > 0
-      ? input.eulenPartnerId.trim()
+    displayName: assertTenantString(tenantConfig.displayName ?? tenantId, `TENANT_REGISTRY.${tenantId}.displayName`),
+    eulenPartnerId: typeof tenantConfig.eulenPartnerId === "string" && tenantConfig.eulenPartnerId.trim().length > 0
+      ? tenantConfig.eulenPartnerId.trim()
       : undefined,
-    splitConfig: normalizeTenantSplitConfig(tenantId, input.splitConfig),
-    secretBindings: normalizedSecretBindings,
+    splitConfigBindings: normalizeTenantSplitConfigBindings(tenantId, tenantConfig.splitConfigBindings),
+    secretBindings: normalizeTenantBindingMap(
+      tenantId,
+      tenantConfig.secretBindings,
+      "secretBindings",
+      REQUIRED_TENANT_SECRET_BINDINGS,
+    ),
   };
 }
 
@@ -132,11 +160,9 @@ export function readTenantRegistry(env) {
     throw new Error("Invalid JSON binding: TENANT_REGISTRY");
   }
 
-  if (!parsedRegistry || typeof parsedRegistry !== "object" || Array.isArray(parsedRegistry)) {
-    throw new Error("Invalid TENANT_REGISTRY shape");
-  }
+  const registry = assertTenantObject(parsedRegistry, "TENANT_REGISTRY");
 
-  const entries = Object.entries(parsedRegistry);
+  const entries = Object.entries(registry);
 
   if (entries.length === 0) {
     throw new Error("TENANT_REGISTRY must define at least one tenant");
@@ -158,6 +184,10 @@ export function resolveTenantIdFromPath(path) {
     /^\/telegram\/([^/]+)\/webhook$/,
     /^\/webhooks\/eulen\/([^/]+)\/deposit$/,
     /^\/ops\/([^/]+)\/recheck\/deposit$/,
+    /^\/ops\/([^/]+)\/telegram\/webhook-info$/,
+    /^\/ops\/([^/]+)\/telegram\/register-webhook$/,
+    /^\/ops\/([^/]+)\/eulen\/ping$/,
+    /^\/ops\/([^/]+)\/eulen\/create-deposit$/,
   ];
 
   for (const pattern of tenantPathPatterns) {
@@ -204,18 +234,94 @@ export async function readSecretBindingValue(env, bindingName) {
   const binding = env[bindingName];
 
   if (typeof binding === "string" && binding.trim().length > 0) {
-    return binding;
+    return binding.trim();
   }
 
   if (binding && typeof binding === "object" && typeof binding.get === "function") {
     const value = await binding.get();
 
     if (typeof value === "string" && value.trim().length > 0) {
-      return value;
+      return value.trim();
     }
   }
 
   throw new Error(`Missing required secret binding: ${bindingName}`);
+}
+
+/**
+ * Resolve o nome de um binding declarado dentro de um mapa do tenant.
+ *
+ * @param {Record<string, string> | undefined} bindingMap Mapa de bindings do tenant.
+ * @param {string} tenantId Tenant usado apenas para mensagens de erro.
+ * @param {string} groupName Nome logico do grupo de bindings.
+ * @param {string} key Chave logica procurada.
+ * @returns {string} Nome do binding no runtime.
+ */
+function resolveTenantBindingName(bindingMap, tenantId, groupName, key) {
+  const bindingName = bindingMap?.[key];
+
+  if (typeof bindingName !== "string" || bindingName.trim().length === 0) {
+    throw new Error(`Missing required tenant binding mapping: ${tenantId}.${groupName}.${key}`);
+  }
+
+  return bindingName;
+}
+
+/**
+ * Materializa todos os valores de um mapa de bindings.
+ *
+ * `Promise.all` aqui e intencional: os bindings sao independentes entre si, e
+ * ler split address e split fee em paralelo reduz latencia sem mudar semantica.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @param {Record<string, string>} bindingMap Mapa logico -> nome do binding.
+ * @returns {Promise<Record<string, string>>} Mapa logico -> valor secreto.
+ */
+async function readBindingMapValues(env, bindingMap) {
+  const entries = await Promise.all(
+    Object.entries(bindingMap).map(async ([key, bindingName]) => [
+      key,
+      await readSecretBindingValue(env, bindingName),
+    ]),
+  );
+
+  return Object.fromEntries(entries);
+}
+
+/**
+ * Le um unico segredo declarado no registro do tenant.
+ *
+ * Isso evita carregar segredos nao relacionados a uma operacao especifica.
+ * Assim, rotas da Eulen nao dependem acidentalmente de segredos do Telegram,
+ * e vice-versa.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @param {ReturnType<typeof normalizeTenantConfig>} tenantConfig Tenant ja resolvido.
+ * @param {string} secretKey Chave logica do segredo no tenant.
+ * @returns {Promise<string>} Valor do segredo solicitado.
+ */
+export async function readTenantSecret(env, tenantConfig, secretKey) {
+  const tenantId = tenantConfig?.tenantId ?? "unknown";
+  const bindingName = resolveTenantBindingName(tenantConfig?.secretBindings, tenantId, "secretBindings", secretKey);
+
+  return readSecretBindingValue(env, bindingName);
+}
+
+/**
+ * Materializa a configuracao de split sensivel do tenant atual.
+ *
+ * O `TENANT_REGISTRY` deve conter apenas os nomes dos bindings. Esta funcao e
+ * o ponto unico que resolve os valores reais antes de montar o payload da
+ * Eulen, evitando vazamento acidental em configuracao versionada ou logs.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @param {ReturnType<typeof normalizeTenantConfig>} tenantConfig Tenant ja resolvido.
+ * @returns {Promise<{ depixSplitAddress: string, splitFee: string }>} Split real materializado.
+ */
+export async function readTenantSplitConfig(env, tenantConfig) {
+  const splitConfig = await readBindingMapValues(env, tenantConfig.splitConfigBindings);
+
+  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (splitConfig);
 }
 
 /**
@@ -226,11 +332,7 @@ export async function readSecretBindingValue(env, bindingName) {
  * @returns {Promise<Record<string, string>>} Segredos carregados do tenant.
  */
 export async function readTenantSecrets(env, tenantConfig) {
-  const secrets = {};
-
-  for (const [secretKey, bindingName] of Object.entries(tenantConfig.secretBindings)) {
-    secrets[secretKey] = await readSecretBindingValue(env, bindingName);
-  }
+  const secrets = await readBindingMapValues(env, tenantConfig.secretBindings);
 
   return /** @type {any} */ (secrets);
 }

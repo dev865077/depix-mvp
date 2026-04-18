@@ -10,6 +10,8 @@ const REQUIRED_DEPOSIT_SPLIT_FIELDS = [
   "depixSplitAddress",
   "splitFee",
 ];
+const EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS = 6;
+const EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS = 1_000;
 
 /**
  * Erro padronizado para qualquer falha de integracao com a Eulen.
@@ -197,6 +199,199 @@ export async function parseEulenResponseBody(response) {
   } catch {
     return rawBody;
   }
+}
+
+/**
+ * Aguarda entre leituras de resultado assincrono.
+ *
+ * A espera fica isolada no client para que testes consigam zerar o intervalo
+ * sem alterar o contrato operacional usado pelo Worker em ambiente real.
+ *
+ * @param {number} delayMs Intervalo em milissegundos.
+ * @returns {Promise<void>} Promessa resolvida apos o intervalo.
+ */
+function waitForEulenAsyncResultRetry(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+/**
+ * Verifica se o corpo retornado pela Eulen e um ponteiro de resultado async.
+ *
+ * A Eulen pode responder `202 Accepted` com `async: true` e uma `urlResponse`
+ * publica. Essa URL nao recebe Authorization nem headers do tenant; ela aponta
+ * para o resultado materializado pela propria Eulen depois que a operacao
+ * terminar. O client trata esse shape como contrato de transporte, nao como
+ * regra de negocio da rota de diagnostico.
+ *
+ * @param {unknown} data Corpo parseado da resposta inicial.
+ * @returns {data is { async: true, urlResponse: string, expiration?: string }} Verdadeiro quando ha resultado async pendente.
+ */
+export function isEulenAsyncResponsePointer(data) {
+  return Boolean(
+    data
+      && typeof data === "object"
+      && data.async === true
+      && typeof data.urlResponse === "string"
+      && data.urlResponse.trim().length > 0,
+  );
+}
+
+/**
+ * Normaliza opcoes de polling para a URL de resultado assincrono da Eulen.
+ *
+ * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Opcoes brutas.
+ * @returns {{ maxAttempts: number, pollDelayMs: number }} Opcoes seguras.
+ */
+function normalizeEulenAsyncResultOptions(options = {}) {
+  const maxAttempts = Number.isInteger(options.maxAttempts) && options.maxAttempts > 0
+    ? options.maxAttempts
+    : EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS;
+  const pollDelayMs = Number.isInteger(options.pollDelayMs) && options.pollDelayMs >= 0
+    ? options.pollDelayMs
+    : EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS;
+
+  return { maxAttempts, pollDelayMs };
+}
+
+/**
+ * Le a URL de resultado assincrono publicada pela Eulen.
+ *
+ * A URL pode retornar `404` por alguns instantes enquanto o resultado ainda
+ * nao foi gravado no blob da Eulen. Por isso o client faz polling curto,
+ * limitado e documentado. Qualquer status diferente de `404` encerra a
+ * tentativa imediatamente, porque ja representa falha real de transporte.
+ *
+ * @param {{ urlResponse: string, expiration?: string }} pointer Ponteiro retornado pela Eulen.
+ * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica de polling.
+ * @returns {Promise<{ status: number, headers: Record<string, string>, attempt: number, data: unknown }>} Resultado publicado.
+ */
+export async function readEulenAsyncResult(pointer, options = {}) {
+  const { maxAttempts, pollDelayMs } = normalizeEulenAsyncResultOptions(options);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch(pointer.urlResponse, {
+      method: "GET",
+    });
+    const data = await parseEulenResponseBody(response);
+
+    if (response.ok) {
+      return {
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+        attempt,
+        data,
+      };
+    }
+
+    if (response.status !== 404 || attempt === maxAttempts) {
+      throw new EulenApiError("Eulen asynchronous result request failed.", {
+        code: "eulen_async_result_unavailable",
+        status: response.status,
+        attempt,
+        maxAttempts,
+        expiration: pointer.expiration,
+        data,
+      });
+    }
+
+    await waitForEulenAsyncResultRetry(pollDelayMs);
+  }
+
+  throw new EulenApiError("Eulen asynchronous result request timed out.", {
+    code: "eulen_async_result_timeout",
+    maxAttempts,
+    expiration: pointer.expiration,
+  });
+}
+
+/**
+ * Converte o corpo publicado na URL async para payload de negocio.
+ *
+ * Em respostas sincronas, nosso client preserva o envelope `data.response`.
+ * Ja a URL de resultado async da Eulen pode publicar diretamente o payload
+ * final ou repetir um envelope semelhante. Esta funcao reduz os dois formatos
+ * para o mesmo contrato consumido pelas camadas superiores.
+ *
+ * @param {unknown} asyncResultData Corpo retornado pela URL async.
+ * @returns {unknown} Payload final da operacao Eulen.
+ */
+function normalizeEulenAsyncResultPayload(asyncResultData) {
+  if (
+    asyncResultData
+    && typeof asyncResultData === "object"
+    && "response" in asyncResultData
+  ) {
+    return asyncResultData.response;
+  }
+
+  return asyncResultData;
+}
+
+/**
+ * Resolve respostas Eulen que foram aceitas para execucao assincrona.
+ *
+ * O metodo e deliberadamente generico: recebe a resposta normalizada de
+ * qualquer endpoint Eulen e so faz trabalho extra quando `data` e um ponteiro
+ * async. Assim, rotas de diagnostico e fluxos de produto podem compartilhar o
+ * mesmo comportamento sem duplicar polling, parsing ou mapeamento de erro.
+ *
+ * @template T
+ * @param {T & {
+ *   status: number,
+ *   nonce: string,
+ *   asyncMode: "auto" | "true" | "false",
+ *   data: unknown
+ * }} response Resposta inicial da Eulen.
+ * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica de polling da URL async.
+ * @returns {Promise<T & {
+ *   data: {
+ *     response: unknown,
+ *     async: false,
+ *     resolvedFromAsync: true,
+ *     originalAsync: { async: true, urlResponse: string, expiration?: string },
+ *     asyncResult: { status: number, headers: Record<string, string>, attempt: number }
+ *   }
+ * } | T>} Resposta original ou resposta resolvida para payload final.
+ */
+export async function resolveEulenAsyncResponse(response, options = {}) {
+  if (!isEulenAsyncResponsePointer(response.data)) {
+    return response;
+  }
+
+  const asyncResult = await readEulenAsyncResult(response.data, options);
+  const responsePayload = normalizeEulenAsyncResultPayload(asyncResult.data);
+
+  if (
+    responsePayload
+    && typeof responsePayload === "object"
+    && typeof responsePayload.errorMessage === "string"
+  ) {
+    throw new EulenApiError("Eulen asynchronous API result failed.", {
+      code: "eulen_async_result_failed",
+      nonce: response.nonce,
+      asyncMode: response.asyncMode,
+      status: response.status,
+      errorMessage: responsePayload.errorMessage,
+      expiration: response.data.expiration,
+      asyncResultStatus: asyncResult.status,
+      asyncResultAttempt: asyncResult.attempt,
+    });
+  }
+
+  return {
+    ...response,
+    data: {
+      response: responsePayload,
+      async: false,
+      resolvedFromAsync: true,
+      originalAsync: response.data,
+      asyncResult: {
+        status: asyncResult.status,
+        headers: asyncResult.headers,
+        attempt: asyncResult.attempt,
+      },
+    },
+  };
 }
 
 /**

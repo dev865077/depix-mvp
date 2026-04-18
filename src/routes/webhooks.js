@@ -6,7 +6,7 @@
  */
 import { Hono } from "hono";
 
-import { readTenantSecrets } from "../config/tenants.js";
+import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
 import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
 
@@ -31,13 +31,12 @@ export async function handleEulenDepositWebhook(c) {
     throw new Error("Database binding is required to process the Eulen webhook.");
   }
 
-  const tenantSecrets = await readTenantSecrets(c.env, tenant);
   const result = await processEulenDepositWebhook({
     db,
     runtimeConfig,
     tenant,
     authorizationHeader: c.req.header("authorization"),
-    expectedSecret: tenantSecrets.eulenWebhookSecret,
+    expectedSecret: await readTenantSecret(c.env, tenant, "eulenWebhookSecret"),
     rawBody: await c.req.text(),
     requestId: c.get("requestId"),
   });

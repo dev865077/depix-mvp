@@ -16,6 +16,8 @@ O projeto depende de secrets por tenant para:
 - secret do webhook Telegram
 - token da Eulen
 - secret do webhook Eulen
+- endereco DePix/Liquid de split
+- percentual de split no formato da Eulen, como `1.00%`
 
 ## Como o runtime resolve isso
 
@@ -25,9 +27,16 @@ Em `test` e `production`, o projeto usa `Cloudflare Secrets Store` via `secrets_
 
 Por isso, uma lista vazia de secrets classicos no Worker nao deve ser interpretada sozinha como ausencia de segredos no ambiente.
 
+Para split, o registry usa `splitConfigBindings`:
+
+- `depixSplitAddress`
+- `splitFee`
+
+Os valores reais desses bindings ficam no Cloudflare Secrets Store em `test` e `production`, ou em `.dev.vars` no ambiente local.
+
 ## Regra operacional
 
-Secrets nao devem morar em codigo, `vars` versionadas ou arquivos reais commitados.
+Secrets e dados financeiros operacionais nao devem morar em codigo, `vars` versionadas ou arquivos reais commitados.
 
 ## Regra de leitura
 

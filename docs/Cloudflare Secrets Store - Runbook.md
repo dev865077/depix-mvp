@@ -21,10 +21,14 @@ O `wrangler.jsonc` de `test` e `production` usa estes bindings:
 - `ALPHA_TELEGRAM_WEBHOOK_SECRET`
 - `ALPHA_EULEN_API_TOKEN`
 - `ALPHA_EULEN_WEBHOOK_SECRET`
+- `ALPHA_DEPIX_SPLIT_ADDRESS`
+- `ALPHA_DEPIX_SPLIT_FEE`
 - `BETA_TELEGRAM_BOT_TOKEN`
 - `BETA_TELEGRAM_WEBHOOK_SECRET`
 - `BETA_EULEN_API_TOKEN`
 - `BETA_EULEN_WEBHOOK_SECRET`
+- `BETA_DEPIX_SPLIT_ADDRESS`
+- `BETA_DEPIX_SPLIT_FEE`
 
 ## Secret names atuais de production
 
@@ -32,10 +36,14 @@ O `wrangler.jsonc` de `test` e `production` usa estes bindings:
 - `production-alpha-telegram-webhook-secret`
 - `production-alpha-eulen-api-token`
 - `production-alpha-eulen-webhook-secret`
+- `production-alpha-depix-split-address`
+- `production-alpha-depix-split-fee`
 - `production-beta-telegram-bot-token`
 - `production-beta-telegram-webhook-secret`
 - `production-beta-eulen-api-token`
 - `production-beta-eulen-webhook-secret`
+- `production-beta-depix-split-address`
+- `production-beta-depix-split-fee`
 
 ## Secret names atuais de test
 
@@ -43,10 +51,25 @@ O `wrangler.jsonc` de `test` e `production` usa estes bindings:
 - `test-alpha-telegram-webhook-secret`
 - `test-alpha-eulen-api-token`
 - `test-alpha-eulen-webhook-secret`
+- `test-alpha-depix-split-address`
+- `test-alpha-depix-split-fee`
 - `test-beta-telegram-bot-token`
 - `test-beta-telegram-webhook-secret`
 - `test-beta-eulen-api-token`
 - `test-beta-eulen-webhook-secret`
+- `test-beta-depix-split-address`
+- `test-beta-depix-split-fee`
+
+## Split DePix
+
+O split da cobranca e obrigatorio no MVP. O `TENANT_REGISTRY` versionado guarda apenas nomes de bindings em `splitConfigBindings`.
+
+Valores reais ficam no `Secrets Store`:
+
+- `*-depix-split-address`: endereco de recebimento DePix/Liquid. SideSwap gera enderecos confidenciais com prefixo `lq1`, que sao aceitos pelo runtime; exemplos da Eulen tambem podem aparecer como `ex1`.
+- `*-depix-split-fee`: percentual do split no formato documentado pela Eulen, por exemplo `1.00%`
+
+Esses valores sao tratados como confidenciais operacionais. Eles nao dao gasto direto de fundos, mas revelam destino financeiro e condicao comercial.
 
 ## O que nao vai para o store
 
@@ -60,7 +83,7 @@ Continuam como configuracao versionada:
 - `TENANT_REGISTRY`
 - `displayName`
 - `eulenPartnerId`
-- `splitConfig`
+- `splitConfigBindings`
 
 ## Rotacao de um secret de test ou production
 
