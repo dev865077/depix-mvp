@@ -18,6 +18,10 @@ const REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS = [
   "splitFee",
 ];
 
+const OPTIONAL_TENANT_OPS_BINDING_KEYS = [
+  "depositRecheckBearerToken",
+];
+
 /**
  * Garante que um valor do registry seja um objeto JSON simples.
  *
@@ -98,6 +102,41 @@ function normalizeTenantSplitConfigBindings(tenantId, input) {
 }
 
 /**
+ * Normaliza bindings operacionais opcionais do tenant.
+ *
+ * O recheck manual pode usar um token global compartilhado ou um token proprio
+ * por tenant. Quando o tenant declara um binding explicito aqui, o runtime usa
+ * exatamente esse nome e deixa de derivar o binding a partir do `tenantId`.
+ * Isso elimina colisao por normalizacao e torna a configuracao auditavel.
+ *
+ * @param {string} tenantId Chave do tenant no registro.
+ * @param {unknown} input Conteudo bruto dos bindings operacionais.
+ * @returns {{ depositRecheckBearerToken?: string }} Bindings opcionais validados.
+ */
+function normalizeTenantOpsBindings(tenantId, input) {
+  if (typeof input === "undefined") {
+    return {};
+  }
+
+  const opsBindings = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.opsBindings`);
+
+  return Object.fromEntries(
+    OPTIONAL_TENANT_OPS_BINDING_KEYS.flatMap((bindingKey) => {
+      const bindingValue = opsBindings[bindingKey];
+
+      if (typeof bindingValue === "undefined") {
+        return [];
+      }
+
+      return [[
+        bindingKey,
+        assertTenantString(bindingValue, `TENANT_REGISTRY.${tenantId}.opsBindings.${bindingKey}`),
+      ]];
+    }),
+  );
+}
+
+/**
  * Normaliza uma entrada bruta do registro de tenants.
  *
  * Este passo garante que cada tenant tenha:
@@ -106,6 +145,7 @@ function normalizeTenantSplitConfigBindings(tenantId, input) {
  * - parceiro Eulen opcional
  * - nomes dos bindings secretos obrigatorios
  * - nomes dos bindings secretos obrigatorios de split para cobranca
+ * - nomes opcionais de bindings operacionais por tenant
  *
  * @param {string} tenantId Chave do tenant no registro.
  * @param {Record<string, unknown>} input Conteudo bruto da entrada.
@@ -116,6 +156,9 @@ function normalizeTenantSplitConfigBindings(tenantId, input) {
  *   splitConfigBindings: {
  *     depixSplitAddress: string,
  *     splitFee: string
+ *   },
+ *   opsBindings: {
+ *     depositRecheckBearerToken?: string
  *   },
  *   secretBindings: Record<string, string>
  * }} Tenant validado.
@@ -130,6 +173,7 @@ function normalizeTenantConfig(tenantId, input) {
       ? tenantConfig.eulenPartnerId.trim()
       : undefined,
     splitConfigBindings: normalizeTenantSplitConfigBindings(tenantId, tenantConfig.splitConfigBindings),
+    opsBindings: normalizeTenantOpsBindings(tenantId, tenantConfig.opsBindings),
     secretBindings: normalizeTenantBindingMap(
       tenantId,
       tenantConfig.secretBindings,

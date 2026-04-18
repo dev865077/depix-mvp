@@ -33,6 +33,35 @@ export async function requestContextMiddleware(c, next) {
   c.set("db", db);
   c.set("tenant", tenant);
 
+  if (runtimeConfig.operations?.depositRecheck?.featureFlag.configured
+    && !runtimeConfig.operations.depositRecheck.featureFlag.recognized) {
+    log(runtimeConfig, {
+      level: "warn",
+      message: "config.invalid_boolean_flag",
+      tenantId: tenant?.tenantId,
+      requestId,
+      path: c.req.path,
+      details: {
+        bindingName: "ENABLE_OPS_DEPOSIT_RECHECK",
+        rawValue: runtimeConfig.operations.depositRecheck.featureFlag.rawValue,
+      },
+    });
+  }
+
+  if (runtimeConfig.operations?.depositRecheck?.tenantOverrides?.state === "invalid_config") {
+    log(runtimeConfig, {
+      level: "warn",
+      message: "config.deposit_recheck.tenant_override_invalid",
+      tenantId: tenant?.tenantId,
+      requestId,
+      path: c.req.path,
+      details: {
+        state: runtimeConfig.operations.depositRecheck.tenantOverrides.state,
+        invalidTenantOverrideCount: runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount,
+      },
+    });
+  }
+
   // A partir daqui toda rota recebe requestId, runtimeConfig, db e tenant
   // de forma consistente, evitando que cada handler replique esta montagem.
   log(runtimeConfig, {

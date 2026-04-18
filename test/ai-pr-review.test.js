@@ -21,6 +21,7 @@ import {
   getReviewGateFailure,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
+  sortFilesForReview,
   summarizePullRequestScope,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -479,6 +480,191 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("Base branch: main");
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
     expect(body).toContain("scripts/ai-pr-review.mjs");
+  });
+
+  it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {
+    const files = [
+      { filename: "docs/wiki/A.md", status: "modified", additions: 1, deletions: 0, patch: "@@\n+docs" },
+      { filename: "docs/wiki/B.md", status: "modified", additions: 1, deletions: 0, patch: "@@\n+docs" },
+      { filename: "src/routes/health.js", status: "modified", additions: 1, deletions: 0, patch: "@@\n+tenantOverrides" },
+      { filename: "test/health.test.js", status: "modified", additions: 1, deletions: 0, patch: "@@\n+tenantOverrides" },
+    ];
+
+    expect(sortFilesForReview(files).slice(0, 2).map((file) => file.filename)).toEqual([
+      "src/routes/health.js",
+      "test/health.test.js",
+    ]);
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      files,
+      gate,
+    );
+
+    expect(body.indexOf("### src/routes/health.js")).toBeLessThan(body.indexOf("### docs/wiki/A.md"));
+    expect(body).toContain("+tenantOverrides");
+  });
+
+  it("keeps safety-critical auth and recheck files ahead of ordinary source files", () => {
+    const files = [
+      { filename: "src/app.js", status: "modified", additions: 1, deletions: 0, patch: "@@\n+app" },
+      {
+        filename: "src/services/eulen-deposit-recheck.js",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+atomic recheck",
+      },
+      {
+        filename: "src/services/ops-route-authorization.js",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+fail closed",
+      },
+    ];
+
+    expect(sortFilesForReview(files).map((file) => file.filename)).toEqual([
+      "src/services/eulen-deposit-recheck.js",
+      "src/services/ops-route-authorization.js",
+      "src/app.js",
+    ]);
+  });
+
+  it("caps the changed-files digest instead of letting it consume the review context", () => {
+    const files = [
+      {
+        filename: "src/services/ops-route-authorization.js",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+fail closed",
+      },
+      ...Array.from({ length: 25 }, (_, index) => ({
+        filename: `docs/wiki/Noise-${index}.md`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+docs",
+      })),
+    ];
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      files,
+      gate,
+    );
+
+    expect(body).toContain("- src/services/ops-route-authorization.js");
+    expect(body).toContain("Additional files omitted from digest: 2 lower-priority file(s).");
+    expect(body).toContain("Only the top 24 review-priority files were sent to the model.");
+    expect(body).not.toContain("- docs/wiki/Noise-8.md");
+    expect(body).not.toContain("### docs/wiki/Noise-8.md");
+  });
+
+  it("sends complete current evidence for critical discussion-review files", () => {
+    const files = [
+      ...Array.from({ length: 20 }, (_, index) => ({
+        filename: `docs/wiki/Long-${index}.md`,
+        status: "modified",
+        additions: 200,
+        deletions: 0,
+        patch: ["@@", ...Array.from({ length: 200 }, () => "+documentation noise")].join("\n"),
+      })),
+      {
+        filename: "src/services/ops-route-authorization.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenant override declared\n+missing binding fails closed\n+AUTH_SENTINEL",
+      },
+      {
+        filename: "src/services/eulen-deposit-recheck.js",
+        status: "modified",
+        additions: 650,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+D1 batch persists audit event",
+          ...Array.from({ length: 640 }, () => "+critical recheck implementation evidence"),
+          "+RECHECK_SENTINEL",
+        ].join("\n"),
+      },
+      {
+        filename: "src/routes/health.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenantOverrides redacted\n+tenantSummary preserves compatibility\n+HEALTH_SENTINEL",
+      },
+      {
+        filename: "test/deposit-recheck.test.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+override missing returns 503\n+fetch is not called\n+DEPOSIT_TEST_SENTINEL",
+      },
+      {
+        filename: "test/health.test.js",
+        status: "modified",
+        additions: 3,
+        deletions: 0,
+        patch: "@@\n+tenantOverrides only state and invalidCount\n+tenant inventory remains available\n+HEALTH_TEST_SENTINEL",
+      },
+    ];
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Deposit recheck",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds recheck.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-10-deposit-recheck" },
+      },
+      files,
+      gate,
+    );
+
+    for (const sentinel of [
+      "AUTH_SENTINEL",
+      "RECHECK_SENTINEL",
+      "HEALTH_SENTINEL",
+      "DEPOSIT_TEST_SENTINEL",
+      "HEALTH_TEST_SENTINEL",
+    ]) {
+      expect(body).toContain(sentinel);
+    }
+
+    const recheckSection = body.slice(
+      body.indexOf("### src/services/eulen-deposit-recheck.js"),
+      body.indexOf("### src/services/ops-route-authorization.js"),
+    );
+
+    expect(recheckSection).not.toContain("[truncated]");
+    expect(body.indexOf("### src/services/eulen-deposit-recheck.js")).toBeLessThan(
+      body.indexOf("### docs/wiki/Long-0.md"),
+    );
+    expect(body.indexOf("### src/services/ops-route-authorization.js")).toBeLessThan(
+      body.indexOf("### docs/wiki/Long-0.md"),
+    );
   });
 
   it("builds the sticky comment with a discussion link when present", () => {

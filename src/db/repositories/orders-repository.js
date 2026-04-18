@@ -140,6 +140,21 @@ export async function getOrderById(db, tenantId, orderId) {
 }
 
 /**
+ * Monta o statement de leitura canonica por `orderId`.
+ *
+ * O recheck operacional o usa para reler o agregado dentro do mesmo batch de
+ * reconciliacao, sem duplicar aliases ou SQL fora do repositorio.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} orderId Identificador do pedido.
+ * @returns {import("@cloudflare/workers-types").D1PreparedStatement} Statement bindado.
+ */
+export function buildSelectOrderByIdStatement(db, tenantId, orderId) {
+  return db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(tenantId, orderId);
+}
+
+/**
  * Busca o pedido aberto mais recente de um usuario em um tenant/canal.
  *
  * Esta consulta existe para a borda conversacional do Telegram: quando o mesmo
@@ -187,6 +202,31 @@ export async function getLatestOpenOrderByUser(db, tenantId, userId, channel = "
  * @returns {Promise<Record<string, unknown> | null>} Pedido apos update.
  */
 export async function updateOrderById(db, tenantId, orderId, patch) {
+  const updateStatement = buildUpdateOrderByIdStatement(db, tenantId, orderId, patch);
+
+  if (!updateStatement) {
+    return getOrderById(db, tenantId, orderId);
+  }
+
+  const selectStatement = buildSelectOrderByIdStatement(db, tenantId, orderId);
+  const [, selectResult] = await db.batch([updateStatement, selectStatement]);
+
+  return selectResult.results[0];
+}
+
+/**
+ * Monta o statement de update parcial de um pedido.
+ *
+ * O retorno `null` indica patch vazio e permite que services atomicos componham
+ * a persistencia sem reimplementar a montagem dinamica do `SET`.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} orderId Identificador do pedido.
+ * @param {Record<string, unknown>} patch Campos permitidos para update.
+ * @returns {import("@cloudflare/workers-types").D1PreparedStatement | null} Statement bindado ou `null`.
+ */
+export function buildUpdateOrderByIdStatement(db, tenantId, orderId, patch) {
   const patchEntries = getAllowedPatchEntries(
     {
       ...patch,
@@ -196,25 +236,18 @@ export async function updateOrderById(db, tenantId, orderId, patch) {
   );
 
   if (patchEntries.length === 0) {
-    return getOrderById(db, tenantId, orderId);
+    return null;
   }
 
   // A montagem dinamica do SET acontece apenas em cima de campos ja validados
   // pela whitelist ORDER_UPDATE_COLUMNS.
   const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
   const values = patchEntries.map(([, value]) => value);
-  const updateStatement = db.prepare(`UPDATE orders SET ${setClause} WHERE tenant_id = ? AND order_id = ?`).bind(
+  return db.prepare(`UPDATE orders SET ${setClause} WHERE tenant_id = ? AND order_id = ?`).bind(
     ...values,
     tenantId,
     orderId,
   );
-  const selectStatement = db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(
-    tenantId,
-    orderId,
-  );
-  const [, selectResult] = await db.batch([updateStatement, selectStatement]);
-
-  return selectResult.results[0];
 }
 
 /**

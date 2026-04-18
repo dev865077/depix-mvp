@@ -16,6 +16,12 @@
 - [x] depixSplitAddress
 - [x] splitFee
 
+## Uso atual no codigo
+
+- `deposit`: criacao da cobranca principal
+- `deposit-status`: recheck operacional por `depositEntryId` e correlacao segura de `qrId`
+- `deposits`: reservado para reconciliacao por janela na proxima fatia de fallback
+
 ## Disponível na API e não selecionado
 
 - [ ] Pix2FA

@@ -265,9 +265,9 @@ export function reconcileOrderPatch(order, patch) {
   }
 
   if (typeof order.currentStep === "string" && EULEN_TERMINAL_ORDER_STEPS.has(order.currentStep) && patch.currentStep !== "completed") {
-    const { currentStep, ...rest } = patch;
+    const { currentStep, ...terminalSafePatch } = patch;
 
-    return rest;
+    return terminalSafePatch;
   }
 
   return patch;

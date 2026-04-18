@@ -9,6 +9,132 @@ import { readTenantRegistry } from "./tenants.js";
 
 const APP_ENVIRONMENTS = new Set(["local", "test", "production"]);
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
+const TRUE_BOOLEAN_BINDING_VALUES = new Set(["true", "1", "yes", "on"]);
+const FALSE_BOOLEAN_BINDING_VALUES = new Set(["false", "0", "no", "off", ""]);
+
+/**
+ * Indica se um binding secreto esta materialmente configurado no runtime.
+ *
+ * Para strings locais exigimos conteudo nao vazio. Para Secrets Store, a
+ * presenca do objeto com `get()` ja indica que o binding foi provisionado.
+ *
+ * @param {unknown} binding Binding bruto no env.
+ * @returns {boolean} Verdadeiro quando o binding existe de forma utilizavel.
+ */
+function isSecretBindingConfigured(binding) {
+  if (typeof binding === "string") {
+    return binding.trim().length > 0;
+  }
+
+  return Boolean(binding && typeof binding === "object" && typeof binding.get === "function");
+}
+
+/**
+ * Conta overrides tenant-scoped declarados sem binding valido.
+ *
+ * Este sinal e deliberadamente separado da prontidao global. Um tenant com
+ * override quebrado deve falhar fechado apenas naquele tenant, sem transformar
+ * a rota inteira em indisponivel para tenants que continuam saudaveis.
+ *
+ * @param {Record<string, unknown>} env Bindings atuais.
+ * @param {Record<string, { opsBindings?: { depositRecheckBearerToken?: string } }>} tenants Registro de tenants.
+ * @returns {number} Quantidade de overrides declarados sem segredo valido.
+ */
+function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
+  return Object.values(tenants).filter((tenant) => {
+    const bindingName = tenant.opsBindings?.depositRecheckBearerToken;
+
+    if (!bindingName) {
+      return false;
+    }
+
+    return !isSecretBindingConfigured(env[bindingName]);
+  }).length;
+}
+
+/**
+ * Resume um estado operacional redigido para a feature de recheck.
+ *
+ * O objetivo e dar sinal claro para operadores em `/health` sem expor nomes de
+ * bindings, inventario de tenants ou valores crus de configuracao sensivel.
+ *
+ * @param {{ configured: boolean, recognized: boolean }} featureFlag Estado da flag textual.
+ * @param {boolean} enabled Resultado booleano ja normalizado para a flag.
+ * @param {boolean} globalBearerBindingConfigured Se o token global existe no ambiente.
+ * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret"} Estado global redigido.
+ */
+export function describeDepositRecheckState(featureFlag, enabled, globalBearerBindingConfigured) {
+  if (featureFlag.configured && !featureFlag.recognized) {
+    return "invalid_config";
+  }
+
+  if (!enabled) {
+    return "disabled";
+  }
+
+  if (!globalBearerBindingConfigured) {
+    return "missing_secret";
+  }
+
+  return "ready";
+}
+
+/**
+ * Normaliza uma flag textual de runtime.
+ *
+ * Flags de operacao ficam em `vars`, nao em codigo. Esta funcao trata ausencia
+ * e valores desconhecidos como `false`, aceitando aliases operacionais comuns
+ * para evitar que um typo ou legado de deploy derrube o Worker inteiro.
+ *
+ * @param {string | undefined} value Valor bruto vindo do runtime.
+ * @param {string} key Nome do binding para mensagens de erro.
+ * @returns {boolean} Flag normalizada.
+ */
+export function readBooleanFlag(value, key) {
+  if (typeof value === "undefined") {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  if (TRUE_BOOLEAN_BINDING_VALUES.has(normalizedValue)) {
+    return true;
+  }
+
+  if (FALSE_BOOLEAN_BINDING_VALUES.has(normalizedValue)) {
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Descreve o estado operacional de uma flag textual sem expor segredo algum.
+ *
+ * Isso permite que `/health` revele se uma feature esta habilitada, ausente ou
+ * com valor desconhecido, sem transformar erro de configuracao em boot failure.
+ *
+ * @param {string | undefined} value Valor bruto do runtime.
+ * @returns {{ configured: boolean, recognized: boolean, rawValue: string | null }}
+ */
+export function describeBooleanFlagState(value) {
+  if (typeof value === "undefined") {
+    return {
+      configured: false,
+      recognized: false,
+      rawValue: null,
+    };
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  return {
+    configured: true,
+    recognized: TRUE_BOOLEAN_BINDING_VALUES.has(normalizedValue)
+      || FALSE_BOOLEAN_BINDING_VALUES.has(normalizedValue),
+    rawValue: normalizedValue,
+  };
+}
 
 /**
  * Garante que um binding textual obrigatorio exista e tenha conteudo.
@@ -69,11 +195,31 @@ export function assertPositiveInteger(value, key) {
  *       depixSplitAddress: string,
  *       splitFee: string
  *     },
+ *     opsBindings: {
+ *       depositRecheckBearerToken?: string
+ *     },
  *     secretBindings: Record<string, string>
  *   }>,
  *   secrets: {
  *     registryConfigured: boolean,
  *     tenantSecretBindingsConfigured: boolean
+ *   },
+ *   operations: {
+ *     depositRecheck: {
+ *       enabled: boolean,
+ *       featureFlag: {
+ *         configured: boolean,
+ *         recognized: boolean,
+ *         rawValue: string | null
+ *       },
+ *       state: "ready" | "disabled" | "invalid_config" | "missing_secret",
+ *       ready: boolean,
+ *       globalBearerBindingConfigured: boolean,
+ *       tenantOverrides: {
+ *         state: "ready" | "invalid_config",
+ *         invalidCount: number
+ *       }
+ *     }
  *   }
  * }} Configuracao consolidada do runtime.
  */
@@ -97,6 +243,15 @@ export function readRuntimeConfig(env) {
     Object.values(tenant.secretBindings).every(Boolean)
     && Object.values(tenant.splitConfigBindings).every(Boolean)
   ));
+  const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
+  const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
+  const globalBearerBindingConfigured = isSecretBindingConfigured(env.OPS_ROUTE_BEARER_TOKEN);
+  const invalidTenantOverrideCount = countInvalidTenantScopedDepositRecheckOverrides(env, tenants);
+  const depositRecheckState = describeDepositRecheckState(
+    depositRecheckFlagState,
+    depositRecheckEnabled,
+    globalBearerBindingConfigured,
+  );
 
   return {
     appName,
@@ -111,6 +266,19 @@ export function readRuntimeConfig(env) {
     secrets: {
       registryConfigured: Boolean(env.TENANT_REGISTRY),
       tenantSecretBindingsConfigured: hasTenantSecretBindings,
+    },
+    operations: {
+      depositRecheck: {
+        enabled: depositRecheckEnabled,
+        featureFlag: depositRecheckFlagState,
+        state: depositRecheckState,
+        ready: depositRecheckState === "ready",
+        globalBearerBindingConfigured,
+        tenantOverrides: {
+          state: invalidTenantOverrideCount > 0 ? "invalid_config" : "ready",
+          invalidCount: invalidTenantOverrideCount,
+        },
+      },
     },
   };
 }

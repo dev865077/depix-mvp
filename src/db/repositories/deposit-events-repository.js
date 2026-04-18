@@ -49,13 +49,17 @@ const INSERT_DEPOSIT_EVENT_SQL = `
 `;
 
 /**
- * Persiste um evento externo associado a um deposito.
+ * Monta o statement de insert de um evento externo.
+ *
+ * Expor o statement pronto permite compor batches atomicos em services de
+ * reconciliacao sem duplicar SQL nem abrir mao do repositorio como dono do
+ * contrato de escrita da tabela.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {Record<string, unknown>} input Evento a ser armazenado.
- * @returns {Promise<Record<string, unknown> | null>} Evento persistido.
+ * @returns {import("@cloudflare/workers-types").D1PreparedStatement} Statement bindado.
  */
-export async function createDepositEvent(db, input) {
+export function buildCreateDepositEventStatement(db, input) {
   return db.prepare(INSERT_DEPOSIT_EVENT_SQL).bind(
     input.tenantId,
     input.orderId,
@@ -66,7 +70,18 @@ export async function createDepositEvent(db, input) {
     input.bankTxId ?? null,
     input.blockchainTxId ?? null,
     input.rawPayload,
-  ).first();
+  );
+}
+
+/**
+ * Persiste um evento externo associado a um deposito.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {Record<string, unknown>} input Evento a ser armazenado.
+ * @returns {Promise<Record<string, unknown> | null>} Evento persistido.
+ */
+export async function createDepositEvent(db, input) {
+  return buildCreateDepositEventStatement(db, input).first();
 }
 
 /**

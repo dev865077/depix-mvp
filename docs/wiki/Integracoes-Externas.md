@@ -44,15 +44,28 @@ Estado atual:
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
-- o recheck por fallback ainda nao entrou no fluxo operacional real
+- o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
+- o fallback por janela via `deposits` continua como etapa separada
 
 ## Regra operacional central
 
 Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
 
+O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-status` para um `depositEntryId` especifico, registra o evento como `recheck_deposit_status` e aplica a verdade reconciliada sem atravessar tenants.
+
+Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e fica desabilitada quando o segredo operacional nao estiver configurado.
+
+O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, e o fallback por `deposits` continua como etapa separada de backlog para janelas mais amplas.
+
 Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
 
 Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
+
+No recheck operacional, a mesma politica vale para `deposit-status`: conflito de ownership de `qrId` devolve `deposit_qr_id_conflict`, e divergencia com um `qrId` ja correlacionado no deposito alvo devolve `deposit_qr_id_mismatch`.
+
+O write path do recheck foi desenhado para manter auditoria e agregado alinhados: o evento `recheck_deposit_status` e os updates em `deposits`/`orders` sao persistidos no mesmo batch do D1.
+
+Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao terminal nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
 
 ## Split em deposit
 

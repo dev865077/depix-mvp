@@ -18,11 +18,12 @@ const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
 const RUN_MODE_DISCUSSION = "discussion";
-const MAX_FILES = 12;
+const MAX_FILES = 24;
 const MAX_DISCUSSION_LOOKBACK = 100;
-const MAX_PATCH_CHARS_PER_FILE = 3000;
+const MAX_PATCH_CHARS_PER_FILE = 7000;
+const MAX_CRITICAL_PATCH_CHARS_PER_FILE = 50000;
 const MAX_PR_BODY_CHARS = 3000;
-const MAX_REVIEW_INPUT_CHARS = 18000;
+const MAX_REVIEW_INPUT_CHARS = 200000;
 const MAX_SYNTHESIS_INPUT_CHARS = 16000;
 const MAX_AGENT_MEMO_CHARS = 2600;
 const MAX_OUTPUT_TOKENS = 2200;
@@ -60,6 +61,27 @@ const REVIEW_SIGNAL_BY_CATEGORY = {
   config: 2,
   other: 2,
 };
+
+const REVIEW_FILE_PRIORITY_BY_CATEGORY = {
+  source: 70,
+  tests: 60,
+  config: 50,
+  workflow: 45,
+  prompt: 40,
+  docs: 30,
+  other: 10,
+};
+
+const REVIEW_CRITICAL_PATH_PATTERNS = [
+  /^src\/services\/ops-route-authorization\.js$/,
+  /^src\/services\/eulen-deposit-recheck\.js$/,
+  /^src\/routes\/ops\.js$/,
+  /^src\/routes\/health\.js$/,
+  /^src\/config\/runtime\.js$/,
+  /^test\/deposit-recheck\.test\.js$/,
+  /^test\/health\.test\.js$/,
+  /^test\/runtime-config\.test\.js$/,
+];
 
 /**
  * Emit a stable operational log line for GitHub Actions.
@@ -841,6 +863,66 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
 }
 
 /**
+ * Sort files so the model sees executable behavior and tests before prose.
+ *
+ * GitHub returns PR files in path order. For broad PRs, that can spend most of
+ * the context window on docs and hide the source/test files that prove whether
+ * an older concern is still true. Review payload ordering must favor current
+ * behavioral evidence over repository path order.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @returns {any[]} Files ordered for model review.
+ */
+export function sortFilesForReview(files) {
+  return [...files].sort((left, right) => {
+    const priorityDelta = getFileReviewPriority(right) - getFileReviewPriority(left);
+
+    if (priorityDelta !== 0) {
+      return priorityDelta;
+    }
+
+    return String(left.filename).localeCompare(String(right.filename));
+  });
+}
+
+/**
+ * Rank a changed file by how much current behavioral evidence it can provide.
+ *
+ * Broad operational PRs can have many docs and support files. The model must
+ * see the current auth, persistence, health, and request-level tests before it
+ * reasons from older Discussion comments. This score is still deterministic and
+ * bounded; it only changes ordering inside the already-capped review payload.
+ *
+ * @param {any} file GitHub changed-file payload.
+ * @returns {number} Review priority score.
+ */
+function getFileReviewPriority(file) {
+  const normalizedPath = normalizeRepositoryPath(file?.filename);
+  const category = classifyReviewFile(normalizedPath);
+  const categoryPriority = REVIEW_FILE_PRIORITY_BY_CATEGORY[category] ?? REVIEW_FILE_PRIORITY_BY_CATEGORY.other;
+  const criticalPathBoost = isCriticalReviewFile(file) ? 30 : 0;
+
+  return categoryPriority + criticalPathBoost;
+}
+
+/**
+ * Identify files whose diffs carry merge-critical operational evidence.
+ *
+ * These files own auth, persistence, health readiness, and request-level
+ * regression tests. They still compete inside the same bounded prompt, but each
+ * receives a larger per-file patch budget so a reviewer does not see the file
+ * name while missing the behavior that proves the current PR state.
+ *
+ * @param {any} file GitHub changed-file payload.
+ * @returns {boolean} True when the file should use the critical patch budget.
+ */
+function isCriticalReviewFile(file) {
+  const normalizedPath = normalizeRepositoryPath(file?.filename);
+
+  return REVIEW_CRITICAL_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
+}
+
+/**
  * Summarize the scope of the PR so the merge gate can stay deterministic.
  *
  * @param {any[]} files Changed files from GitHub.
@@ -979,10 +1061,20 @@ export function assessDiscussionGate(files) {
  * @returns {string} Compact file digest.
  */
 function buildChangedFilesDigest(files) {
-  return files
-    .slice(0, MAX_FILES)
+  const orderedFiles = sortFilesForReview(files);
+  const selectedFiles = orderedFiles.slice(0, MAX_FILES);
+  const digestLines = selectedFiles
     .map((file) => `- ${file.filename} (${file.status}, +${file.additions}/-${file.deletions})`)
     .join("\n");
+
+  if (orderedFiles.length <= MAX_FILES) {
+    return digestLines;
+  }
+
+  return [
+    digestLines,
+    `- Additional files omitted from digest: ${orderedFiles.length - MAX_FILES} lower-priority file(s).`,
+  ].join("\n");
 }
 
 /**
@@ -992,9 +1084,11 @@ function buildChangedFilesDigest(files) {
  * @returns {string} Compact diff payload.
  */
 function buildFilesReviewPayload(files) {
-  const selectedFiles = files.slice(0, MAX_FILES);
+  const orderedFiles = sortFilesForReview(files);
+  const selectedFiles = orderedFiles.slice(0, MAX_FILES);
   const sections = selectedFiles.map((file) => {
-    const patch = truncateText(file.patch ?? "[no patch available]", MAX_PATCH_CHARS_PER_FILE);
+    const patchLimit = isCriticalReviewFile(file) ? MAX_CRITICAL_PATCH_CHARS_PER_FILE : MAX_PATCH_CHARS_PER_FILE;
+    const patch = truncateText(file.patch ?? "[no patch available]", patchLimit);
 
     return [
       `### ${file.filename}`,
@@ -1008,8 +1102,8 @@ function buildFilesReviewPayload(files) {
     ].join("\n");
   });
 
-  if (files.length > MAX_FILES) {
-    sections.push(`### Additional files omitted\nOnly the first ${MAX_FILES} changed files were sent to the model.`);
+  if (orderedFiles.length > MAX_FILES) {
+    sections.push(`### Additional files omitted\nOnly the top ${MAX_FILES} review-priority files were sent to the model.`);
   }
 
   return truncateText(sections.join("\n\n"), MAX_REVIEW_INPUT_CHARS);

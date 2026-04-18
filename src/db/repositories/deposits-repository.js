@@ -137,6 +137,24 @@ export async function getDepositByDepositEntryId(db, tenantId, depositEntryId) {
 }
 
 /**
+ * Monta o statement de leitura canonica por `depositEntryId`.
+ *
+ * O service de recheck usa este builder para reler o agregado dentro do mesmo
+ * batch de persistencia, mantendo SQL e aliases centralizados no repositorio.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId ID canonico da entrada criada na Eulen.
+ * @returns {import("@cloudflare/workers-types").D1PreparedStatement} Statement bindado.
+ */
+export function buildSelectDepositByDepositEntryIdStatement(db, tenantId, depositEntryId) {
+  return db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? LIMIT 1`).bind(
+    tenantId,
+    depositEntryId,
+  );
+}
+
+/**
  * Busca um deposito pelo `qrId` usado na reconciliacao externa.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
@@ -178,6 +196,31 @@ export async function listDepositsNeedingQrIdReconciliation(db, tenantId) {
  * @returns {Promise<Record<string, unknown> | null>} Deposito apos update.
  */
 export async function updateDepositByDepositEntryId(db, tenantId, depositEntryId, patch) {
+  const updateStatement = buildUpdateDepositByDepositEntryIdStatement(db, tenantId, depositEntryId, patch);
+
+  if (!updateStatement) {
+    return getDepositByDepositEntryId(db, tenantId, depositEntryId);
+  }
+
+  const selectStatement = buildSelectDepositByDepositEntryIdStatement(db, tenantId, depositEntryId);
+  const [, selectResult] = await db.batch([updateStatement, selectStatement]);
+
+  return selectResult.results[0];
+}
+
+/**
+ * Monta o statement de update parcial de um deposito por `depositEntryId`.
+ *
+ * O retorno `null` sinaliza que o patch era vazio e evita que camadas mais
+ * altas montem SQL dinamico fora do repositorio.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId ID canonico da entrada criada na Eulen.
+ * @param {Record<string, unknown>} patch Campos permitidos para update.
+ * @returns {import("@cloudflare/workers-types").D1PreparedStatement | null} Statement bindado ou `null`.
+ */
+export function buildUpdateDepositByDepositEntryIdStatement(db, tenantId, depositEntryId, patch) {
   const patchEntries = getAllowedPatchEntries(
     {
       ...patch,
@@ -187,21 +230,14 @@ export async function updateDepositByDepositEntryId(db, tenantId, depositEntryId
   );
 
   if (patchEntries.length === 0) {
-    return getDepositByDepositEntryId(db, tenantId, depositEntryId);
+    return null;
   }
 
   const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
   const values = patchEntries.map(([, value]) => value);
-  const updateStatement = db.prepare(`UPDATE deposits SET ${setClause} WHERE tenant_id = ? AND deposit_entry_id = ?`).bind(
+  return db.prepare(`UPDATE deposits SET ${setClause} WHERE tenant_id = ? AND deposit_entry_id = ?`).bind(
     ...values,
     tenantId,
     depositEntryId,
   );
-  const selectStatement = db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? LIMIT 1`).bind(
-    tenantId,
-    depositEntryId,
-  );
-  const [, selectResult] = await db.batch([updateStatement, selectStatement]);
-
-  return selectResult.results[0];
 }

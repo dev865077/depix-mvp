@@ -2,16 +2,19 @@
  * Rotas operacionais internas.
  *
  * Este router abriga:
- * - a operacao placeholder de recheck
+ * - o recheck operacional de deposito via `deposit-status`
  * - rotas locais de diagnostico para a issue #42
  *
  * O desenho aqui e intencionalmente fino: a borda HTTP faz apenas validacao
- * de contexto, parse de entrada e traducao de erros. Toda regra de diagnostico
- * e integracao externa fica em `local-diagnostic-validation.js`.
+ * de contexto, parse de entrada e traducao de erros. A regra de reconciliacao
+ * operacional vive em `eulen-deposit-recheck.js`; as rotas de diagnostico da
+ * issue #42 continuam isoladas em `local-diagnostic-validation.js`.
  */
 import { Hono } from "hono";
 
-import { jsonNotImplemented } from "../lib/http.js";
+import { readTenantSecret } from "../config/tenants.js";
+import { jsonError } from "../lib/http.js";
+import { log } from "../lib/logger.js";
 import {
   createEulenDiagnosticDeposit,
   DiagnosticServiceError,
@@ -23,6 +26,11 @@ import {
   readDiagnosticAsyncMode,
   registerTelegramWebhookDiagnostic,
 } from "../services/local-diagnostic-validation.js";
+import {
+  authorizeOpsRoute,
+  OpsRouteAuthorizationError,
+} from "../services/ops-route-authorization.js";
+import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
 
 export const opsRouter = new Hono();
 
@@ -49,17 +57,129 @@ function handleDiagnosticRouteError(c, error) {
 }
 
 /**
- * Placeholder da operacao de recheck de deposito.
+ * Converte erros conhecidos do recheck operacional para JSON padronizado.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
- * @returns {Response} Resposta 501 padronizada.
+ * @param {unknown} error Erro capturado durante a execucao.
+ * @returns {Response} Resposta pronta para a borda HTTP.
  */
-export function handleDepositRecheck(c) {
-  const tenant = c.get("tenant");
+function handleDepositRecheckError(c, error) {
+  const runtimeConfig = c.get("runtimeConfig");
 
-  return jsonNotImplemented(c, "Deposit recheck operation", {
-    tenantId: tenant?.tenantId,
-  });
+  if (error instanceof OpsRouteAuthorizationError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: "ops.deposit_recheck.authorization_failed",
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
+    return jsonError(c, error.status, error.code, error.message, error.details);
+  }
+
+  if (error instanceof DepositRecheckError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: "ops.deposit_recheck.failed",
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
+    return jsonError(c, error.status, error.code, error.message, error.details);
+  }
+
+  throw error;
+}
+
+/**
+ * Executa o recheck operacional de um deposito via `deposit-status`.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @returns {Promise<Response>} Resultado da reconciliacao.
+ */
+export async function handleDepositRecheck(c) {
+  try {
+    const tenant = c.get("tenant");
+    const db = c.get("db");
+    const runtimeConfig = c.get("runtimeConfig");
+
+    if (!tenant) {
+      return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this operation.");
+    }
+
+    const authContext = await authorizeOpsRoute({
+      env: c.env,
+      runtimeConfig,
+      authorizationHeader: c.req.header("authorization"),
+      requestId: c.get("requestId"),
+      tenant,
+      tenantId: tenant.tenantId,
+      path: c.req.path,
+    });
+
+    log(runtimeConfig, {
+      level: "info",
+      message: "ops.deposit_recheck.authorized",
+      tenantId: tenant.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        path: c.req.path,
+        authScope: authContext.authScope,
+        bindingName: authContext.bindingName,
+      },
+    });
+
+    if (!db) {
+      throw new Error("Database binding is required to process the deposit recheck.");
+    }
+
+    let eulenApiToken;
+
+    try {
+      eulenApiToken = await readTenantSecret(c.env, tenant, "eulenApiToken");
+    } catch (error) {
+      return jsonError(
+        c,
+        503,
+        "recheck_dependency_unavailable",
+        "Required Eulen recheck dependencies are not available for this tenant.",
+        {
+          cause: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+
+    const result = await processDepositRecheck({
+      db,
+      runtimeConfig,
+      tenant,
+      eulenApiToken,
+      rawBody: await c.req.text(),
+      requestId: c.get("requestId"),
+    });
+
+    return c.json(
+      {
+        ok: true,
+        requestId: c.get("requestId"),
+        tenantId: tenant.tenantId,
+        ...result.details,
+      },
+      result.status,
+    );
+  } catch (error) {
+    return handleDepositRecheckError(c, error);
+  }
 }
 
 /**
