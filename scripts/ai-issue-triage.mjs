@@ -17,6 +17,14 @@ const MAX_ISSUE_BODY_CHARS = 5000;
 const MAX_EXISTING_COMMENT_CHARS = 5000;
 const MAX_OUTPUT_TOKENS = 25000;
 const REASONING_EFFORT = "low";
+const DISCUSSION_ACKNOWLEDGEMENT_TITLE = "## Resposta operacional requerida";
+const DISCUSSION_ACKNOWLEDGEMENT_BODY = [
+  "Antes de abrir branch ou PR para esta issue, o implementador deve responder nesta Discussion com:",
+  "- decisao operacional adotada",
+  "- ordem de execucao",
+  "- escopo da primeira PR",
+  "- riscos ou pendencias que continuam fora da primeira PR",
+].join("\n");
 
 /**
  * @typedef {{
@@ -640,10 +648,17 @@ async function createDiscussion(repositoryId, categoryId, title, body) {
  * @param {string | null} discussionUrl Existing or newly created discussion URL.
  * @returns {string} Markdown comment body.
  */
-function buildIssueCommentBody(plan, model, discussionUrl) {
+export function buildIssueCommentBody(plan, model, discussionUrl) {
   const routeLabel = plan.route === ROUTE_DIRECT_PR ? "PR direta" : "Discussion antes da PR";
   const discussionSection = discussionUrl
-    ? ["## Discussion", "", `[Discussion](${discussionUrl})`]
+    ? [
+      "## Discussion",
+      "",
+      `[Discussion](${discussionUrl})`,
+      "",
+      DISCUSSION_ACKNOWLEDGEMENT_TITLE,
+      DISCUSSION_ACKNOWLEDGEMENT_BODY,
+    ]
     : [];
 
   return [
@@ -713,6 +728,9 @@ export function buildDiscussionBody(issue, plan) {
     "",
     "## Sintese final",
     plan.decision,
+    "",
+    DISCUSSION_ACKNOWLEDGEMENT_TITLE,
+    DISCUSSION_ACKNOWLEDGEMENT_BODY,
     "",
     "## Proximos passos",
     ...plan.nextSteps.map((step) => `- ${step}`),
