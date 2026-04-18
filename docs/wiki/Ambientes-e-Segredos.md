@@ -58,6 +58,7 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 
 ## Contrato de habilitacao
 
+- regra unica de precedencia: todo tenant usa o token global `OPS_ROUTE_BEARER_TOKEN` por padrao; somente tenants que declararem `opsBindings.depositRecheckBearerToken` saem desse caminho, e esse override afeta apenas o tenant declarado
 - `ENABLE_OPS_DEPOSIT_RECHECK=false` ou ausente: a rota operacional responde `503 ops_route_disabled`
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` sem token configurado: a rota continua desabilitada com `503 ops_route_disabled`
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `OPS_ROUTE_BEARER_TOKEN` configurado: a rota fica operacionalmente pronta

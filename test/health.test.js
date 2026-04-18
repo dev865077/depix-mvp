@@ -22,6 +22,7 @@ export async function assertHealthResponse() {
   expect(body.configuration.tenants.count).toBe(2);
   expect(body.configuration.secrets.registryConfigured).toBe(true);
   expect(body.configuration.secrets.tenantSecretBindingsConfigured).toBe(true);
+  expect(body.configuration.operations.depositRecheck.state).toBe("missing_secret");
   expect(body.configuration.operations.depositRecheck.ready).toBe(false);
 }
 

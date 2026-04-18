@@ -24,6 +24,7 @@ export function handleHealth(c) {
       secrets: runtimeConfig.secrets,
       operations: {
         depositRecheck: {
+          state: runtimeConfig.operations.depositRecheck.state,
           ready: runtimeConfig.operations.depositRecheck.ready,
         },
       },

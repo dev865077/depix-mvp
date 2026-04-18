@@ -13,6 +13,33 @@ const TRUE_BOOLEAN_BINDING_VALUES = new Set(["true", "1", "yes", "on"]);
 const FALSE_BOOLEAN_BINDING_VALUES = new Set(["false", "0", "no", "off", ""]);
 
 /**
+ * Resume um estado operacional redigido para a feature de recheck.
+ *
+ * O objetivo e dar sinal claro para operadores em `/health` sem expor nomes de
+ * bindings, inventario de tenants ou valores crus de configuracao sensivel.
+ *
+ * @param {{ configured: boolean, recognized: boolean }} featureFlag Estado da flag textual.
+ * @param {boolean} enabled Resultado booleano ja normalizado para a flag.
+ * @param {boolean} globalBearerBindingConfigured Se o token global existe no ambiente.
+ * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret"} Estado redigido.
+ */
+export function describeDepositRecheckState(featureFlag, enabled, globalBearerBindingConfigured) {
+  if (featureFlag.configured && !featureFlag.recognized) {
+    return "invalid_config";
+  }
+
+  if (!enabled) {
+    return "disabled";
+  }
+
+  if (!globalBearerBindingConfigured) {
+    return "missing_secret";
+  }
+
+  return "ready";
+}
+
+/**
  * Normaliza uma flag textual de runtime.
  *
  * Flags de operacao ficam em `vars`, nao em codigo. Esta funcao trata ausencia
@@ -145,6 +172,7 @@ export function assertPositiveInteger(value, key) {
  *         recognized: boolean,
  *         rawValue: string | null
  *       },
+ *       state: "ready" | "disabled" | "invalid_config" | "missing_secret",
  *       ready: boolean,
  *       globalBearerBindingConfigured: boolean
  *     }
@@ -174,6 +202,11 @@ export function readRuntimeConfig(env) {
   const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
   const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
   const globalBearerBindingConfigured = Boolean(env.OPS_ROUTE_BEARER_TOKEN);
+  const depositRecheckState = describeDepositRecheckState(
+    depositRecheckFlagState,
+    depositRecheckEnabled,
+    globalBearerBindingConfigured,
+  );
 
   return {
     appName,
@@ -193,6 +226,7 @@ export function readRuntimeConfig(env) {
       depositRecheck: {
         enabled: depositRecheckEnabled,
         featureFlag: depositRecheckFlagState,
+        state: depositRecheckState,
         ready: depositRecheckEnabled && globalBearerBindingConfigured,
         globalBearerBindingConfigured,
       },

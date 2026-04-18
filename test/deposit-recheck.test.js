@@ -517,6 +517,25 @@ describe("deposit recheck route", () => {
     expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
   });
 
+  it("fails closed when a tenant-scoped operator token binding is declared but missing from the environment", async function assertMissingTenantScopedOperatorBinding() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen with missing tenant-scoped binding"));
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer ops-route-test-token",
+      envOverrides: {
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: undefined,
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+  });
+
   it("uses exact tenant binding names from the registry without collapsing similar tenant ids", async function assertExactTenantScopedBindingMapping() {
     await resetDatabaseSchema();
 
