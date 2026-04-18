@@ -41,6 +41,7 @@ jobs:
         env:
           AI_PR_REVIEW_MODE: classify
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_CLASSIFY_MODEL || 'gpt-5.4-nano' }}
         run: node scripts/ai-pr-review.mjs
 
   direct-review:
