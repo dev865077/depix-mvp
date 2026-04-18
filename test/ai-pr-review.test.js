@@ -7,6 +7,7 @@ import {
   assertValidReviewRecommendation,
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
+  buildDiscussionGateReview,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
@@ -14,6 +15,7 @@ import {
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
+  evaluateDiscussionRecommendation,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
   getReviewGateFailure,
@@ -68,6 +70,26 @@ describe("ai pr review recommendation parser", () => {
   it("turns Request changes into a failing GitHub check verdict", () => {
     expect(getReviewGateFailure("Approve")).toBeNull();
     expect(getReviewGateFailure("Request changes")?.message).toContain("final recommendation is blocking");
+  });
+
+  it("requires unanimous approve in the discussion lane", () => {
+    const unanimous = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+    const blocked = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nNeeds changes.\n\n## Findings\n- Blocker.\n\n## Questions\n- None.\n\n## Merge posture\nNot ready.\n\n## Recommendation\nRequest changes",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+
+    expect(unanimous.recommendation).toBe("Approve");
+    expect(unanimous.blockingRoles).toEqual([]);
+    expect(blocked.recommendation).toBe("Request changes");
+    expect(blocked.blockingRoles).toEqual(["technical"]);
   });
 });
 
@@ -306,15 +328,17 @@ describe("ai pr review discussion rendering", () => {
 
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment("Approve");
-    const blocked = buildDiscussionCompletionComment("Request changes");
+    const blocked = buildDiscussionCompletionComment("Request changes", ["risk"]);
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
     expect(approved).toContain("Discussion concluded");
     expect(approved).toContain("Final recommendation: `Approve`");
     expect(approved).toContain("visible closure marker");
+    expect(approved).toContain("all automated reviewer roles returned `Approve`");
     expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
     expect(blocked).toContain("Final recommendation: `Request changes`");
-    expect(blocked).toContain("remains open");
+    expect(blocked).toContain("unanimous approval was not reached");
+    expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
   });
 
@@ -325,6 +349,7 @@ describe("ai pr review discussion rendering", () => {
     ]);
 
     expect(memo).toContain("could not complete");
+    expect(assertValidReviewRecommendation(memo)).toBe("Request changes");
     expect(memo.length).toBeLessThan(900);
     expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
     expect(synthesis).toContain("Rerun the discussion review");
@@ -373,6 +398,31 @@ describe("ai pr review discussion rendering", () => {
 
     expect(body).toContain("## Discussion");
     expect(extractDiscussionUrlFromComment(body)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
+  });
+
+  it("renders a request-changes gate summary when unanimity is broken", () => {
+    const review = buildDiscussionGateReview(
+      {
+        product: "## Recommendation\nApprove",
+        technical: "## Recommendation\nRequest changes",
+        risk: "## Recommendation\nApprove",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      },
+      {
+        recommendations: {
+          product: "Approve",
+          technical: "Request changes",
+          risk: "Approve",
+          synthesis: "Approve",
+        },
+        blockingRoles: ["technical"],
+        recommendation: "Request changes",
+      },
+    );
+
+    expect(assertValidReviewRecommendation(review)).toBe("Request changes");
+    expect(review).toContain("requires unanimous `Approve`");
+    expect(review).toContain("`technical`");
   });
 
   it("sanitizes model-authored mentions, images, and markdown links", () => {

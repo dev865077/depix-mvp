@@ -1177,6 +1177,39 @@ export function getReviewGateFailure(recommendation) {
 }
 
 /**
+ * Normalize the four role recommendations of a discussion review.
+ *
+ * The discussion lane is only merge-ready when every automated role reaches
+ * the same explicit `Approve` verdict. This avoids the previous failure mode
+ * where the synthesis said `Approve` while one specialist memo still asked for
+ * changes, which made the green check disagree with the actual debate.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis: string }} debate Debate output.
+ * @returns {{
+ *   recommendations: Record<string, string>,
+ *   blockingRoles: string[],
+ *   recommendation: "Approve" | "Request changes"
+ * }} Unanimity result.
+ */
+export function evaluateDiscussionRecommendation(debate) {
+  const recommendations = {
+    product: assertValidReviewRecommendation(debate.product),
+    technical: assertValidReviewRecommendation(debate.technical),
+    risk: assertValidReviewRecommendation(debate.risk),
+    synthesis: assertValidReviewRecommendation(debate.synthesis),
+  };
+  const blockingRoles = Object.entries(recommendations)
+    .filter(([, recommendation]) => recommendation !== "Approve")
+    .map(([role]) => role);
+
+  return {
+    recommendations,
+    blockingRoles,
+    recommendation: blockingRoles.length === 0 ? "Approve" : "Request changes",
+  };
+}
+
+/**
  * Send one prompt to OpenAI and return markdown text.
  *
  * @param {string} systemPrompt Final system prompt.
@@ -1297,6 +1330,9 @@ export function buildModelFailureMemo(role, error) {
     "",
     "## Merge posture",
     "Request changes until the discussion review can be rerun or manually accepted by a maintainer.",
+    "",
+    "## Recommendation",
+    "Request changes",
   ].join("\n");
 }
 
@@ -1344,9 +1380,24 @@ export function buildDiscussionDebateFailureSynthesis(failures) {
 async function generateDiscussionDebate(promptBundle, userPrompt, model) {
   console.log("Starting multi-role PR discussion review.");
   const roleResults = await Promise.allSettled([
-    generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt), userPrompt, model),
-    generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt), userPrompt, model),
-    generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt), userPrompt, model),
+    generateModelMarkdown(
+      composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt),
+      userPrompt,
+      model,
+      { expectRecommendation: true },
+    ),
+    generateModelMarkdown(
+      composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt),
+      userPrompt,
+      model,
+      { expectRecommendation: true },
+    ),
+    generateModelMarkdown(
+      composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt),
+      userPrompt,
+      model,
+      { expectRecommendation: true },
+    ),
   ]);
   const roleNames = ["Product and scope", "Technical and architecture", "Risk, security, and operations"];
   const failures = roleResults.flatMap((result, index) =>
@@ -1475,16 +1526,19 @@ export function buildDiscussionReviewComments(debate) {
  * @param {string} recommendation Parsed final recommendation.
  * @returns {string} Final Discussion status comment.
  */
-export function buildDiscussionCompletionComment(recommendation) {
+export function buildDiscussionCompletionComment(recommendation, blockingRoles = []) {
   const isApproved = recommendation === "Approve";
   const statusLine = isApproved
-    ? "Discussion concluded: all automated reviewer roles completed and no unresolved blockers remain."
-    : "Discussion concluded: automated reviewers still request changes before merge.";
+    ? "Discussion concluded: all automated reviewer roles returned `Approve`."
+    : "Discussion concluded: unanimous approval was not reached across the automated reviewer roles.";
   const closeLine = isApproved
     ? "This append-only comment is the visible closure marker for the automated review."
-    : "The Discussion remains open because the synthesis is not approved.";
+    : "The Discussion remains open because at least one automated reviewer role still requests changes.";
   const canonicalLine =
     "Because this workflow is append-only, this newest final-status comment supersedes earlier automated final-status comments in this Discussion.";
+  const blockerLine = !isApproved && blockingRoles.length > 0
+    ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
+    : null;
 
   return [
     DISCUSSION_FINAL_COMMENT_MARKER,
@@ -1492,9 +1546,39 @@ export function buildDiscussionCompletionComment(recommendation) {
     "",
     statusLine,
     closeLine,
+    ...(blockerLine ? [blockerLine] : []),
     canonicalLine,
     "",
     `Final recommendation: \`${recommendation}\``,
+  ].join("\n");
+}
+
+/**
+ * Build the PR-visible gate summary for the discussion lane.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis: string }} debate Debate output.
+ * @param {{
+ *   recommendations: Record<string, string>,
+ *   blockingRoles: string[],
+ *   recommendation: "Approve" | "Request changes"
+ * }} evaluation Unanimity result.
+ * @returns {string} PR-visible verdict body.
+ */
+export function buildDiscussionGateReview(debate, evaluation) {
+  if (evaluation.recommendation === "Approve") {
+    return debate.synthesis;
+  }
+
+  return [
+    "Request changes",
+    "",
+    "## Findings",
+    "- The discussion lane requires unanimous `Approve` from Product, Technical, Risk, and Synthesis.",
+    `- Blocking reviewer roles in this run: ${evaluation.blockingRoles.map((role) => `\`${role}\``).join(", ")}.`,
+    "- See the linked Discussion for the role-specific comments and the latest closure status.",
+    "",
+    "## Recommendation",
+    "Request changes",
   ].join("\n");
 }
 
@@ -1711,13 +1795,14 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
       });
     }
 
-    const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
-    const finalCommentBody = buildDiscussionCompletionComment(recommendation);
+    const evaluation = evaluateDiscussionRecommendation(debate);
+    const finalCommentBody = buildDiscussionCompletionComment(evaluation.recommendation, evaluation.blockingRoles);
     await addDiscussionComment(discussion.id, finalCommentBody);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
       action: "created",
-      recommendation,
+      recommendation: evaluation.recommendation,
+      blockingRoles: evaluation.blockingRoles,
       discussionUrl: discussion.url,
     });
 
@@ -1798,6 +1883,7 @@ async function main() {
       userPrompt,
       model,
     );
+    const discussionEvaluation = evaluateDiscussionRecommendation(debate);
     const discussionPublication = await publishDiscussionOrFallback(
       repository,
       pullRequest,
@@ -1814,10 +1900,10 @@ async function main() {
       review = [
         buildDiscussionPublicationFallback(discussionPublication.failure),
         "",
-        debate.synthesis,
+        buildDiscussionGateReview(debate, discussionEvaluation),
       ].join("\n");
     } else {
-      review = debate.synthesis;
+      review = buildDiscussionGateReview(debate, discussionEvaluation);
     }
   } else {
     const reviewPrompt = await readPrompt(reviewPromptPath);
