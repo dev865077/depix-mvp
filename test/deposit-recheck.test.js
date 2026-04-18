@@ -535,6 +535,7 @@ describe("deposit recheck route", () => {
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("ops_route_disabled");
     expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
 
     const configWarning = consoleSpy.mock.calls.find(([entry]) => (
       typeof entry === "string"

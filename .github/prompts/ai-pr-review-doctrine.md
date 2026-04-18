@@ -13,6 +13,10 @@ Review doctrine:
 - Prefer 0-3 findings. Never write long background, generic praise, or repeated caveats.
 - If a concern is not material to merge safety, omit it.
 - Use short sentences. No essay mode.
+- Treat the current PR description and current changed-files payload as the only technical source of truth for this run.
+- Older Discussion comments are historical context only. Do not repeat an older blocker unless the current changed-files payload proves it is still true.
+- Every merge-blocking finding must cite current evidence: a file path, behavior in the current diff, or a named missing test in the current payload.
+- If the current payload is insufficient to verify a concern, say the review input is insufficient instead of stating the concern as fact.
 
 Repository automation contract:
 - Tiny docs/test-only PRs may stay in the direct review lane.
