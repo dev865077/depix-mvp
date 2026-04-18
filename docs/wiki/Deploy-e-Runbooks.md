@@ -99,14 +99,8 @@
 
 ## Rollout e rollback
 
-- rollout: manter `ENABLE_OPS_DEPOSIT_RECHECK` e `ENABLE_OPS_DEPOSITS_FALLBACK` fora do `wrangler.jsonc` versionado; provisionar somente a flag necessaria e `OPS_ROUTE_BEARER_TOKEN` nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado
-- rollout atual esperado: `local`, `test` e `production` ficam desligados por padrao no config versionado; cada ambiente so fica operacionalmente ativo depois da provisao explicita da flag e dos secrets
-- rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` ou `ENABLE_OPS_DEPOSITS_FALLBACK` para `false`; a rota correspondente passa a devolver `503` sem afetar webhook principal, Telegram ou leitura de saude
-- rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
-- rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
-
-## Checklist de migracao para auth tenant-scoped
-
-- tenants existentes continuam no caminho global por padrao; nenhuma entrada antiga precisa ser alterada para o rollout inicial
-- para migrar um tenant, primeiro provisionar o novo segredo, depois declara
-... [truncated]
+- rollout do recheck por deposito: habilitar `ENABLE_OPS_DEPOSIT_RECHECK=true` e provisionar `OPS_ROUTE_BEARER_TOKEN`
+- rollout do fallback por janela: habilitar `ENABLE_OPS_DEPOSITS_FALLBACK=true` e provisionar o mesmo bearer operacional
+- se a rota estiver desabilitada por flag ausente, o rollback mais rapido e remover a flag do ambiente sem alterar o codigo
+- se um tenant-scoped binding quebrar o fluxo, remover ou corrigir `opsBindings.depositRecheckBearerToken` no registro do tenant
+- a rota de fallback por janela nao deve ser usada como substituto do webhook principal; ela existe para reconciliar janelas curtas quando callbacks atrasarem ou falharem
