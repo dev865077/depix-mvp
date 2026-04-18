@@ -7,6 +7,7 @@ import {
   assertValidReviewRecommendation,
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
+  buildDiscussionGateReview,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
@@ -14,6 +15,7 @@ import {
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
+  evaluateDiscussionRecommendation,
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
   getReviewGateFailure,
@@ -68,6 +70,52 @@ describe("ai pr review recommendation parser", () => {
   it("turns Request changes into a failing GitHub check verdict", () => {
     expect(getReviewGateFailure("Approve")).toBeNull();
     expect(getReviewGateFailure("Request changes")?.message).toContain("final recommendation is blocking");
+  });
+
+  it("requires unanimous approve in the discussion lane", () => {
+    const unanimous = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+    const blocked = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nNeeds changes.\n\n## Findings\n- Blocker.\n\n## Questions\n- None.\n\n## Merge posture\nNot ready.\n\n## Recommendation\nRequest changes",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+    });
+
+    expect(unanimous.recommendation).toBe("Approve");
+    expect(unanimous.blockingRoles).toEqual([]);
+    expect(unanimous.canReuseSynthesisApproveBody).toBe(true);
+    expect(blocked.recommendation).toBe("Request changes");
+    expect(blocked.blockingRoles).toEqual(["technical"]);
+  });
+
+  it("treats synthesis as summary-only when specialists are unanimously approved", () => {
+    const evaluation = evaluateDiscussionRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Request changes\n\n## Findings\n- Summary drift.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(evaluation.recommendation).toBe("Approve");
+    expect(evaluation.blockingRoles).toEqual([]);
+    expect(evaluation.synthesisRecommendation).toBe("Request changes");
+    expect(evaluation.canReuseSynthesisApproveBody).toBe(false);
+  });
+
+  it("fails closed when a specialist omits the canonical recommendation", () => {
+    expect(() =>
+      evaluateDiscussionRecommendation({
+        product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.",
+        technical: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      }),
+    ).toThrow(/missing the ## Recommendation section/i);
   });
 });
 
@@ -151,17 +199,19 @@ describe("ai pr review discussion gate", () => {
   it("keeps small review automation policy changes in the direct lane", () => {
     const gate = assessDiscussionGate([
       {
-        filename: ".github/workflows/ai-pr-review.yml",
-        additions: 1,
+        filename: ".github/prompts/ai-pr-discussion-product.md",
+        additions: 6,
         deletions: 0,
         patch: [
           "@@",
-          "+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_CLASSIFY_MODEL || 'gpt-5.4-nano' }}",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
         ].join("\n"),
       },
       {
         filename: "scripts/ai-pr-review.mjs",
-        additions: 230,
+        additions: 240,
         deletions: 0,
         patch: [
           "@@",
@@ -172,7 +222,7 @@ describe("ai pr review discussion gate", () => {
       },
       {
         filename: "test/ai-pr-review.test.js",
-        additions: 24,
+        additions: 28,
         deletions: 0,
         patch: [
           "@@",
@@ -182,13 +232,77 @@ describe("ai pr review discussion gate", () => {
         ].join("\n"),
       },
       {
-        filename: "docs/wiki/Contribuicao-e-PRs.md",
-        additions: 4,
-        deletions: 2,
+        filename: ".github/prompts/ai-pr-discussion-technical.md",
+        additions: 6,
+        deletions: 0,
         patch: [
           "@@",
-          "+- PR pequena de automacao de review pode ficar direta quando nao toca `GITHUB_TOKEN` no codigo executavel.",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
         ].join("\n"),
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-risk.md",
+        additions: 6,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
+        ].join("\n"),
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-synthesis.md",
+        additions: 3,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+- Always include the final `## Recommendation` section exactly once.",
+        ].join("\n"),
+      },
+      {
+        filename: "docs/wiki/Contribuicao-e-PRs.md",
+        additions: 11,
+        deletions: 1,
+        patch: [
+          "@@",
+          "+- na lane de Discussion, a PR so fica pronta para merge quando `product`, `technical` e `risk` retornarem `Approve`",
+          "+- `synthesis` continua obrigatoria para visibilidade, mas e resumo",
+        ].join("\n"),
+      },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+    expect(gate.route).toBe("direct_review");
+  });
+
+  it("keeps small review automation prompt-only tuning in the direct lane", () => {
+    const gate = assessDiscussionGate([
+      {
+        filename: ".github/prompts/ai-pr-discussion-product.md",
+        additions: 4,
+        deletions: 1,
+        patch: "@@\n+- Keep output very short.",
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-synthesis.md",
+        additions: 4,
+        deletions: 1,
+        patch: "@@\n+- Keep output very short.",
+      },
+      {
+        filename: "scripts/ai-pr-review.mjs",
+        additions: 14,
+        deletions: 3,
+        patch: "@@\n+const allowedPromptPath = true;",
+      },
+      {
+        filename: "test/ai-pr-review.test.js",
+        additions: 12,
+        deletions: 0,
+        patch: "@@\n+expect(gate.route).toBe(\"direct_review\");",
       },
     ]);
 
@@ -306,15 +420,18 @@ describe("ai pr review discussion rendering", () => {
 
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment("Approve");
-    const blocked = buildDiscussionCompletionComment("Request changes");
+    const blocked = buildDiscussionCompletionComment("Request changes", ["risk"]);
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
     expect(approved).toContain("Discussion concluded");
     expect(approved).toContain("Final recommendation: `Approve`");
     expect(approved).toContain("visible closure marker");
+    expect(approved).toContain("all specialist reviewer roles returned `Approve`");
+    expect(approved).toContain("`synthesis` is summary-only");
     expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
     expect(blocked).toContain("Final recommendation: `Request changes`");
-    expect(blocked).toContain("remains open");
+    expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
+    expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
   });
 
@@ -325,6 +442,7 @@ describe("ai pr review discussion rendering", () => {
     ]);
 
     expect(memo).toContain("could not complete");
+    expect(assertValidReviewRecommendation(memo)).toBe("Request changes");
     expect(memo.length).toBeLessThan(900);
     expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
     expect(synthesis).toContain("Rerun the discussion review");
@@ -373,6 +491,58 @@ describe("ai pr review discussion rendering", () => {
 
     expect(body).toContain("## Discussion");
     expect(extractDiscussionUrlFromComment(body)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
+  });
+
+  it("renders a request-changes gate summary when unanimity is broken", () => {
+    const review = buildDiscussionGateReview(
+      {
+        product: "## Recommendation\nApprove",
+        technical: "## Recommendation\nRequest changes",
+        risk: "## Recommendation\nApprove",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      },
+      {
+        recommendations: {
+          product: "Approve",
+          technical: "Request changes",
+          risk: "Approve",
+          synthesis: "Approve",
+        },
+        blockingRoles: ["technical"],
+        recommendation: "Request changes",
+      },
+    );
+
+    expect(assertValidReviewRecommendation(review)).toBe("Request changes");
+    expect(review).toContain("requires unanimous `Approve` from Product, Technical, and Risk");
+    expect(review).toContain("`technical`");
+  });
+
+  it("renders an approve gate summary when specialists approve and synthesis drifts", () => {
+    const review = buildDiscussionGateReview(
+      {
+        product: "## Recommendation\nApprove",
+        technical: "## Recommendation\nApprove",
+        risk: "## Recommendation\nApprove",
+        synthesis: "Request changes\n\n## Findings\n- Summary drift.\n\n## Recommendation\nRequest changes",
+      },
+      {
+        recommendations: {
+          product: "Approve",
+          technical: "Approve",
+          risk: "Approve",
+          synthesis: "Request changes",
+        },
+        blockingRoles: [],
+        synthesisRecommendation: "Request changes",
+        canReuseSynthesisApproveBody: false,
+        recommendation: "Approve",
+      },
+    );
+
+    expect(assertValidReviewRecommendation(review)).toBe("Approve");
+    expect(review).toContain("`synthesis` diverged");
+    expect(review).toContain("summary-only");
   });
 
   it("sanitizes model-authored mentions, images, and markdown links", () => {
