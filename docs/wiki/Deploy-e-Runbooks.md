@@ -47,7 +47,7 @@
 - sem `ENABLE_OPS_DEPOSIT_RECHECK=true`, responde `503 ops_route_disabled`
 - a rota so fica globalmente pronta quando `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
 - quando o tenant declarar `opsBindings.depositRecheckBearerToken`, esse token tenant-scoped tem precedencia sobre o token global
-- sem esse binding, `POST /ops/:tenantId/recheck/deposit` responde `503 ops_route_disabled`
+- tenant sem override declarado continua usando o token global; tenant com override declarado so usa o binding proprio e responde `503 ops_route_disabled` se esse segredo estiver ausente ou invalido
 - sem header Bearer, responde `401 ops_authorization_required`
 - com token invalido, responde `403 ops_authorization_invalid`
 - se o deposito nao existir no tenant informado, responde `404 deposit_not_found`
@@ -78,7 +78,7 @@
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: considerar falha transitoria ou upstream inconsistente; retry manual controlado e permitido
 - `500 deposit_recheck_persistence_incomplete`: assumir que o batch pode ter sido persistido, anexar `requestId`, `tenantId`, `depositEntryId` e `orderId`, inspecionar o historico do deposito e repetir no maximo um retry controlado; o caminho continua idempotente por `depositEntryId` + payload do evento
 - `503 ops_route_disabled_invalid_flag`: corrigir o valor de `ENABLE_OPS_DEPOSIT_RECHECK`; typo ou valor legado mantem a rota desligada ate o deploy/config ser saneado
-- `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK` e binding do token antes de tratar como incidente de negocio
+- `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK`, token global e eventual override tenant-scoped antes de tratar como incidente de negocio
 
 ## Rollout e rollback
 
@@ -93,15 +93,16 @@
 - tenants existentes continuam no caminho global por padrao; nenhuma entrada antiga precisa ser alterada para o rollout inicial
 - para migrar um tenant, primeiro provisionar o novo segredo, depois declarar `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY`, validar em `test` com o token novo e so entao repetir em `production`
 - se o tenant override for declarado com binding ausente ou vazio, aquele tenant falha fechado com `503`; o rollback imediato e remover a declaracao do registry ou corrigir o segredo provisionado
+- se `/health` retornar `tenant_override_invalid`, tratar como erro de configuracao: algum override tenant-scoped foi declarado sem segredo valido, enquanto tenants sem override continuam herdando o token global
 - todo request autorizado registra `authScope` e `bindingName` em log estruturado, o que vira a trilha canonica para triagem operacional
 
 ## Checklist de aceite operacional
 
 - `test` habilitado e validado antes de qualquer uso em `production`
 - `production` habilitado so depois do smoke test autenticado em `test`
-- `/health` confirma apenas `configuration.operations.depositRecheck.ready` como sinal redigido de prontidao global
+- `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config`, `missing_secret` ou `tenant_override_invalid`
 - operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
-- rollback rapido documentado por flag e por rotacao/remoção do segredo
+- rollback rapido documentado por flag e por rotacao/remocao do segredo
 
 ## Verificacao minima
 

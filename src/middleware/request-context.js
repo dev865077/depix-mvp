@@ -48,6 +48,20 @@ export async function requestContextMiddleware(c, next) {
     });
   }
 
+  if (runtimeConfig.operations?.depositRecheck?.state === "tenant_override_invalid") {
+    log(runtimeConfig, {
+      level: "warn",
+      message: "config.deposit_recheck.tenant_override_invalid",
+      tenantId: tenant?.tenantId,
+      requestId,
+      path: c.req.path,
+      details: {
+        state: runtimeConfig.operations.depositRecheck.state,
+        invalidTenantOverrideCount: runtimeConfig.operations.depositRecheck.invalidTenantOverrideCount,
+      },
+    });
+  }
+
   // A partir daqui toda rota recebe requestId, runtimeConfig, db e tenant
   // de forma consistente, evitando que cada handler replique esta montagem.
   log(runtimeConfig, {

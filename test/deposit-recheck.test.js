@@ -519,6 +519,7 @@ describe("deposit recheck route", () => {
 
   it("fails closed when a tenant-scoped operator token binding is declared but missing from the environment", async function assertMissingTenantScopedOperatorBinding() {
     await seedDepositAggregate();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen with missing tenant-scoped binding"));
 
@@ -534,6 +535,15 @@ describe("deposit recheck route", () => {
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("ops_route_disabled");
     expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+
+    const configWarning = consoleSpy.mock.calls.find(([entry]) => (
+      typeof entry === "string"
+      && entry.includes("\"message\":\"config.deposit_recheck.tenant_override_invalid\"")
+    ))?.[0];
+
+    expect(configWarning).toContain("\"state\":\"tenant_override_invalid\"");
+    expect(configWarning).toContain("\"invalidTenantOverrideCount\":1");
+    expect(configWarning).not.toContain("ALPHA_OPS_ROUTE_BEARER_TOKEN");
   });
 
   it("uses exact tenant binding names from the registry without collapsing similar tenant ids", async function assertExactTenantScopedBindingMapping() {
