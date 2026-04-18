@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  discussions: write
+  issues: write
   pull-requests: write
 
 concurrency:
@@ -32,6 +34,11 @@ jobs:
 
       - name: Run AI PR review
         env:
+          AI_PR_DISCUSSION_DOCTRINE_PATH: .github/prompts/ai-pr-review-doctrine.md
+          AI_PR_DISCUSSION_PRODUCT_PROMPT_PATH: .github/prompts/ai-pr-discussion-product.md
+          AI_PR_DISCUSSION_RISK_PROMPT_PATH: .github/prompts/ai-pr-discussion-risk.md
+          AI_PR_DISCUSSION_SYNTHESIS_PROMPT_PATH: .github/prompts/ai-pr-discussion-synthesis.md
+          AI_PR_DISCUSSION_TECHNICAL_PROMPT_PATH: .github/prompts/ai-pr-discussion-technical.md
           AI_REVIEW_PROMPT_PATH: .github/prompts/ai-pr-review.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
