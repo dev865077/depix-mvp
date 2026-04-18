@@ -102,6 +102,7 @@
 - `production` habilitado so depois do smoke test autenticado em `test`
 - `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config` ou `missing_secret`
 - `/health` confirma `configuration.operations.depositRecheck.tenantOverrides.state` como sinal redigido de overrides locais; `invalid_config` nesse campo nao derruba a prontidao global, mas indica que ao menos um tenant com override declarado falhara fechado ate o segredo ser corrigido
+- `/health` nao lista nomes de tenants nem nomes de bindings de overrides operacionais; o contrato publico e agregado e redigido por desenho: `{ state, invalidCount }`. A trilha tenant-level fica nos logs estruturados de request/config, com `requestId`, `tenantId`, `authScope`, `bindingName` operacional e outcome.
 - operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
 - rollback rapido documentado por flag e por rotacao/remocao do segredo
 

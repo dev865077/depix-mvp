@@ -115,5 +115,13 @@ describe("health route", () => {
     expect(body.configuration.operations.depositRecheck.ready).toBe(true);
     expect(body.configuration.operations.depositRecheck.tenantOverrides.state).toBe("invalid_config");
     expect(body.configuration.operations.depositRecheck.tenantOverrides.invalidCount).toBe(1);
+    expect(Object.keys(body.configuration.operations.depositRecheck.tenantOverrides).sort()).toEqual([
+      "invalidCount",
+      "state",
+    ]);
+    expect(JSON.stringify(body.configuration.operations.depositRecheck.tenantOverrides)).not.toContain("alpha");
+    expect(JSON.stringify(body.configuration.operations.depositRecheck.tenantOverrides)).not.toContain(
+      "ALPHA_OPS_ROUTE_BEARER_TOKEN",
+    );
   });
 });
