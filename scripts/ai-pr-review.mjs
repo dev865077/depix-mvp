@@ -803,16 +803,18 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
     return false;
   }
 
-  const allowedPaths = new Set([
-    ".github/workflows/ai-pr-review.yml",
-    ".github/prompts/ai-pr-discussion-product.md",
-    ".github/prompts/ai-pr-discussion-technical.md",
-    ".github/prompts/ai-pr-discussion-risk.md",
-    ".github/prompts/ai-pr-discussion-synthesis.md",
-    "scripts/ai-pr-review.mjs",
-    "test/ai-pr-review.test.js",
-    "docs/wiki/contribuicao-e-prs.md",
-  ]);
+  const allowedPaths = new Set(
+    [
+      ".github/workflows/ai-pr-review.yml",
+      ".github/prompts/ai-pr-discussion-product.md",
+      ".github/prompts/ai-pr-discussion-technical.md",
+      ".github/prompts/ai-pr-discussion-risk.md",
+      ".github/prompts/ai-pr-discussion-synthesis.md",
+      "scripts/ai-pr-review.mjs",
+      "test/ai-pr-review.test.js",
+      "docs/wiki/Contribuicao-e-PRs.md",
+    ].map(normalizeRepositoryPath),
+  );
   const allFilesAreReviewPolicyFiles = files.every((file) => allowedPaths.has(normalizeRepositoryPath(file.filename)));
 
   if (!allFilesAreReviewPolicyFiles) {
@@ -1193,7 +1195,7 @@ export function getReviewGateFailure(recommendation) {
  *   recommendations: Record<string, string>,
  *   blockingRoles: string[],
  *   synthesisRecommendation: string,
- *   synthesisMatchesSpecialists: boolean,
+ *   canReuseSynthesisApproveBody: boolean,
  *   recommendation: "Approve" | "Request changes"
  * }} Unanimity result.
  */
@@ -1218,7 +1220,7 @@ export function evaluateDiscussionRecommendation(debate) {
     recommendations,
     blockingRoles,
     synthesisRecommendation,
-    synthesisMatchesSpecialists: synthesisRecommendation === recommendation,
+    canReuseSynthesisApproveBody: synthesisRecommendation === "Approve",
     recommendation,
   };
 }
@@ -1582,7 +1584,7 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
  * @returns {string} PR-visible verdict body.
  */
 export function buildDiscussionGateReview(debate, evaluation) {
-  if (evaluation.recommendation === "Approve" && evaluation.synthesisMatchesSpecialists) {
+  if (evaluation.recommendation === "Approve" && evaluation.canReuseSynthesisApproveBody) {
     return debate.synthesis;
   }
 

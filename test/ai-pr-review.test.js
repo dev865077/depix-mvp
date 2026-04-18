@@ -88,7 +88,7 @@ describe("ai pr review recommendation parser", () => {
 
     expect(unanimous.recommendation).toBe("Approve");
     expect(unanimous.blockingRoles).toEqual([]);
-    expect(unanimous.synthesisMatchesSpecialists).toBe(true);
+    expect(unanimous.canReuseSynthesisApproveBody).toBe(true);
     expect(blocked.recommendation).toBe("Request changes");
     expect(blocked.blockingRoles).toEqual(["technical"]);
   });
@@ -104,7 +104,7 @@ describe("ai pr review recommendation parser", () => {
     expect(evaluation.recommendation).toBe("Approve");
     expect(evaluation.blockingRoles).toEqual([]);
     expect(evaluation.synthesisRecommendation).toBe("Request changes");
-    expect(evaluation.synthesisMatchesSpecialists).toBe(false);
+    expect(evaluation.canReuseSynthesisApproveBody).toBe(false);
   });
 
   it("fails closed when a specialist omits the canonical recommendation", () => {
@@ -535,7 +535,7 @@ describe("ai pr review discussion rendering", () => {
         },
         blockingRoles: [],
         synthesisRecommendation: "Request changes",
-        synthesisMatchesSpecialists: false,
+        canReuseSynthesisApproveBody: false,
         recommendation: "Approve",
       },
     );
