@@ -19,7 +19,7 @@ import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
   buildTelegramStartReply,
-  buildTelegramTextReply,
+  buildTelegramInvalidAmountReply,
   buildTelegramUnsupportedCallbackReply,
   buildTelegramUnsupportedMessageReply,
 } from "../src/telegram/reply-flow.js";
@@ -334,8 +334,10 @@ describe("telegram webhook reply flow", () => {
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
       expect(payload.chat_id).toBe(2002);
-      expect(payload.text).toBe(buildTelegramTextReply({
-        displayName: "Beta",
+      expect(payload.text).toBe(buildTelegramInvalidAmountReply({
+        ok: false,
+        reason: "invalid_format",
+        maxAmountInCents: 1000000,
       }));
 
       return new Response(JSON.stringify({
@@ -378,6 +380,11 @@ describe("telegram webhook reply flow", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const savedOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "502");
+
+    expect(savedOrder?.currentStep).toBe("amount");
+    expect(savedOrder?.amountInCents).toBeNull();
   });
 
   it("reuses the same open order when the same tenant user sends a follow-up text", async function assertOpenOrderContinuation() {
@@ -455,6 +462,169 @@ describe("telegram webhook reply flow", () => {
 
     expect(resumedOrder?.orderId).toBe(firstOrder?.orderId);
     expect(resumedOrder?.currentStep).toBe("amount");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("stores a valid BRL amount and ignores stale valid amount replay after wallet", async function assertAmountCollection() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 10,
+          date: 1713434411,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8101,
+          fromId: 811,
+          updateId: 41,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "R$ 10,50",
+          chatId: 8101,
+          fromId: 811,
+          updateId: 42,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "R$ 99,99",
+          chatId: 8101,
+          fromId: 811,
+          updateId: 43,
+        }),
+      },
+      workerEnv,
+    );
+
+    const updatedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "811");
+    const secondReply = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body));
+    const thirdReply = JSON.parse(String(fetchSpy.mock.calls[2][1]?.body));
+
+    expect(updatedOrder?.currentStep).toBe("wallet");
+    expect(updatedOrder?.status).toBe("draft");
+    expect(updatedOrder?.amountInCents).toBe(1050);
+    expect(secondReply.text).toContain("Valor recebido: R$ 10,50.");
+    expect(secondReply.text).toContain("endereço DePix/Liquid");
+    expect(thirdReply.text).toContain("Valor recebido: R$ 10,50.");
+    expect(thirdReply.text).toContain("endereço DePix/Liquid");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the order in amount when the BRL amount is invalid", async function assertInvalidAmountStaysInAmount() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 10,
+          date: 1713434411,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+    };
+
+    await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8202,
+          fromId: 822,
+          updateId: 43,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "10000,01",
+          chatId: 8202,
+          fromId: 822,
+          updateId: 44,
+        }),
+      },
+      workerEnv,
+    );
+
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "822");
+    const secondReply = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body));
+
+    expect(currentOrder?.currentStep).toBe("amount");
+    expect(currentOrder?.amountInCents).toBeNull();
+    expect(secondReply.text).toContain("limite inicial");
+    expect(secondReply.text).toContain("R$ 10.000,00");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -556,7 +726,7 @@ describe("telegram webhook reply flow", () => {
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
       expect(payload.chat_id).toBe(9009);
-      expect(payload.text).toContain("já tem um valor registrado");
+      expect(payload.text).toContain("Valor recebido: R$ 100,00.");
       expect(payload.text).toContain("endereço DePix/Liquid");
 
       return new Response(JSON.stringify({
@@ -587,7 +757,7 @@ describe("telegram webhook reply flow", () => {
           "x-telegram-bot-api-secret-token": "beta-telegram-secret",
         },
         body: createTelegramTextUpdate({
-          text: "/start",
+          text: "20",
           chatId: 9009,
           fromId: 901,
           updateId: 33,
@@ -604,6 +774,7 @@ describe("telegram webhook reply flow", () => {
     expect(response.status).toBe(200);
     expect(currentOrder?.orderId).toBe("order_existing_wallet");
     expect(currentOrder?.currentStep).toBe("wallet");
+    expect(currentOrder?.amountInCents).toBe(10000);
     expect(count?.count).toBe(1);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });

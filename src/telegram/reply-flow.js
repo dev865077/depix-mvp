@@ -9,7 +9,8 @@
  */
 import { log } from "../lib/logger.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
-import { startTelegramOrderConversation } from "../services/order-registration.js";
+import { receiveTelegramOrderAmount, startTelegramOrderConversation } from "../services/order-registration.js";
+import { formatBrlAmountInCents } from "./brl-amount.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
 
@@ -70,7 +71,21 @@ export function installTelegramReplyFlow(bot, input) {
       "text_message_reply",
       async function replyToTextMessage(ctx) {
         const orderSession = await startTelegramConversationOrder(ctx, input);
-        await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
+        const amountSession = await receiveTelegramOrderAmount({
+          db: input.db,
+          tenant: input.tenant,
+          order: orderSession.order,
+          rawText: ctx.msg.text,
+        });
+
+        logTelegramAmountResult(ctx, input, amountSession);
+
+        if (amountSession.parseResult && !amountSession.parseResult.ok) {
+          await ctx.reply(buildTelegramInvalidAmountReply(amountSession.parseResult));
+          return;
+        }
+
+        await ctx.reply(buildTelegramOrderStepReply(input.tenant, amountSession.order));
       },
     ),
   );
@@ -158,10 +173,7 @@ export function buildTelegramOrderStepReply(tenant, order) {
     case ORDER_PROGRESS_STATES.AMOUNT:
       return buildTelegramAmountPrompt(tenant);
     case ORDER_PROGRESS_STATES.WALLET:
-      return [
-        `Seu pedido ${tenant.displayName} já tem um valor registrado.`,
-        "Agora envie seu endereço DePix/Liquid para continuarmos.",
-      ].join("\n\n");
+      return buildTelegramWalletPrompt(tenant, order);
     case ORDER_PROGRESS_STATES.CONFIRMATION:
       return [
         `Seu pedido ${tenant.displayName} está aguardando confirmação.`,
@@ -180,6 +192,49 @@ export function buildTelegramOrderStepReply(tenant, order) {
     default:
       return buildTelegramAmountPrompt(tenant);
   }
+}
+
+/**
+ * Mensagem de rejeicao para valor BRL invalido.
+ *
+ * @param {{
+ *   reason: string,
+ *   maxAmountInCents: number
+ * }} parseResult Resultado invalido do parser BRL.
+ * @returns {string} Texto final para o usuario.
+ */
+export function buildTelegramInvalidAmountReply(parseResult) {
+  const maxAmount = formatBrlAmountInCents(parseResult.maxAmountInCents);
+  const reasonByCode = {
+    empty: "Você enviou uma mensagem vazia.",
+    invalid_format: "Não consegui entender esse valor.",
+    non_positive: "O valor precisa ser maior que zero.",
+    above_limit: `O limite inicial por pedido é ${maxAmount}.`,
+  };
+
+  return [
+    reasonByCode[parseResult.reason] ?? "Não consegui entender esse valor.",
+    "Envie apenas o valor em BRL, por exemplo: 10,50 ou R$ 10,50.",
+    `Limite inicial: ${maxAmount}.`,
+  ].join("\n\n");
+}
+
+/**
+ * Mensagem para a etapa de coleta do endereco DePix/Liquid.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ amountInCents?: unknown }} order Pedido aberto.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramWalletPrompt(tenant, order) {
+  const amountLine = Number.isSafeInteger(order?.amountInCents)
+    ? `Valor recebido: ${formatBrlAmountInCents(order.amountInCents)}.`
+    : `Seu pedido ${tenant.displayName} já tem um valor registrado.`;
+
+  return [
+    amountLine,
+    "Agora envie seu endereço DePix/Liquid para continuarmos.",
+  ].join("\n\n");
 }
 
 /**
@@ -319,6 +374,54 @@ async function startTelegramConversationOrder(ctx, input) {
   }
 
   return orderSession;
+}
+
+/**
+ * Registra o resultado da tentativa de interpretar valor em BRL.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   conflict: boolean,
+ *   parseResult: { ok: boolean, reason?: string, amountInCents?: number } | null
+ * }} amountSession Resultado do service de valor.
+ */
+function logTelegramAmountResult(ctx, input, amountSession) {
+  if (!amountSession.parseResult) {
+    return;
+  }
+
+  if (!amountSession.parseResult.ok) {
+    logTelegramEvent(input, "info", "telegram.order.amount_rejected", {
+      handlerName: ctx.state.telegramHandler,
+      orderId: amountSession.order.orderId,
+      userId: amountSession.order.userId,
+      reason: amountSession.parseResult.reason,
+      currentStep: amountSession.order.currentStep,
+    });
+    return;
+  }
+
+  logTelegramEvent(input, amountSession.conflict ? "warn" : "info", amountSession.accepted
+    ? "telegram.order.amount_received"
+    : "telegram.order.amount_conflict", {
+    handlerName: ctx.state.telegramHandler,
+    orderId: amountSession.order.orderId,
+    userId: amountSession.order.userId,
+    amountInCents: amountSession.parseResult.amountInCents,
+    currentStep: amountSession.order.currentStep,
+    status: amountSession.order.status,
+  });
 }
 
 /**

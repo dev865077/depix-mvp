@@ -22,6 +22,7 @@ import {
   ORDER_PROGRESS_STATES,
   normalizePersistedOrderProgressStep,
 } from "../order-flow/order-progress-machine.js";
+import { parseTelegramBrlAmount } from "../telegram/brl-amount.js";
 
 const DEFAULT_ORDER_CHANNEL = "telegram";
 const DEFAULT_PRODUCT_TYPE = "depix";
@@ -182,5 +183,85 @@ export async function startTelegramOrderConversation(input) {
     created: registration.created,
     started: write.didUpdate,
     conflict: write.conflict,
+  };
+}
+
+/**
+ * Aplica o valor informado pelo usuario ao pedido aberto no Telegram.
+ *
+ * A funcao parte de um pedido ja materializado pelo fluxo conversacional. Ela
+ * so aceita escrita quando o passo persistido ainda e `amount`; qualquer outro
+ * passo e tratado como "fora de escopo desta mensagem" e devolvido sem mutacao.
+ * Isso permite que replays de mensagens antigas nao sobrescrevam um pedido que
+ * ja avancou para `wallet` ou alem.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   tenant: { tenantId: string },
+ *   order: Record<string, unknown>,
+ *   rawText: string
+ * }} input Dependencias e mensagem recebida.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   conflict: boolean,
+ *   parseResult: ReturnType<typeof parseTelegramBrlAmount> | null
+ * }>} Resultado da tentativa de gravar o valor.
+ */
+export async function receiveTelegramOrderAmount(input) {
+  const currentStep = normalizePersistedOrderProgressStep(input.order.currentStep);
+
+  if (currentStep !== ORDER_PROGRESS_STATES.AMOUNT) {
+    return {
+      order: input.order,
+      accepted: false,
+      conflict: false,
+      parseResult: null,
+    };
+  }
+
+  const parseResult = parseTelegramBrlAmount(input.rawText);
+
+  if (!parseResult.ok) {
+    return {
+      order: input.order,
+      accepted: false,
+      conflict: false,
+      parseResult,
+    };
+  }
+
+  const progression = advanceOrderProgression({
+    currentStep: input.order.currentStep,
+    context: {
+      tenantId: input.tenant.tenantId,
+      orderId: input.order.orderId,
+      userId: input.order.userId,
+      amountInCents: input.order.amountInCents,
+      walletAddress: input.order.walletAddress,
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.AMOUNT_RECEIVED,
+      tenantId: input.tenant.tenantId,
+      amountInCents: parseResult.amountInCents,
+    },
+  });
+  const write = await updateOrderByIdWithStepGuard(
+    input.db,
+    input.tenant.tenantId,
+    input.order.orderId,
+    input.order.currentStep,
+    progression.orderPatch,
+  );
+
+  if (write.notFound) {
+    throw new Error("Telegram amount update failed because the order disappeared before update.");
+  }
+
+  return {
+    order: write.order,
+    accepted: write.didUpdate,
+    conflict: write.conflict,
+    parseResult,
   };
 }
