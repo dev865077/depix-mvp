@@ -23,6 +23,7 @@ export const telegramRouter = new Hono();
 export async function handleTelegramWebhook(c) {
   const tenant = c.get("tenant");
   const runtimeConfig = c.get("runtimeConfig");
+  const db = c.get("db");
 
   if (!tenant) {
     log(runtimeConfig, {
@@ -53,6 +54,7 @@ export async function handleTelegramWebhook(c) {
     telegramBotToken,
     telegramWebhookSecret,
     runtimeConfig,
+    db,
     requestContext: {
       requestId: c.get("requestId"),
       method: c.req.method,

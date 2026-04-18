@@ -8,7 +8,8 @@
  * - logs suficientes permitem rastrear o caminho inteiro
  */
 import { log } from "../lib/logger.js";
-import { normalizeTelegramBotError } from "./errors.js";
+import { ensureTelegramOrderRegistration } from "../services/order-registration.js";
+import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
 
 /**
@@ -23,6 +24,7 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
+ *   db?: import("@cloudflare/workers-types").D1Database,
  *   requestContext?: {
  *     requestId?: string,
  *     method?: string,
@@ -53,6 +55,7 @@ export function installTelegramReplyFlow(bot, input) {
     input,
     "start_command",
     async function replyToStart(ctx) {
+      await ensureTelegramConversationOrder(ctx, input);
       await ctx.reply(buildTelegramStartReply(input.tenant));
     },
   ));
@@ -65,6 +68,7 @@ export function installTelegramReplyFlow(bot, input) {
       input,
       "text_message_reply",
       async function replyToTextMessage(ctx) {
+        await ensureTelegramConversationOrder(ctx, input);
         await ctx.reply(buildTelegramTextReply(input.tenant));
       },
     ),
@@ -166,6 +170,79 @@ export function buildTelegramUnsupportedMessageReply(tenant) {
  */
 export function buildTelegramUnsupportedCallbackReply(tenant) {
   return `Recebi sua interação em ${tenant.displayName}. O próximo passo do fluxo ainda será habilitado.`;
+}
+
+/**
+ * Garante que o update conversacional atual tenha um pedido ativo carregado.
+ *
+ * A regra do issue #19 e simples: assim que houver contexto suficiente do
+ * usuario no Telegram, o sistema precisa materializar ou retomar o pedido no
+ * D1. O handler continua responsavel apenas pela resposta ao usuario; esta
+ * funcao deixa o pedido pronto para a proxima fatia funcional do fluxo.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   db?: import("@cloudflare/workers-types").D1Database,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @returns {Promise<{ order: Record<string, unknown>, created: boolean }>} Pedido ativo da conversa.
+ */
+async function ensureTelegramConversationOrder(ctx, input) {
+  ctx.state ??= {};
+
+  if (ctx.state.telegramOrderSession) {
+    return ctx.state.telegramOrderSession;
+  }
+
+  if (!input.db) {
+    throw new TelegramWebhookError(
+      500,
+      "telegram_order_registration_failed",
+      "Telegram order registration requires a configured database.",
+      {
+        handlerName: ctx.state.telegramHandler,
+        reason: "missing_database_context",
+      },
+    );
+  }
+
+  const telegramUserId = resolveTelegramActorId(ctx);
+
+  if (telegramUserId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a user identifier for order registration.",
+      {
+        handlerName: ctx.state.telegramHandler,
+        reason: "missing_telegram_user_id",
+      },
+    );
+  }
+
+  const orderSession = await ensureTelegramOrderRegistration({
+    db: input.db,
+    tenant: input.tenant,
+    telegramUserId,
+  });
+
+  ctx.state.telegramOrderSession = orderSession;
+
+  logTelegramEvent(input, "info", orderSession.created ? "telegram.order.created" : "telegram.order.resumed", {
+    handlerName: ctx.state.telegramHandler,
+    orderId: orderSession.order.orderId,
+    userId: orderSession.order.userId,
+    currentStep: orderSession.order.currentStep,
+    status: orderSession.order.status,
+  });
+
+  return orderSession;
 }
 
 /**
@@ -329,6 +406,23 @@ function resolveTelegramReplyChatId(update) {
     ?? update?.edited_channel_post?.chat?.id
     ?? update?.business_message?.chat?.id
     ?? update?.edited_business_message?.chat?.id
+    ?? undefined;
+}
+
+/**
+ * Resolve o identificador do ator primario do update atual.
+ *
+ * Para o recorte atual do bot, `from.id` e o identificador canonico usado para
+ * vincular o pedido ao usuario do Telegram. A funcao cobre as superficies que
+ * podem chegar aos handlers conversacionais presentes nesta fase.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @returns {string | number | undefined} Identificador do usuario, quando existir.
+ */
+function resolveTelegramActorId(ctx) {
+  return ctx.from?.id
+    ?? ctx.message?.from?.id
+    ?? ctx.update?.message?.from?.id
     ?? undefined;
 }
 

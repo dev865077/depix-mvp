@@ -32,6 +32,12 @@ const ORDER_SELECT_SQL = `
   FROM orders
 `;
 
+const TERMINAL_ORDER_STEPS = Object.freeze([
+  "completed",
+  "failed",
+  "canceled",
+]);
+
 const INSERT_ORDER_SQL = `
   INSERT INTO orders (
     tenant_id,
@@ -131,6 +137,41 @@ export async function createOrder(db, input) {
  */
 export async function getOrderById(db, tenantId, orderId) {
   return db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(tenantId, orderId).first();
+}
+
+/**
+ * Busca o pedido aberto mais recente de um usuario em um tenant/canal.
+ *
+ * Esta consulta existe para a borda conversacional do Telegram: quando o mesmo
+ * usuario envia um novo update, o runtime precisa retomar o pedido ativo em vez
+ * de criar uma duplicata sem contexto. Consideramos "aberto" todo pedido que
+ * ainda nao entrou em um passo terminal conhecido.
+ *
+ * `julianday()` e usado para ordenar tanto timestamps nativos do SQLite quanto
+ * timestamps ISO gravados por updates posteriores, mantendo a retomada
+ * deterministica mesmo quando o registro ja sofreu mutacoes.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} userId Usuario do canal atual.
+ * @param {string} [channel="telegram"] Canal logico do pedido.
+ * @returns {Promise<Record<string, unknown> | null>} Pedido aberto mais recente, se existir.
+ */
+export async function getLatestOpenOrderByUser(db, tenantId, userId, channel = "telegram") {
+  return db.prepare(
+    `${ORDER_SELECT_SQL}
+     WHERE tenant_id = ?
+       AND user_id = ?
+       AND channel = ?
+       AND current_step NOT IN (?, ?, ?)
+     ORDER BY julianday(updated_at) DESC, julianday(created_at) DESC
+     LIMIT 1`,
+  ).bind(
+    tenantId,
+    userId,
+    channel,
+    ...TERMINAL_ORDER_STEPS,
+  ).first();
 }
 
 /**

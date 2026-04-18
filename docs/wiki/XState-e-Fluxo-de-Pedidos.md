@@ -7,9 +7,11 @@ de cada handler decidir informalmente qual e o proximo passo, a aplicacao
 converte entradas externas em eventos de dominio e deixa a maquina calcular a
 transicao.
 
-Esta pagina descreve a fundacao da progressao inicial. A conexao completa com
-Telegram, criacao de deposito na Eulen e reconciliacao de webhook continua sendo
-uma fatia funcional separada.
+Esta pagina descreve a fundacao da progressao inicial. Hoje o runtime do
+Telegram ja usa essa base para materializar e persistir o pedido inicial em
+`draft`; a conexao completa com progressao conversacional, criacao de deposito
+na Eulen e reconciliacao de webhook continua sendo uma fatia funcional
+separada.
 
 ## Regra arquitetural
 

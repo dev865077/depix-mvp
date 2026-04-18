@@ -10,9 +10,11 @@
  */
 import { BotError, GrammyError, HttpError } from "grammy";
 import { env } from "cloudflare:test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { getDatabase } from "../src/db/client.js";
+import { getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
@@ -176,6 +178,74 @@ function createTelegramInlineQueryUpdate(input) {
   });
 }
 
+/**
+ * Limpa as tabelas operacionais entre testes do Telegram.
+ *
+ * Esta suite agora observa persistencia real em `orders`, entao precisamos
+ * garantir isolamento explicito para nao herdar linhas de outras suites ou de
+ * execucoes anteriores do mesmo arquivo.
+ */
+async function clearTelegramPersistence() {
+  const schemaStatements = [
+    "DROP TABLE IF EXISTS deposit_events",
+    "DROP TABLE IF EXISTS deposits",
+    "DROP TABLE IF EXISTS orders",
+    `CREATE TABLE IF NOT EXISTS orders (
+      tenant_id TEXT NOT NULL,
+      order_id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT 'telegram',
+      product_type TEXT NOT NULL,
+      amount_in_cents INTEGER,
+      wallet_address TEXT,
+      current_step TEXT NOT NULL DEFAULT 'draft',
+      status TEXT NOT NULL DEFAULT 'draft',
+      split_address TEXT,
+      split_fee TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
+    "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
+    "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+    `CREATE TABLE IF NOT EXISTS deposits (
+      tenant_id TEXT NOT NULL,
+      deposit_entry_id TEXT PRIMARY KEY NOT NULL,
+      qr_id TEXT,
+      order_id TEXT NOT NULL,
+      nonce TEXT NOT NULL,
+      qr_copy_paste TEXT NOT NULL,
+      qr_image_url TEXT NOT NULL,
+      external_status TEXT NOT NULL DEFAULT 'pending',
+      expiration TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS deposit_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      deposit_entry_id TEXT NOT NULL,
+      qr_id TEXT,
+      source TEXT NOT NULL,
+      external_status TEXT NOT NULL,
+      bank_tx_id TEXT,
+      blockchain_tx_id TEXT,
+      raw_payload TEXT NOT NULL,
+      received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+      FOREIGN KEY (deposit_entry_id) REFERENCES deposits(deposit_entry_id) ON DELETE CASCADE
+    )`,
+  ];
+
+  await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
+}
+
+beforeEach(async function resetTelegramPersistence() {
+  await clearTelegramPersistence();
+});
+
 afterEach(function resetTelegramTests() {
   vi.restoreAllMocks();
   clearTelegramRuntimeCache();
@@ -241,6 +311,18 @@ describe("telegram webhook reply flow", () => {
     expect(logRecords.some((record) => record.message === "telegram.outbound.attempt")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.outbound.succeeded")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.handler.completed")).toBe(true);
+    expect(logRecords.some((record) => record.message === "telegram.order.created")).toBe(true);
+
+    const savedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501");
+
+    expect(savedOrder?.tenantId).toBe("alpha");
+    expect(savedOrder?.userId).toBe("501");
+    expect(savedOrder?.channel).toBe("telegram");
+    expect(savedOrder?.productType).toBe("depix");
+    expect(savedOrder?.currentStep).toBe("draft");
+    expect(savedOrder?.status).toBe("draft");
+    expect(typeof savedOrder?.orderId).toBe("string");
+    expect(savedOrder?.orderId.length).toBeGreaterThan(6);
   });
 
   it("routes plain text replies by tenant", async function assertTenantAwareTextReply() {
@@ -295,6 +377,84 @@ describe("telegram webhook reply flow", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses the same open order when the same tenant user sends a follow-up text", async function assertOpenOrderContinuation() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      if (url.includes("/sendMessage")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 9,
+            date: 1713434410,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected Telegram API call: ${url}`);
+    });
+
+    const workerEnv = createWorkerEnv();
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 7007,
+          fromId: 701,
+          updateId: 21,
+        }),
+      },
+      workerEnv,
+    );
+
+    const firstOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "701");
+
+    expect(firstOrder?.orderId).toBeTruthy();
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "quero continuar",
+          chatId: 7007,
+          fromId: 701,
+          updateId: 22,
+        }),
+      },
+      workerEnv,
+    );
+
+    const resumedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "701");
+
+    expect(resumedOrder?.orderId).toBe(firstOrder?.orderId);
+    expect(resumedOrder?.currentStep).toBe("draft");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("handles callback queries through answerCallbackQuery", async function assertCallbackQueryFallback() {
