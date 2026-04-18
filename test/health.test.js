@@ -24,6 +24,8 @@ export async function assertHealthResponse() {
   expect(body.configuration.secrets.tenantSecretBindingsConfigured).toBe(true);
   expect(body.configuration.operations.depositRecheck.state).toBe("missing_secret");
   expect(body.configuration.operations.depositRecheck.ready).toBe(false);
+  expect(body.configuration.operations.depositRecheck.tenantOverrides.state).toBe("ready");
+  expect(body.configuration.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
 }
 
 describe("health route", () => {

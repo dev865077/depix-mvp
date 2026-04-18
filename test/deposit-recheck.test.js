@@ -541,7 +541,7 @@ describe("deposit recheck route", () => {
       && entry.includes("\"message\":\"config.deposit_recheck.tenant_override_invalid\"")
     ))?.[0];
 
-    expect(configWarning).toContain("\"state\":\"tenant_override_invalid\"");
+    expect(configWarning).toContain("\"state\":\"invalid_config\"");
     expect(configWarning).toContain("\"invalidTenantOverrideCount\":1");
     expect(configWarning).not.toContain("ALPHA_OPS_ROUTE_BEARER_TOKEN");
   });

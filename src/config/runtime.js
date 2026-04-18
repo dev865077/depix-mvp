@@ -30,11 +30,11 @@ function isSecretBindingConfigured(binding) {
 }
 
 /**
- * Detecta se existe algum override tenant-scoped declarado sem binding valido.
+ * Conta overrides tenant-scoped declarados sem binding valido.
  *
- * O `/health` nao expoe qual tenant esta degradado, mas precisa parar de
- * anunciar `ready` quando um override declarado quebraria o suporte daquele
- * tenant em producao.
+ * Este sinal e deliberadamente separado da prontidao global. Um tenant com
+ * override quebrado deve falhar fechado apenas naquele tenant, sem transformar
+ * a rota inteira em indisponivel para tenants que continuam saudaveis.
  *
  * @param {Record<string, unknown>} env Bindings atuais.
  * @param {Record<string, { opsBindings?: { depositRecheckBearerToken?: string } }>} tenants Registro de tenants.
@@ -61,10 +61,9 @@ function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
  * @param {{ configured: boolean, recognized: boolean }} featureFlag Estado da flag textual.
  * @param {boolean} enabled Resultado booleano ja normalizado para a flag.
  * @param {boolean} globalBearerBindingConfigured Se o token global existe no ambiente.
- * @param {boolean} hasInvalidTenantOverride Se existe override tenant-scoped declarado sem segredo valido.
- * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret" | "tenant_override_invalid"} Estado redigido.
+ * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret"} Estado global redigido.
  */
-export function describeDepositRecheckState(featureFlag, enabled, globalBearerBindingConfigured, hasInvalidTenantOverride) {
+export function describeDepositRecheckState(featureFlag, enabled, globalBearerBindingConfigured) {
   if (featureFlag.configured && !featureFlag.recognized) {
     return "invalid_config";
   }
@@ -75,10 +74,6 @@ export function describeDepositRecheckState(featureFlag, enabled, globalBearerBi
 
   if (!globalBearerBindingConfigured) {
     return "missing_secret";
-  }
-
-  if (hasInvalidTenantOverride) {
-    return "tenant_override_invalid";
   }
 
   return "ready";
@@ -217,10 +212,13 @@ export function assertPositiveInteger(value, key) {
  *         recognized: boolean,
  *         rawValue: string | null
  *       },
- *       state: "ready" | "disabled" | "invalid_config" | "missing_secret" | "tenant_override_invalid",
+ *       state: "ready" | "disabled" | "invalid_config" | "missing_secret",
  *       ready: boolean,
  *       globalBearerBindingConfigured: boolean,
- *       invalidTenantOverrideCount: number
+ *       tenantOverrides: {
+ *         state: "ready" | "invalid_config",
+ *         invalidCount: number
+ *       }
  *     }
  *   }
  * }} Configuracao consolidada do runtime.
@@ -253,7 +251,6 @@ export function readRuntimeConfig(env) {
     depositRecheckFlagState,
     depositRecheckEnabled,
     globalBearerBindingConfigured,
-    invalidTenantOverrideCount > 0,
   );
 
   return {
@@ -277,7 +274,10 @@ export function readRuntimeConfig(env) {
         state: depositRecheckState,
         ready: depositRecheckState === "ready",
         globalBearerBindingConfigured,
-        invalidTenantOverrideCount,
+        tenantOverrides: {
+          state: invalidTenantOverrideCount > 0 ? "invalid_config" : "ready",
+          invalidCount: invalidTenantOverrideCount,
+        },
       },
     },
   };

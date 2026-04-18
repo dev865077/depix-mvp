@@ -48,7 +48,7 @@ export async function requestContextMiddleware(c, next) {
     });
   }
 
-  if (runtimeConfig.operations?.depositRecheck?.state === "tenant_override_invalid") {
+  if (runtimeConfig.operations?.depositRecheck?.tenantOverrides?.state === "invalid_config") {
     log(runtimeConfig, {
       level: "warn",
       message: "config.deposit_recheck.tenant_override_invalid",
@@ -56,8 +56,8 @@ export async function requestContextMiddleware(c, next) {
       requestId,
       path: c.req.path,
       details: {
-        state: runtimeConfig.operations.depositRecheck.state,
-        invalidTenantOverrideCount: runtimeConfig.operations.depositRecheck.invalidTenantOverrideCount,
+        state: runtimeConfig.operations.depositRecheck.tenantOverrides.state,
+        invalidTenantOverrideCount: runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount,
       },
     });
   }

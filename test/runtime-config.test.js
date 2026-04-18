@@ -1,9 +1,9 @@
 /**
  * Testes da leitura de configuracao operacional do Worker.
  *
- * O objetivo aqui e proteger o contrato de rollout: a rota de recheck pode
- * herdar o token global ou optar por um token tenant-scoped, mas `/health`
- * nunca deve anunciar prontidao quando um override declarado esta quebrado.
+ * O objetivo aqui e proteger o contrato de rollout: a rota de recheck tem um
+ * gate global e overrides tenant-scoped opcionais. Um override quebrado deve
+ * aparecer para operadores sem transformar todos os tenants em indisponiveis.
  */
 import { describe, expect, it } from "vitest";
 
@@ -108,7 +108,8 @@ describe("runtime config", () => {
 
     expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositRecheck.invalidTenantOverrideCount).toBe(0);
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
   });
 
   it("marks deposit recheck invalid when the feature flag has an unknown value", () => {
@@ -129,15 +130,16 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
   });
 
-  it("marks deposit recheck tenant_override_invalid when a declared tenant token is missing", () => {
+  it("keeps global readiness while marking a missing tenant override as invalid", () => {
     const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
       TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
       ALPHA_OPS_ROUTE_BEARER_TOKEN: undefined,
     }));
 
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("tenant_override_invalid");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
-    expect(runtimeConfig.operations.depositRecheck.invalidTenantOverrideCount).toBe(1);
+    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
+    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("invalid_config");
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(1);
   });
 
   it("keeps deposit recheck ready when a declared tenant token is configured", () => {
@@ -148,6 +150,7 @@ describe("runtime config", () => {
 
     expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositRecheck.invalidTenantOverrideCount).toBe(0);
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
+    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
   });
 });

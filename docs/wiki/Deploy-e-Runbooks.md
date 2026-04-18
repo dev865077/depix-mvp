@@ -45,7 +45,7 @@
 ## Contrato operacional do recheck
 
 - sem `ENABLE_OPS_DEPOSIT_RECHECK=true`, responde `503 ops_route_disabled`
-- a rota so fica globalmente pronta quando `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
+- a rota fica globalmente pronta quando `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
 - quando o tenant declarar `opsBindings.depositRecheckBearerToken`, esse token tenant-scoped tem precedencia sobre o token global
 - tenant sem override declarado continua usando o token global; tenant com override declarado so usa o binding proprio e responde `503 ops_route_disabled` se esse segredo estiver ausente ou invalido
 - sem header Bearer, responde `401 ops_authorization_required`
@@ -93,14 +93,15 @@
 - tenants existentes continuam no caminho global por padrao; nenhuma entrada antiga precisa ser alterada para o rollout inicial
 - para migrar um tenant, primeiro provisionar o novo segredo, depois declarar `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY`, validar em `test` com o token novo e so entao repetir em `production`
 - se o tenant override for declarado com binding ausente ou vazio, aquele tenant falha fechado com `503`; o rollback imediato e remover a declaracao do registry ou corrigir o segredo provisionado
-- se `/health` retornar `tenant_override_invalid`, tratar como erro de configuracao: algum override tenant-scoped foi declarado sem segredo valido, enquanto tenants sem override continuam herdando o token global
+- se `/health` retornar `tenantOverrides.state = invalid_config`, tratar como erro local de configuracao: algum override tenant-scoped foi declarado sem segredo valido, enquanto tenants sem override continuam herdando o token global
 - todo request autorizado registra `authScope` e `bindingName` em log estruturado, o que vira a trilha canonica para triagem operacional
 
 ## Checklist de aceite operacional
 
 - `test` habilitado e validado antes de qualquer uso em `production`
 - `production` habilitado so depois do smoke test autenticado em `test`
-- `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config`, `missing_secret` ou `tenant_override_invalid`
+- `/health` confirma `configuration.operations.depositRecheck.state` e `ready` como sinal redigido de prontidao global; valores esperados: `ready`, `disabled`, `invalid_config` ou `missing_secret`
+- `/health` confirma `configuration.operations.depositRecheck.tenantOverrides.state` como sinal redigido de overrides locais; `invalid_config` nesse campo nao derruba a prontidao global, mas indica que ao menos um tenant com override declarado falhara fechado ate o segredo ser corrigido
 - operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
 - rollback rapido documentado por flag e por rotacao/remocao do segredo
 

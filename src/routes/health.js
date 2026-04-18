@@ -26,6 +26,7 @@ export function handleHealth(c) {
         depositRecheck: {
           state: runtimeConfig.operations.depositRecheck.state,
           ready: runtimeConfig.operations.depositRecheck.ready,
+          tenantOverrides: runtimeConfig.operations.depositRecheck.tenantOverrides,
         },
       },
     },
