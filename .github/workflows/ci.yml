@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  # CI automatizado pausado temporariamente ate a estabilizacao da suite no GitHub Actions.
-  # Referencia: issue #28.
+  pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -17,6 +19,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CI: true
 
     steps:
       - name: Checkout repository
@@ -32,6 +36,4 @@ jobs:
         run: npm ci
 
       - name: Run test suite
-        env:
-          CI: true
         run: npm test
