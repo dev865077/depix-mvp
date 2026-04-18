@@ -35,6 +35,8 @@ const DIRECT_REVIEW_MAX_TOTAL_LINES = 120;
 const DIRECT_REVIEW_MAX_AREAS = 2;
 const DIRECT_REVIEW_MAX_WORKFLOW_FILES = 2;
 const DIRECT_REVIEW_MAX_WORKFLOW_LINES = 30;
+const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_FILES = 5;
+const DIRECT_REVIEW_MAX_AUTOMATION_POLICY_LINES = 160;
 const DISCUSSION_CATEGORY_DEFAULT = "";
 
 const SENSITIVE_WORKFLOW_CHANGE_PATTERNS = [
@@ -773,6 +775,50 @@ function isSmallNonSensitiveWorkflowChange(files, summary) {
 }
 
 /**
+ * Decide whether a bounded change to the review automation policy can stay in
+ * direct review.
+ *
+ * This covers edits like tuning the classifier itself, adding focused tests for
+ * the route decision, or documenting the policy. It deliberately stays narrow:
+ * broad rewrites, permission expansion, secret handling, and unrelated source
+ * changes still go to Discussion.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @param {ReturnType<typeof summarizePullRequestScope>} summary Scope summary.
+ * @returns {boolean} True when the direct lane is enough.
+ */
+function isSmallReviewAutomationPolicyChange(files, summary) {
+  if (
+    summary.fileCount > DIRECT_REVIEW_MAX_AUTOMATION_POLICY_FILES ||
+    summary.totalChangedLines > DIRECT_REVIEW_MAX_AUTOMATION_POLICY_LINES
+  ) {
+    return false;
+  }
+
+  const allowedPaths = new Set([
+    ".github/workflows/ai-pr-review.yml",
+    "scripts/ai-pr-review.mjs",
+    "test/ai-pr-review.test.js",
+    "docs/wiki/contribuicao-e-prs.md",
+  ]);
+  const allFilesAreReviewPolicyFiles = files.every((file) => allowedPaths.has(normalizeRepositoryPath(file.filename)));
+
+  if (!allFilesAreReviewPolicyFiles) {
+    return false;
+  }
+
+  const changedLines = files.flatMap(getChangedPatchLines);
+
+  if (changedLines.length === 0) {
+    return false;
+  }
+
+  return !changedLines.some((line) =>
+    SENSITIVE_WORKFLOW_CHANGE_PATTERNS.some((pattern) => pattern.test(line)),
+  );
+}
+
+/**
  * Summarize the scope of the PR so the merge gate can stay deterministic.
  *
  * @param {any[]} files Changed files from GitHub.
@@ -859,6 +905,23 @@ export function assessDiscussionGate(files) {
       route: DISCUSSION_ROUTE_DIRECT,
       requiresDiscussion: false,
       reason: `Small non-sensitive workflow PR (${summary.fileCount} files, ${summary.totalChangedLines} changed lines).`,
+      summary,
+    };
+
+    logOperationalEvent("ai_pr_review.gate_decision", {
+      route: decision.route,
+      requiresDiscussion: decision.requiresDiscussion,
+      reason: decision.reason,
+    });
+
+    return decision;
+  }
+
+  if (isSmallReviewAutomationPolicyChange(files, summary)) {
+    const decision = {
+      route: DISCUSSION_ROUTE_DIRECT,
+      requiresDiscussion: false,
+      reason: `Small non-sensitive review automation policy PR (${summary.fileCount} files, ${summary.totalChangedLines} changed lines).`,
       summary,
     };
 

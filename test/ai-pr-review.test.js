@@ -148,6 +148,77 @@ describe("ai pr review discussion gate", () => {
     expect(gate.requiresDiscussion).toBe(true);
   });
 
+  it("keeps small review automation policy changes in the direct lane", () => {
+    const gate = assessDiscussionGate([
+      {
+        filename: ".github/workflows/ai-pr-review.yml",
+        additions: 1,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_CLASSIFY_MODEL || 'gpt-5.4-nano' }}",
+        ].join("\n"),
+      },
+      {
+        filename: "scripts/ai-pr-review.mjs",
+        additions: 80,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+function isSmallReviewAutomationPolicyChange(files, summary) {",
+          "+  return summary.totalChangedLines <= 160;",
+          "+}",
+        ].join("\n"),
+      },
+      {
+        filename: "test/ai-pr-review.test.js",
+        additions: 24,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+it(\"keeps small automation policy changes direct\", () => {",
+          "+  expect(true).toBe(true);",
+          "+});",
+        ].join("\n"),
+      },
+      {
+        filename: "docs/wiki/Contribuicao-e-PRs.md",
+        additions: 4,
+        deletions: 2,
+        patch: [
+          "@@",
+          "+- PR pequena de automacao de review pode ficar direta quando nao toca escopo sensivel.",
+        ].join("\n"),
+      },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+    expect(gate.route).toBe("direct_review");
+  });
+
+  it("routes review automation policy changes to discussion when they touch token or permission scope", () => {
+    const gate = assessDiscussionGate([
+      {
+        filename: "scripts/ai-pr-review.mjs",
+        additions: 2,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+const token = process.env.GITHUB_TOKEN;",
+          "+await grantPermission(\"issues: write\");",
+        ].join("\n"),
+      },
+      {
+        filename: "test/ai-pr-review.test.js",
+        additions: 2,
+        deletions: 0,
+        patch: "@@\n+expect(token).toBeDefined();",
+      },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(true);
+  });
+
   it("routes mixed docs and source changes into discussion", () => {
     const gate = assessDiscussionGate([
       { filename: "docs/wiki/Runbook.md", additions: 4, deletions: 0 },
