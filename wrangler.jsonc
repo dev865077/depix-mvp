@@ -1,5 +1,6 @@
 // Configuracao principal do Cloudflare Worker.
 // O arquivo diferencia local, teste e producao sem colocar segredos em codigo.
+// Em production, os segredos por tenant entram via Cloudflare Secrets Store.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "depix-mvp",
@@ -48,6 +49,48 @@
           "database_name": "depix-mvp-production",
           "database_id": "e4a13633-8e26-4c1a-aa9e-db8e35360cb4",
           "migrations_dir": "migrations"
+        }
+      ],
+      "secrets_store_secrets": [
+        {
+          "binding": "ALPHA_TELEGRAM_BOT_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-telegram-bot-token"
+        },
+        {
+          "binding": "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-telegram-webhook-secret"
+        },
+        {
+          "binding": "ALPHA_EULEN_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-eulen-api-token"
+        },
+        {
+          "binding": "ALPHA_EULEN_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-eulen-webhook-secret"
+        },
+        {
+          "binding": "BETA_TELEGRAM_BOT_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-telegram-bot-token"
+        },
+        {
+          "binding": "BETA_TELEGRAM_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-telegram-webhook-secret"
+        },
+        {
+          "binding": "BETA_EULEN_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-eulen-api-token"
+        },
+        {
+          "binding": "BETA_EULEN_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-eulen-webhook-secret"
         }
       ],
       "vars": {

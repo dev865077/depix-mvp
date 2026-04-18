@@ -1,5 +1,6 @@
 # Exemplo de variaveis locais para desenvolvimento.
 # Este arquivo documenta o formato esperado, mas nunca deve guardar segredos reais.
+# Em production, os bindings secretos equivalentes vivem no Cloudflare Secrets Store.
 APP_ENV=local
 APP_NAME=depix-mvp
 LOG_LEVEL=debug
