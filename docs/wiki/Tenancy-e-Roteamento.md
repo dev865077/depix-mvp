@@ -31,6 +31,8 @@ Cada tenant aponta para bindings separados de:
 
 O projeto le o registro de tenants, valida sua forma e so materializa segredos quando eles sao realmente necessarios.
 
-## Tenants de exemplo
+## Tenants atuais
 
-`alpha` e `beta` sao tenants ficticios de configuracao e teste. Nao representam parceiros reais.
+`alpha` e `beta` aparecem hoje como tenants configurados nos ambientes versionados do projeto.
+
+Nao trate esses ids como meros placeholders sem validar o estado real de deploy, segredos e webhooks do ambiente correspondente.

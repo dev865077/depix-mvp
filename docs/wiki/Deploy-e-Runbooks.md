@@ -21,13 +21,16 @@
 
 - `GET /health` responde
 - as fronteiras canonicas de rota ja existem
-- webhook Eulen e recheck ainda sao placeholders
+- `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
+- `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
+- `POST /ops/:tenantId/recheck/deposit` ainda e placeholder
 
 ## Verificacao minima
 
 - confirmar `GET /health`
 - confirmar `tenantId` no path das rotas multi-tenant
 - confirmar bindings do tenant
+- confirmar se `test` e `production` estao usando `Cloudflare Secrets Store` como esperado
 - nunca logar tokens nem secrets
 
 ## Regra de operacao
