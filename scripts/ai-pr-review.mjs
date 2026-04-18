@@ -45,6 +45,17 @@ const REVIEW_SIGNAL_BY_CATEGORY = {
 };
 
 /**
+ * Emit a stable operational log line for GitHub Actions.
+ *
+ * @param {string} event Event name.
+ * @param {Record<string, unknown>} fields Structured fields.
+ * @returns {void}
+ */
+function logOperationalEvent(event, fields = {}) {
+  console.log(JSON.stringify({ event, ...fields }));
+}
+
+/**
  * Normalize a repository file path for stable classification.
  *
  * @param {string} filename Raw GitHub file path.
@@ -156,6 +167,15 @@ function readConfiguredModel() {
 
   if (/\s/.test(model)) {
     throw new Error("Invalid OPENAI_PR_REVIEW_MODEL: model name cannot contain whitespace.");
+  }
+
+  if (model === "gpt-5.4-mini") {
+    logOperationalEvent("ai_pr_review.model.default", {
+      model,
+      reason: "OPENAI_PR_REVIEW_MODEL was not configured and workflow default was used.",
+    });
+  } else {
+    logOperationalEvent("ai_pr_review.model.configured", { model });
   }
 
   return model;
@@ -407,7 +427,7 @@ async function fetchRepositoryDiscussionMetadata(owner, name) {
  */
 export function selectDiscussionCategory(categories, preferredName = "") {
   if (!Array.isArray(categories) || categories.length === 0) {
-    throw new Error("No GitHub Discussion categories are available in this repository.");
+    throw new Error("No GitHub Discussion categories are available in this repository. Enable Discussions or create at least one category before using discussion-review.");
   }
 
   const normalizedPreferredName = preferredName.trim().toLowerCase();
@@ -416,27 +436,57 @@ export function selectDiscussionCategory(categories, preferredName = "") {
     const preferredCategory = categories.find((category) => category.name.toLowerCase() === normalizedPreferredName);
 
     if (preferredCategory) {
+      logOperationalEvent("ai_pr_review.discussion_category.selected", {
+        category: preferredCategory.name,
+        source: "configured",
+      });
+
       return preferredCategory;
     }
+
+    logOperationalEvent("ai_pr_review.discussion_category.configured_missing", {
+      configuredCategory: preferredName,
+      availableCategories: categories.map((category) => category.name),
+    });
   }
 
   const ideasCategory = categories.find((category) => category.name.toLowerCase() === "ideas");
 
   if (ideasCategory) {
+    logOperationalEvent("ai_pr_review.discussion_category.selected", {
+      category: ideasCategory.name,
+      source: "ideas_fallback",
+    });
+
     return ideasCategory;
   }
 
   const generalCategory = categories.find((category) => category.name.toLowerCase() === "general");
 
   if (generalCategory) {
+    logOperationalEvent("ai_pr_review.discussion_category.selected", {
+      category: generalCategory.name,
+      source: "general_fallback",
+    });
+
     return generalCategory;
   }
 
   const firstOpenEndedCategory = categories.find((category) => category.isAnswerable !== true);
 
   if (firstOpenEndedCategory) {
+    logOperationalEvent("ai_pr_review.discussion_category.selected", {
+      category: firstOpenEndedCategory.name,
+      source: "first_open_category",
+    });
+
     return firstOpenEndedCategory;
   }
+
+  logOperationalEvent("ai_pr_review.discussion_category.selected", {
+    category: categories[0].name,
+    source: "first_available_category",
+  });
 
   return categories[0];
 }
@@ -724,20 +774,36 @@ export function assessDiscussionGate(files) {
     summary.topLevelAreaCount <= DIRECT_REVIEW_MAX_AREAS;
 
   if (isSmallLowRiskChange) {
-    return {
+    const decision = {
       route: DISCUSSION_ROUTE_DIRECT,
       requiresDiscussion: false,
       reason: `Small low-risk PR limited to docs/tests (${summary.fileCount} files, ${summary.totalChangedLines} changed lines).`,
       summary,
     };
+
+    logOperationalEvent("ai_pr_review.gate_decision", {
+      route: decision.route,
+      requiresDiscussion: decision.requiresDiscussion,
+      reason: decision.reason,
+    });
+
+    return decision;
   }
 
-  return {
+  const decision = {
     route: DISCUSSION_ROUTE_REQUIRED,
     requiresDiscussion: true,
     reason: `Meaningful PR scope detected (${summary.fileCount} files, ${summary.totalChangedLines} changed lines, categories: ${summary.categories.join(", ")}). Route into Discussion before merge.`,
     summary,
   };
+
+  logOperationalEvent("ai_pr_review.gate_decision", {
+    route: decision.route,
+    requiresDiscussion: decision.requiresDiscussion,
+    reason: decision.reason,
+  });
+
+  return decision;
 }
 
 /**
@@ -1313,6 +1379,11 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
       const category = selectDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredDiscussionCategory);
       const createdDiscussion = await createDiscussion(repositoryMetadata.id, category.id, discussionTitle, discussionBody);
 
+      logOperationalEvent("ai_pr_review.discussion.created", {
+        url: createdDiscussion.url,
+        commentCount: 0,
+      });
+
       discussion = createdDiscussion;
     }
 
@@ -1324,10 +1395,18 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
 
     for (const comment of discussionComments) {
       await addDiscussionComment(discussion.id, comment.body);
+      logOperationalEvent("ai_pr_review.discussion_comment.created", {
+        role: comment.role,
+        discussionUrl: discussion.url,
+      });
     }
 
     return { url: discussion.url, failure: null };
   } catch (error) {
+    logOperationalEvent("ai_pr_review.discussion.fallback", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+
     return { url: null, failure: error instanceof Error ? error : new Error(String(error)) };
   }
 }

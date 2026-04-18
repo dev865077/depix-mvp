@@ -289,6 +289,10 @@ describe("ai pr review discussion rendering", () => {
     expect(category.id).toBe("2");
   });
 
+  it("fails clearly when the repository has no discussion categories", () => {
+    expect(() => selectDiscussionCategory([], "Architecture")).toThrow(/create at least one category/);
+  });
+
   it("prefers the configured discussion category when available", () => {
     const category = selectDiscussionCategory([
       { id: "1", name: "General", isAnswerable: false },
@@ -296,5 +300,38 @@ describe("ai pr review discussion rendering", () => {
     ], "Architecture");
 
     expect(category.id).toBe("2");
+  });
+
+  it("returns a complete publication set for the discussion lane", () => {
+    const discussionBody = buildPullRequestDiscussionBody(
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+      },
+      gate,
+      {
+        product: "Product memo",
+        technical: "Technical memo",
+        risk: "Risk memo",
+        synthesis: "Request changes\n\n## Findings\n- One blocker.\n\n## Recommendation\nRequest changes",
+      },
+      "gpt-5.4-mini",
+    );
+    const roleComments = buildDiscussionReviewComments({
+      product: "Product memo",
+      technical: "Technical memo",
+      risk: "Risk memo",
+      synthesis: "Request changes\n\n## Findings\n- One blocker.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(discussionBody).toContain("## Review comments");
+    expect(roleComments.map((comment) => comment.role)).toEqual([
+      "Product and scope",
+      "Technical and architecture",
+      "Risk, security, and operations",
+      "Synthesis",
+    ]);
   });
 });
