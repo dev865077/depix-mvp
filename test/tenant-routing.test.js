@@ -17,15 +17,15 @@ async function fetchJson(url, init = {}) {
 function createTelegramUpdate() {
   return {
     update_id: 10000,
-    callback_query: {
-      id: "callback-1",
+    inline_query: {
+      id: "inline-1",
       from: {
         id: 7,
         is_bot: false,
         first_name: "Tester",
       },
-      chat_instance: "chat-instance-1",
-      data: "noop",
+      query: "noop",
+      offset: "",
     },
   };
 }

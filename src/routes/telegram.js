@@ -25,7 +25,23 @@ export async function handleTelegramWebhook(c) {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (!tenant) {
-    return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this webhook.");
+    log(runtimeConfig, {
+      level: "warn",
+      message: "telegram.webhook.ignored",
+      requestId: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
+      status: 204,
+      details: {
+        reason: "tenant_not_resolved",
+      },
+    });
+
+    c.res = new Response(null, {
+      status: 204,
+    });
+
+    return c.res;
   }
 
   const telegramRuntime = getTelegramRuntime(tenant);

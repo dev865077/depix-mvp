@@ -4,7 +4,7 @@
  * O objetivo desta fase e provar um caminho completo e confiavel:
  * - update real entra pelo webhook
  * - o runtime seleciona um handler deterministico
- * - o bot produz uma resposta outbound real
+ * - o bot produz uma resposta outbound real quando houver canal de resposta
  * - logs suficientes permitem rastrear o caminho inteiro
  */
 import { log } from "../lib/logger.js";
@@ -13,6 +13,11 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
 
 /**
  * Instala middlewares, handlers e observabilidade do fluxo minimo do bot.
+ *
+ * O fluxo cobre os caminhos explicitamente suportados (`/start` e texto livre)
+ * e tambem garante tratamento deterministico para updates fora desse escopo
+ * inicial. Isso evita que callback queries, edicoes de mensagem e outros tipos
+ * de update fiquem "soltos" no runtime sem rastreabilidade.
  *
  * @param {import("grammy").Bot} bot Instancia do bot atual.
  * @param {{
@@ -78,9 +83,27 @@ export function installTelegramReplyFlow(bot, input) {
     ),
   );
 
+  const handleUnsupportedTelegramUpdate = createLoggedTelegramHandler(
+    input,
+    "unsupported_update_reply",
+    async function replyToUnsupportedUpdate(ctx) {
+      await respondToUnsupportedTelegramUpdate(ctx, input);
+    },
+  );
+
+  bot.use(async function routeUnsupportedTelegramUpdates(ctx, next) {
+    if (ctx.state?.telegramHandler) {
+      await next();
+      return;
+    }
+
+    await handleUnsupportedTelegramUpdate(ctx);
+    await next();
+  });
+
   bot.use(async function logUnhandledTelegramUpdate(ctx) {
     if (!ctx.state?.telegramHandler) {
-      logTelegramEvent(input, "info", "telegram.handler.not_selected", {
+      logTelegramEvent(input, "warn", "telegram.handler.not_selected", {
         update: ctx.state?.telegramUpdateSummary ?? summarizeTelegramUpdate(ctx.update),
       });
     }
@@ -129,6 +152,20 @@ export function buildTelegramUnsupportedMessageReply(tenant) {
     `Recebi sua interação em ${tenant.displayName}.`,
     "Nesta fase eu respondo a mensagens de texto e ao comando /start.",
   ].join("\n\n");
+}
+
+/**
+ * Mensagem curta para callback queries sem fluxo de negocio implementado.
+ *
+ * `answerCallbackQuery` aceita textos breves. Por isso mantemos esta variacao
+ * curta e objetiva, enquanto updates com um chat enderecavel recebem uma
+ * mensagem mais explicativa.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @returns {string} Texto curto para a callback query.
+ */
+export function buildTelegramUnsupportedCallbackReply(tenant) {
+  return `Recebi sua interação em ${tenant.displayName}. O próximo passo do fluxo ainda será habilitado.`;
 }
 
 /**
@@ -183,6 +220,50 @@ function installTelegramOutboundLogging(bot, input) {
 }
 
 /**
+ * Garante um tratamento deterministico para updates que nao pertencem aos
+ * fluxos explicitamente suportados nesta fase do bot.
+ *
+ * A intencao aqui nao e "inventar" um fluxo de negocio. Em vez disso:
+ * - callback queries recebem `answerCallbackQuery`, que e o ack correto
+ * - updates com chat enderecavel recebem uma mensagem explicativa
+ * - updates sem superficie de resposta sao marcados como tratados e logados
+ *
+ * Assim, o runtime cobre explicitamente o comportamento para updates fora do
+ * escopo inicial do MVP, sem deixar lacunas silenciosas.
+ *
+ * @param {any} ctx Contexto do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional atual.
+ */
+async function respondToUnsupportedTelegramUpdate(ctx, input) {
+  if (ctx.callbackQuery?.id) {
+    await ctx.answerCallbackQuery({
+      text: buildTelegramUnsupportedCallbackReply(input.tenant),
+    });
+    return;
+  }
+
+  const replyChatId = resolveTelegramReplyChatId(ctx.update);
+
+  if (replyChatId !== undefined) {
+    await ctx.api.sendMessage(replyChatId, buildTelegramUnsupportedMessageReply(input.tenant));
+    return;
+  }
+
+  logTelegramEvent(input, "info", "telegram.outbound.skipped", {
+    reason: "unsupported_update_has_no_reply_channel",
+    update: ctx.state?.telegramUpdateSummary ?? summarizeTelegramUpdate(ctx.update),
+  });
+}
+
+/**
  * Cria um handler com logging consistente de selecao e fim.
  *
  * @param {{
@@ -227,6 +308,28 @@ function createLoggedTelegramHandler(input, handlerName, handler) {
       throw error;
     }
   };
+}
+
+/**
+ * Descobre se o update atual tem algum chat que permita uma resposta via
+ * `sendMessage`.
+ *
+ * Nem todo update do Telegram traz uma superficie de resposta. Callback query,
+ * por exemplo, deve ser respondida preferencialmente com
+ * `answerCallbackQuery`; ja updates como `inline_query` nao oferecem um chat
+ * enderecavel.
+ *
+ * @param {Record<string, any>} update Update bruto recebido.
+ * @returns {number | string | undefined} Chat id quando houver destino valido.
+ */
+function resolveTelegramReplyChatId(update) {
+  return update?.message?.chat?.id
+    ?? update?.edited_message?.chat?.id
+    ?? update?.channel_post?.chat?.id
+    ?? update?.edited_channel_post?.chat?.id
+    ?? update?.business_message?.chat?.id
+    ?? update?.edited_business_message?.chat?.id
+    ?? undefined;
 }
 
 /**

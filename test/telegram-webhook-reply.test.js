@@ -4,18 +4,22 @@
  * A suite cobre o caminho minimo do issue #50:
  * - update entra pela rota real do webhook
  * - o runtime seleciona o handler correto
- * - o bot produz webhook reply com `sendMessage`
+ * - o bot produz webhook reply com a Bot API adequada ao tipo do update
  * - erros outbound sao mapeados para contrato HTTP local
+ * - requests fora de escopo nao geram retry operacional desnecessario
  */
 import { BotError, GrammyError, HttpError } from "grammy";
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
   buildTelegramStartReply,
   buildTelegramTextReply,
+  buildTelegramUnsupportedCallbackReply,
+  buildTelegramUnsupportedMessageReply,
 } from "../src/telegram/reply-flow.js";
 import { clearTelegramRuntimeCache } from "../src/telegram/runtime.js";
 
@@ -120,6 +124,58 @@ function createTelegramTextUpdate(input) {
   });
 }
 
+/**
+ * Monta um update de callback query.
+ *
+ * @param {{ chatId: number, fromId: number, updateId?: number }} input Dados do update.
+ * @returns {string} JSON do update pronto para o webhook.
+ */
+function createTelegramCallbackQueryUpdate(input) {
+  return JSON.stringify({
+    update_id: input.updateId ?? 3,
+    callback_query: {
+      id: `callback-${input.updateId ?? 3}`,
+      from: {
+        id: input.fromId,
+        is_bot: false,
+        first_name: "Pedro",
+      },
+      chat_instance: "chat-instance-1",
+      data: "noop",
+      message: {
+        message_id: 11,
+        date: 1713434403,
+        chat: {
+          id: input.chatId,
+          type: "private",
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Monta um update sem canal de resposta enderecavel.
+ *
+ * @param {{ fromId: number, updateId?: number }} input Dados do update.
+ * @returns {string} JSON do update pronto para o webhook.
+ */
+function createTelegramInlineQueryUpdate(input) {
+  return JSON.stringify({
+    update_id: input.updateId ?? 4,
+    inline_query: {
+      id: `inline-${input.updateId ?? 4}`,
+      from: {
+        id: input.fromId,
+        is_bot: false,
+        first_name: "Pedro",
+      },
+      query: "noop",
+      offset: "",
+    },
+  });
+}
+
 afterEach(function resetTelegramTests() {
   vi.restoreAllMocks();
   clearTelegramRuntimeCache();
@@ -180,7 +236,6 @@ describe("telegram webhook reply flow", () => {
     expect(response.status).toBe(200);
     expect(body).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-
     expect(logRecords.some((record) => record.message === "telegram.update.received")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.handler.selected")).toBe(true);
     expect(logRecords.some((record) => record.message === "telegram.outbound.attempt")).toBe(true);
@@ -236,11 +291,192 @@ describe("telegram webhook reply flow", () => {
       },
       createWorkerEnv(),
     );
-    const body = await response.text();
 
     expect(response.status).toBe(200);
-    expect(body).toBe("");
+    expect(await response.text()).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles callback queries through answerCallbackQuery", async function assertCallbackQueryFallback() {
+    const app = createApp();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/answerCallbackQuery");
+      expect(payload.callback_query_id).toBe("callback-3");
+      expect(payload.text).toBe(buildTelegramUnsupportedCallbackReply({
+        displayName: "Alpha",
+      }));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: true,
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramCallbackQueryUpdate({
+          chatId: 3003,
+          fromId: 503,
+          updateId: 3,
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
+  });
+
+  it("logs and acknowledges unsupported updates without a reply channel", async function assertNoReplySurfaceFallback() {
+    const app = createApp();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function unexpectedFetch() {
+      throw new Error("unsupported update without reply channel should not call Telegram API");
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramInlineQueryUpdate({
+          fromId: 504,
+          updateId: 4,
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(logRecords.some((record) => record.message === "telegram.outbound.skipped")).toBe(true);
+    expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
+  });
+
+  it("returns a message reply for unsupported message updates", async function assertUnsupportedMessageReply() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+      expect(payload.chat_id).toBe(5005);
+      expect(payload.text).toBe(buildTelegramUnsupportedMessageReply({
+        displayName: "Beta",
+      }));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 5,
+          date: 1713434405,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: JSON.stringify({
+          update_id: 5,
+          message: {
+            message_id: 12,
+            date: 1713434405,
+            photo: [{ file_id: "photo-1", width: 100, height: 100 }],
+            chat: {
+              id: 5005,
+              type: "private",
+            },
+            from: {
+              id: 505,
+              is_bot: false,
+              first_name: "Pedro",
+            },
+          },
+        }),
+      },
+      createWorkerEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("telegram webhook route behavior", () => {
+  it("acknowledges requests without tenant context to avoid Telegram retries", async function assertMissingTenantAck() {
+    const response = await handleTelegramWebhook({
+      env: createWorkerEnv(),
+      req: {
+        method: "POST",
+        path: "/telegram/missing/webhook",
+        raw: new Request("https://example.com/telegram/missing/webhook", {
+          method: "POST",
+        }),
+      },
+      get(key) {
+        if (key === "runtimeConfig") {
+          return {
+            app: {
+              name: "depix-mvp",
+              env: "local",
+            },
+            logging: {
+              level: "debug",
+            },
+          };
+        }
+
+        if (key === "requestId") {
+          return "missing-tenant-request";
+        }
+
+        return undefined;
+      },
+      res: undefined,
+    });
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
   });
 });
 
