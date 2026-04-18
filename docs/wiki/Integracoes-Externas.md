@@ -51,6 +51,8 @@ Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `de
 
 Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
 
+Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
+
 ## Split em deposit
 
 Toda chamada real de `deposit` deve carregar split do tenant. O codigo nao aceita endereco ou fee de split vindos do operador na rota operacional; ele resolve `depixSplitAddress` e `splitFee` a partir dos bindings secretos do tenant.

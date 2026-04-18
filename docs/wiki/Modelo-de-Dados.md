@@ -57,3 +57,5 @@ O modelo canonico do projeto distingue dois IDs externos:
 - `qrId`: identificador do QR/deposito usado em webhook, `deposit-status` e `deposits`
 
 O banco local persiste os dois papeis separadamente. `depositEntryId` nasce na criacao da cobranca; `qrId` pode ser hidratado depois via `deposit-status` ou pelo proprio webhook.
+
+Na migracao do schema legado, o valor antigo de `deposit_id` e copiado para `deposit_entry_id` e `qr_id` para manter linhas historicas acessiveis imediatamente. Depois disso, a reconciliacao pode substituir `qr_id` quando a Eulen expuser um valor canonico diferente.

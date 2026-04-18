@@ -149,17 +149,19 @@ export async function getDepositByQrId(db, tenantId, qrId) {
 }
 
 /**
- * Lista depositos que ainda nao tiveram `qrId` reconciliado localmente.
+ * Lista depositos que ainda precisam de reconciliacao segura de `qrId`.
  *
- * Essa visao e usada para preencher o `qrId` via `deposit-status` quando o
- * webhook chega antes de a correlacao ter sido materializada no banco.
+ * O conjunto inclui:
+ * - depositos novos com `qrId` nulo
+ * - linhas migradas do schema legado, onde `qrId` ainda replica
+ *   `depositEntryId` por falta de correlacao melhor
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
- * @returns {Promise<Record<string, unknown>[]>} Depositos com `qrId` ausente.
+ * @returns {Promise<Record<string, unknown>[]>} Depositos candidatos a reconciliacao.
  */
-export async function listDepositsWithoutQrId(db, tenantId) {
-  const result = await db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND qr_id IS NULL ORDER BY created_at DESC`).bind(
+export async function listDepositsNeedingQrIdReconciliation(db, tenantId) {
+  const result = await db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND (qr_id IS NULL OR qr_id = deposit_entry_id) ORDER BY created_at DESC`).bind(
     tenantId,
   ).all();
 

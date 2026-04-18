@@ -371,4 +371,115 @@ describe("eulen deposit webhook", () => {
     expect(hydratedDeposit?.qrId).toBe("qr_alpha_001");
     expect(hydratedDeposit?.externalStatus).toBe("depix_sent");
   });
+
+  it("fails explicitly when webhook dependencies are unavailable", async function assertMissingWebhookDependency() {
+    await seedDepositAggregate();
+
+    const app = createApp();
+    const response = await app.request(
+      "https://example.com/webhooks/eulen/alpha/deposit",
+      {
+        method: "POST",
+        headers: {
+          authorization: "Basic alpha-eulen-secret",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          webhookType: "deposit",
+          qrId: "qr_alpha_001",
+          status: "depix_sent",
+        }),
+      },
+      {
+        ...createWorkerEnv(),
+        ALPHA_EULEN_API_TOKEN: undefined,
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("webhook_dependency_unavailable");
+  });
+
+  it("fails explicitly when qrId hydration would collide with another deposit", async function assertQrIdConflict() {
+    await resetDatabaseSchema();
+
+    const db = getDatabase(env);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      userId: "telegram_alpha_001",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_alpha",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+    });
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "telegram_alpha_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_alpha",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: null,
+      orderId: "order_alpha_001",
+      nonce: "nonce_alpha_001",
+      qrCopyPaste: "0002010102122688qr-alpha-001",
+      qrImageUrl: "https://example.com/qr/alpha-1.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_conflict_001",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-2.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_conflict_001",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      payload: {
+        webhookType: "deposit",
+        qrId: "qr_new_001",
+        status: "depix_sent",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("deposit_qr_id_conflict");
+  });
 });

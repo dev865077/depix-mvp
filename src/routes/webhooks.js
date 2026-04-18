@@ -31,13 +31,33 @@ export async function handleEulenDepositWebhook(c) {
     throw new Error("Database binding is required to process the Eulen webhook.");
   }
 
+  let eulenApiToken;
+  let expectedSecret;
+
+  try {
+    [eulenApiToken, expectedSecret] = await Promise.all([
+      readTenantSecret(c.env, tenant, "eulenApiToken"),
+      readTenantSecret(c.env, tenant, "eulenWebhookSecret"),
+    ]);
+  } catch (error) {
+    return jsonError(
+      c,
+      503,
+      "webhook_dependency_unavailable",
+      "Required Eulen webhook dependencies are not available for this tenant.",
+      {
+        cause: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+
   const result = await processEulenDepositWebhook({
     db,
     runtimeConfig,
     tenant,
-    eulenApiToken: await readTenantSecret(c.env, tenant, "eulenApiToken"),
+    eulenApiToken,
     authorizationHeader: c.req.header("authorization"),
-    expectedSecret: await readTenantSecret(c.env, tenant, "eulenWebhookSecret"),
+    expectedSecret,
     rawBody: await c.req.text(),
     requestId: c.get("requestId"),
   });

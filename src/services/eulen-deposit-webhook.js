@@ -13,7 +13,7 @@ import { createDepositEvent, listDepositEventsByDepositEntryId } from "../db/rep
 import {
   getDepositByDepositEntryId,
   getDepositByQrId,
-  listDepositsWithoutQrId,
+  listDepositsNeedingQrIdReconciliation,
   updateDepositByDepositEntryId,
 } from "../db/repositories/deposits-repository.js";
 import { getOrderById, updateOrderById } from "../db/repositories/orders-repository.js";
@@ -21,6 +21,23 @@ import { log } from "../lib/logger.js";
 
 const WEBHOOK_SOURCE = "webhook";
 const EULEN_TERMINAL_ORDER_STEPS = new Set(["completed"]);
+
+/**
+ * Erro de correlacao local entre `depositEntryId` e `qrId`.
+ */
+export class DepositCorrelationError extends Error {
+  /**
+   * @param {string} code Codigo estavel do erro.
+   * @param {string} message Mensagem principal.
+   * @param {Record<string, unknown>=} details Metadados adicionais.
+   */
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = "DepositCorrelationError";
+    this.code = code;
+    this.details = details;
+  }
+}
 
 /**
  * Compara duas strings de forma deterministica sem abortar cedo.
@@ -320,7 +337,7 @@ async function readRemoteDepositStatusByEntryId(input) {
  * @returns {Promise<Record<string, unknown> | null>} Deposito correlacionado ou `null`.
  */
 async function hydrateMissingQrIdForWebhook(input) {
-  const candidates = await listDepositsWithoutQrId(input.db, input.tenant.tenantId);
+  const candidates = await listDepositsNeedingQrIdReconciliation(input.db, input.tenant.tenantId);
 
   for (const candidate of candidates) {
     const remoteStatus = await readRemoteDepositStatusByEntryId({
@@ -332,6 +349,23 @@ async function hydrateMissingQrIdForWebhook(input) {
 
     if (!remoteStatus.qrId) {
       continue;
+    }
+
+    const existingDepositWithQrId = await getDepositByQrId(input.db, input.tenant.tenantId, remoteStatus.qrId);
+
+    if (
+      existingDepositWithQrId
+      && existingDepositWithQrId.depositEntryId !== candidate.depositEntryId
+    ) {
+      throw new DepositCorrelationError(
+        "deposit_qr_id_conflict",
+        "qrId returned by Eulen is already attached to another local deposit.",
+        {
+          qrId: remoteStatus.qrId,
+          currentDepositEntryId: candidate.depositEntryId,
+          conflictingDepositEntryId: existingDepositWithQrId.depositEntryId,
+        },
+      );
     }
 
     const hydratedDeposit = await updateDepositByDepositEntryId(input.db, input.tenant.tenantId, candidate.depositEntryId, {
@@ -482,6 +516,15 @@ export async function processEulenDepositWebhook(input) {
     };
   }
 
+  if (typeof input.eulenApiToken !== "string" || input.eulenApiToken.trim().length === 0) {
+    return {
+      ok: false,
+      status: 503,
+      code: "deposit_lookup_dependency_unavailable",
+      message: "Eulen API token is required to reconcile qrId safely.",
+    };
+  }
+
   let deposit;
 
   try {
@@ -493,7 +536,36 @@ export async function processEulenDepositWebhook(input) {
       qrId: payload.qrId,
     });
   } catch (error) {
+    if (error instanceof DepositCorrelationError) {
+      log(input.runtimeConfig, {
+        level: "error",
+        message: "webhook.eulen.deposit_correlation_failed",
+        tenantId: input.tenant.tenantId,
+        requestId: input.requestId,
+        details: error.details,
+      });
+
+      return {
+        ok: false,
+        status: 409,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      };
+    }
+
     if (error instanceof EulenApiError) {
+      log(input.runtimeConfig, {
+        level: "error",
+        message: "webhook.eulen.deposit_lookup_unavailable",
+        tenantId: input.tenant.tenantId,
+        requestId: input.requestId,
+        details: {
+          qrId: payload.qrId,
+          cause: error.details,
+        },
+      });
+
       return {
         ok: false,
         status: 502,

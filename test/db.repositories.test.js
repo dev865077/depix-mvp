@@ -14,7 +14,74 @@ import {
 } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 
-const INITIAL_SCHEMA_STATEMENTS = [
+const LEGACY_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS orders (
+    tenant_id TEXT NOT NULL,
+    order_id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'telegram',
+    product_type TEXT NOT NULL,
+    amount_in_cents INTEGER,
+    wallet_address TEXT,
+    current_step TEXT NOT NULL DEFAULT 'draft',
+    status TEXT NOT NULL DEFAULT 'draft',
+    split_address TEXT,
+    split_fee TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
+  "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
+  "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+  `CREATE TABLE IF NOT EXISTS deposits (
+    tenant_id TEXT NOT NULL,
+    deposit_id TEXT PRIMARY KEY NOT NULL,
+    order_id TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    qr_copy_paste TEXT NOT NULL,
+    qr_image_url TEXT NOT NULL,
+    external_status TEXT NOT NULL DEFAULT 'pending',
+    expiration TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS deposits_order_id_idx ON deposits (order_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_external_status_idx ON deposits (external_status)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_id_idx ON deposits (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
+  `CREATE TABLE IF NOT EXISTS deposit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    deposit_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    external_status TEXT NOT NULL,
+    bank_tx_id TEXT,
+    blockchain_tx_id TEXT,
+    raw_payload TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (deposit_id) REFERENCES deposits(deposit_id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS deposit_events_order_id_idx ON deposit_events (order_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_deposit_id_idx ON deposit_events (deposit_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_source_idx ON deposit_events (source)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_id_idx ON deposit_events (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_idx ON deposit_events (tenant_id, deposit_id)",
+  `CREATE UNIQUE INDEX IF NOT EXISTS deposit_events_idempotency_unique_idx ON deposit_events (
+    tenant_id,
+    deposit_id,
+    source,
+    external_status,
+    IFNULL(bank_tx_id, ''),
+    IFNULL(blockchain_tx_id, ''),
+    raw_payload
+  )`,
+];
+
+const CURRENT_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     order_id TEXT PRIMARY KEY NOT NULL,
@@ -88,8 +155,129 @@ const INITIAL_SCHEMA_STATEMENTS = [
   )`,
 ];
 
+const MIGRATION_0003_STATEMENTS = [
+  "DROP INDEX IF EXISTS deposit_events_idempotency_unique_idx",
+  "DROP INDEX IF EXISTS deposit_events_tenant_deposit_idx",
+  "DROP INDEX IF EXISTS deposit_events_deposit_id_idx",
+  "DROP INDEX IF EXISTS deposits_tenant_order_idx",
+  "DROP INDEX IF EXISTS deposits_tenant_id_idx",
+  "DROP INDEX IF EXISTS deposits_nonce_unique_idx",
+  "DROP INDEX IF EXISTS deposits_external_status_idx",
+  "DROP INDEX IF EXISTS deposits_order_id_idx",
+  `CREATE TABLE deposits_v2 (
+    deposit_entry_id TEXT PRIMARY KEY NOT NULL,
+    qr_id TEXT,
+    order_id TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    qr_copy_paste TEXT NOT NULL,
+    qr_image_url TEXT NOT NULL,
+    external_status TEXT NOT NULL DEFAULT 'pending',
+    expiration TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    tenant_id TEXT NOT NULL DEFAULT 'legacy',
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
+  )`,
+  `INSERT INTO deposits_v2 (
+    deposit_entry_id,
+    qr_id,
+    order_id,
+    nonce,
+    qr_copy_paste,
+    qr_image_url,
+    external_status,
+    expiration,
+    created_at,
+    updated_at,
+    tenant_id
+  )
+  SELECT
+    deposit_id,
+    deposit_id,
+    order_id,
+    nonce,
+    qr_copy_paste,
+    qr_image_url,
+    external_status,
+    expiration,
+    created_at,
+    updated_at,
+    tenant_id
+  FROM deposits`,
+  `CREATE TABLE deposit_events_v2 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    tenant_id TEXT NOT NULL DEFAULT 'legacy',
+    order_id TEXT NOT NULL,
+    deposit_entry_id TEXT NOT NULL,
+    qr_id TEXT,
+    source TEXT NOT NULL,
+    external_status TEXT NOT NULL,
+    bank_tx_id TEXT,
+    blockchain_tx_id TEXT,
+    raw_payload TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
+    FOREIGN KEY (deposit_entry_id) REFERENCES deposits_v2(deposit_entry_id) ON DELETE CASCADE
+  )`,
+  `INSERT INTO deposit_events_v2 (
+    id,
+    tenant_id,
+    order_id,
+    deposit_entry_id,
+    qr_id,
+    source,
+    external_status,
+    bank_tx_id,
+    blockchain_tx_id,
+    raw_payload,
+    received_at
+  )
+  SELECT
+    id,
+    tenant_id,
+    order_id,
+    deposit_id,
+    deposit_id,
+    source,
+    external_status,
+    bank_tx_id,
+    blockchain_tx_id,
+    raw_payload,
+    received_at
+  FROM deposit_events`,
+  "DROP TABLE deposit_events",
+  "DROP TABLE deposits",
+  "ALTER TABLE deposits_v2 RENAME TO deposits",
+  "ALTER TABLE deposit_events_v2 RENAME TO deposit_events",
+  "CREATE INDEX IF NOT EXISTS deposits_order_id_idx ON deposits (order_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_external_status_idx ON deposits (external_status)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_qr_id_unique_idx ON deposits (qr_id)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_id_idx ON deposits (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_order_id_idx ON deposit_events (order_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_deposit_entry_id_idx ON deposit_events (deposit_entry_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_qr_id_idx ON deposit_events (qr_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_source_idx ON deposit_events (source)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_id_idx ON deposit_events (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_entry_idx ON deposit_events (tenant_id, deposit_entry_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_qr_idx ON deposit_events (tenant_id, qr_id)",
+  `CREATE UNIQUE INDEX IF NOT EXISTS deposit_events_idempotency_unique_idx
+  ON deposit_events (
+    tenant_id,
+    deposit_entry_id,
+    IFNULL(qr_id, ''),
+    source,
+    external_status,
+    IFNULL(bank_tx_id, ''),
+    IFNULL(blockchain_tx_id, ''),
+    raw_payload
+  )`,
+];
+
 export function readInitialMigrationSql() {
-  return INITIAL_SCHEMA_STATEMENTS;
+  return CURRENT_SCHEMA_STATEMENTS;
 }
 
 export async function resetDatabaseSchema() {
@@ -98,6 +286,17 @@ export async function resetDatabaseSchema() {
     "DROP TABLE IF EXISTS deposits",
     "DROP TABLE IF EXISTS orders",
     ...readInitialMigrationSql(),
+  ];
+
+  await env.DB.batch(resetStatements.map((statement) => env.DB.prepare(statement)));
+}
+
+export async function resetLegacyDatabaseSchema() {
+  const resetStatements = [
+    "DROP TABLE IF EXISTS deposit_events",
+    "DROP TABLE IF EXISTS deposits",
+    "DROP TABLE IF EXISTS orders",
+    ...LEGACY_SCHEMA_STATEMENTS,
   ];
 
   await env.DB.batch(resetStatements.map((statement) => env.DB.prepare(statement)));
@@ -180,6 +379,74 @@ export async function assertPersistenceFlow() {
   expect(savedEvents[0]?.qrId).toBe("qr_test_001");
 }
 
+async function assertLegacyMigrationBackfill() {
+  await resetLegacyDatabaseSchema();
+
+  const legacyStatements = [
+    `INSERT INTO orders (
+      tenant_id,
+      order_id,
+      user_id,
+      channel,
+      product_type,
+      amount_in_cents,
+      current_step,
+      status
+    ) VALUES ('alpha', 'order_legacy_001', 'telegram_legacy_001', 'telegram', 'depix', 1000, 'awaiting_payment', 'pending')`,
+    `INSERT INTO deposits (
+      tenant_id,
+      deposit_id,
+      order_id,
+      nonce,
+      qr_copy_paste,
+      qr_image_url,
+      external_status,
+      expiration
+    ) VALUES (
+      'alpha',
+      'legacy_deposit_001',
+      'order_legacy_001',
+      'nonce_legacy_001',
+      'pix-copy-paste',
+      'https://example.com/qr/legacy.png',
+      'pending',
+      '2026-04-18T04:00:00Z'
+    )`,
+    `INSERT INTO deposit_events (
+      tenant_id,
+      order_id,
+      deposit_id,
+      source,
+      external_status,
+      raw_payload
+    ) VALUES (
+      'alpha',
+      'order_legacy_001',
+      'legacy_deposit_001',
+      'webhook',
+      'pending',
+      '{"status":"pending"}'
+    )`,
+  ];
+
+  await env.DB.batch(legacyStatements.map((statement) => env.DB.prepare(statement)));
+
+  await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+
+  const db = getDatabase(env);
+  const migratedDepositByEntryId = await getDepositByDepositEntryId(db, "alpha", "legacy_deposit_001");
+  const migratedDepositByQrId = await getDepositByQrId(db, "alpha", "legacy_deposit_001");
+  const migratedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "legacy_deposit_001");
+
+  expect(migratedDepositByEntryId?.depositEntryId).toBe("legacy_deposit_001");
+  expect(migratedDepositByEntryId?.qrId).toBe("legacy_deposit_001");
+  expect(migratedDepositByQrId?.depositEntryId).toBe("legacy_deposit_001");
+  expect(migratedEvents).toHaveLength(1);
+  expect(migratedEvents[0]?.depositEntryId).toBe("legacy_deposit_001");
+  expect(migratedEvents[0]?.qrId).toBe("legacy_deposit_001");
+}
+
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
+  it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
 });
