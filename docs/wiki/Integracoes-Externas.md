@@ -44,11 +44,14 @@ Estado atual:
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
-- o recheck por fallback ainda nao entrou no fluxo operacional real
+- o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
+- o fallback por janela via `deposits` continua como etapa separada
 
 ## Regra operacional central
 
 Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
+
+O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-status` para um `depositEntryId` especifico, registra o evento como `recheck_deposit_status` e aplica a verdade reconciliada sem atravessar tenants.
 
 Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
 

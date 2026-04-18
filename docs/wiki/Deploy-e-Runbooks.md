@@ -27,8 +27,16 @@
 - as fronteiras canonicas de rota ja existem
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
-- `POST /ops/:tenantId/recheck/deposit` ainda e placeholder
+- `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status` e reconcilia `deposits` + `orders`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
+
+## Recheck de deposito
+
+- payload minimo: `{ "depositEntryId": "..." }`
+- ancora local: `depositEntryId`
+- fonte de verdade remota: `deposit-status`
+- trilha local: evento `deposit_events.source = "recheck_deposit_status"`
+- efeito esperado: hidratar `qrId` quando necessario e aplicar o status reconciliado em `deposits` e `orders`
 
 ## Verificacao minima
 
