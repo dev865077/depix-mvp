@@ -33,7 +33,21 @@ const FORBIDDEN_RECOMMENDATIONS = ["Approve with minor follow-up", "Approve with
 const DIRECT_REVIEW_MAX_FILES = 3;
 const DIRECT_REVIEW_MAX_TOTAL_LINES = 120;
 const DIRECT_REVIEW_MAX_AREAS = 2;
+const DIRECT_REVIEW_MAX_WORKFLOW_FILES = 2;
+const DIRECT_REVIEW_MAX_WORKFLOW_LINES = 30;
 const DISCUSSION_CATEGORY_DEFAULT = "";
+
+const SENSITIVE_WORKFLOW_CHANGE_PATTERNS = [
+  /\bpermissions\s*:/i,
+  /\bpull_request_target\b/i,
+  /\bsecrets\./i,
+  /\bgithub_token\b/i,
+  /\bcontents\s*:\s*write\b/i,
+  /\bissues\s*:\s*write\b/i,
+  /\bpull-requests\s*:\s*write\b/i,
+  /\bdiscussions\s*:\s*write\b/i,
+  /\bid-token\s*:\s*write\b/i,
+];
 
 const REVIEW_SIGNAL_BY_CATEGORY = {
   docs: 0,
@@ -710,6 +724,55 @@ function classifyReviewFile(filename) {
 }
 
 /**
+ * Return only the added/removed patch lines, excluding diff file headers.
+ *
+ * @param {any} file GitHub file payload.
+ * @returns {string[]} Changed patch lines.
+ */
+function getChangedPatchLines(file) {
+  if (typeof file?.patch !== "string") {
+    return [];
+  }
+
+  return file.patch
+    .split("\n")
+    .filter((line) => (line.startsWith("+") && !line.startsWith("+++")) || (line.startsWith("-") && !line.startsWith("---")))
+    .map((line) => line.slice(1).trim());
+}
+
+/**
+ * Decide whether a tiny workflow-only change can stay in the direct lane.
+ *
+ * Tiny CI tuning, such as changing a model default or a harmless env var, should
+ * not create a heavyweight Discussion. Changes that expand permissions, touch
+ * secrets, or alter event trust boundaries still require the deeper lane.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @param {ReturnType<typeof summarizePullRequestScope>} summary Scope summary.
+ * @returns {boolean} True when direct review is enough.
+ */
+function isSmallNonSensitiveWorkflowChange(files, summary) {
+  if (
+    summary.categories.length !== 1 ||
+    summary.categories[0] !== "workflow" ||
+    summary.fileCount > DIRECT_REVIEW_MAX_WORKFLOW_FILES ||
+    summary.totalChangedLines > DIRECT_REVIEW_MAX_WORKFLOW_LINES
+  ) {
+    return false;
+  }
+
+  const changedLines = files.flatMap(getChangedPatchLines);
+
+  if (changedLines.length === 0) {
+    return false;
+  }
+
+  return !changedLines.some((line) =>
+    SENSITIVE_WORKFLOW_CHANGE_PATTERNS.some((pattern) => pattern.test(line)),
+  );
+}
+
+/**
  * Summarize the scope of the PR so the merge gate can stay deterministic.
  *
  * @param {any[]} files Changed files from GitHub.
@@ -779,6 +842,23 @@ export function assessDiscussionGate(files) {
       route: DISCUSSION_ROUTE_DIRECT,
       requiresDiscussion: false,
       reason: `Small low-risk PR limited to docs/tests (${summary.fileCount} files, ${summary.totalChangedLines} changed lines).`,
+      summary,
+    };
+
+    logOperationalEvent("ai_pr_review.gate_decision", {
+      route: decision.route,
+      requiresDiscussion: decision.requiresDiscussion,
+      reason: decision.reason,
+    });
+
+    return decision;
+  }
+
+  if (isSmallNonSensitiveWorkflowChange(files, summary)) {
+    const decision = {
+      route: DISCUSSION_ROUTE_DIRECT,
+      requiresDiscussion: false,
+      reason: `Small non-sensitive workflow PR (${summary.fileCount} files, ${summary.totalChangedLines} changed lines).`,
       summary,
     };
 

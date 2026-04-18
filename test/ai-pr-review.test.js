@@ -111,9 +111,38 @@ describe("ai pr review discussion gate", () => {
     expect(gate.reason).toContain("Meaningful PR scope");
   });
 
-  it("routes workflow-only changes into discussion even when tiny", () => {
+  it("keeps tiny non-sensitive workflow tuning in the direct lane", () => {
     const gate = assessDiscussionGate([
-      { filename: ".github/workflows/ai-pr-review.yml", additions: 1, deletions: 0 },
+      {
+        filename: ".github/workflows/ai-pr-review.yml",
+        additions: 1,
+        deletions: 0,
+        patch: [
+          "@@",
+          "         env:",
+          "           AI_PR_REVIEW_MODE: classify",
+          "+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_CLASSIFY_MODEL || 'gpt-5.4-nano' }}",
+        ].join("\n"),
+      },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+    expect(gate.route).toBe("direct_review");
+  });
+
+  it("routes sensitive workflow permission changes into discussion even when tiny", () => {
+    const gate = assessDiscussionGate([
+      {
+        filename: ".github/workflows/ai-pr-review.yml",
+        additions: 1,
+        deletions: 0,
+        patch: [
+          "@@",
+          "     permissions:",
+          "-      contents: read",
+          "+      contents: write",
+        ].join("\n"),
+      },
     ]);
 
     expect(gate.requiresDiscussion).toBe(true);

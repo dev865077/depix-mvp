@@ -42,7 +42,8 @@ Explicitar:
 ## AI PR review gate
 
 - PR pequena de baixo risco pode ficar no review direto quando muda apenas docs/testes, toca no maximo 3 arquivos, altera no maximo 120 linhas e cruza no maximo 2 areas de topo
-- PR que muda codigo de produto, workflow, configuracao, prompt operacional, script, integracao ou comportamento entra em Discussion antes do merge
+- PR pequena que ajusta somente workflow sem tocar permissoes, segredos, `GITHUB_TOKEN`, `pull_request_target` ou escopo de escrita tambem pode ficar no review direto
+- PR que muda codigo de produto, workflow sensivel, configuracao critica, prompt operacional, script, integracao ou comportamento entra em Discussion antes do merge
 - PR grande de docs/testes tambem entra em Discussion, porque tamanho por si so aumenta risco de revisao
 - a Discussion e um artefato de revisao: produto/escopo, tecnica/arquitetura, risco/operacao e sintese final
 - a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
