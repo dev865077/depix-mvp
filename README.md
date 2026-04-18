@@ -12,7 +12,7 @@
 - base multi-tenant ja existe no `main`
 - webhook real do Telegram, webhook real da Eulen e recheck operacional ainda estao em fase posterior
 - `XState` ja esta travado na arquitetura, mas ainda nao entrou no codigo do `main`
-- `production` usa `Cloudflare Secrets Store` para os segredos por tenant; `local` continua em `.dev.vars`
+- `test` e `production` usam `Cloudflare Secrets Store` para os segredos por tenant; `local` continua em `.dev.vars`
 
 ## Comece por aqui
 

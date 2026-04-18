@@ -1,6 +1,6 @@
 // Configuracao principal do Cloudflare Worker.
 // O arquivo diferencia local, teste e producao sem colocar segredos em codigo.
-// Em production, os segredos por tenant entram via Cloudflare Secrets Store.
+// Em test e production, os segredos por tenant entram via Cloudflare Secrets Store.
 // Cada tenant precisa declarar splitConfig completo porque split e obrigatorio no MVP.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
@@ -31,7 +31,50 @@
         {
           "binding": "DB",
           "database_name": "depix-mvp-test",
+          "database_id": "44412622-181f-4eee-b610-4ef20d2387c3",
           "migrations_dir": "migrations"
+        }
+      ],
+      "secrets_store_secrets": [
+        {
+          "binding": "ALPHA_TELEGRAM_BOT_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-telegram-bot-token"
+        },
+        {
+          "binding": "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-telegram-webhook-secret"
+        },
+        {
+          "binding": "ALPHA_EULEN_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-eulen-api-token"
+        },
+        {
+          "binding": "ALPHA_EULEN_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-eulen-webhook-secret"
+        },
+        {
+          "binding": "BETA_TELEGRAM_BOT_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-telegram-bot-token"
+        },
+        {
+          "binding": "BETA_TELEGRAM_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-telegram-webhook-secret"
+        },
+        {
+          "binding": "BETA_EULEN_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-eulen-api-token"
+        },
+        {
+          "binding": "BETA_EULEN_WEBHOOK_SECRET",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-eulen-webhook-secret"
         }
       ],
       "vars": {
