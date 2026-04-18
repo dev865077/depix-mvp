@@ -420,7 +420,7 @@ describe("deposit recheck route", () => {
     expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
   });
 
-  it("keeps the worker up and leaves the route disabled when the feature flag value is unknown", async function assertUnknownFeatureFlagIsSafe() {
+  it("keeps the worker up and returns an explicit disabled error when the feature flag value is unknown", async function assertUnknownFeatureFlagIsSafe() {
     await seedDepositAggregate();
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -434,8 +434,9 @@ describe("deposit recheck route", () => {
     const body = await response.json();
 
     expect(response.status).toBe(503);
-    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.code).toBe("ops_route_disabled_invalid_flag");
     expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
+    expect(body.error.details.rawValue).toBe("maybe");
     expect(consoleSpy.mock.calls.some(([entry]) => (
       typeof entry === "string"
       && entry.includes("\"message\":\"config.invalid_boolean_flag\"")
@@ -804,6 +805,8 @@ describe("deposit recheck route", () => {
 
     expect(response.status).toBe(500);
     expect(body.error.code).toBe("deposit_recheck_persistence_incomplete");
+    expect(body.error.details.mayHaveCommitted).toBe(true);
+    expect(body.error.details.safeToRetry).toBe(true);
     expect(currentDeposit?.externalStatus).toBe("pending");
     expect(currentOrder?.status).toBe("pending");
     expect(currentOrder?.currentStep).toBe("awaiting_payment");

@@ -76,6 +76,7 @@
 - `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: parar retries cegos, anexar `requestId` e investigar correlacao local versus resposta remota
 - `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: considerar falha transitoria ou upstream inconsistente; retry manual controlado e permitido
+- `500 deposit_recheck_persistence_incomplete`: assumir que o batch pode ter sido persistido, anexar `requestId`, `tenantId`, `depositEntryId` e `orderId`, inspecionar o historico do deposito e repetir no maximo um retry controlado; o caminho continua idempotente por `depositEntryId` + payload do evento
 - `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK` e binding do token antes de tratar como incidente de negocio
 
 ## Rollout e rollback

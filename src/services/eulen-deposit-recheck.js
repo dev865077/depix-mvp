@@ -360,6 +360,9 @@ async function persistDepositRecheckAtomically(db, tenantId, depositEntryId, ord
       {
         depositEntryId,
         orderId,
+        mayHaveCommitted: true,
+        safeToRetry: true,
+        source: RECHECK_DEPOSIT_STATUS_SOURCE,
       },
     );
   }
@@ -421,6 +424,9 @@ async function persistAggregateRepairAtomically(db, tenantId, depositEntryId, or
       {
         depositEntryId,
         orderId,
+        mayHaveCommitted: true,
+        safeToRetry: true,
+        source: RECHECK_DEPOSIT_STATUS_SOURCE,
       },
     );
   }

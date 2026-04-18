@@ -56,6 +56,9 @@ async function readExpectedOpsBearerToken(env, tenant) {
   const tenantScopedBindingName = tenant?.opsBindings?.depositRecheckBearerToken;
 
   if (tenantScopedBindingName) {
+    // A declaracao no registry e autoritativa: se o tenant apontou para um
+    // binding proprio e ele estiver ausente ou vazio no ambiente, o read abaixo
+    // falha fechado e nenhuma queda para o token global e permitida.
     return {
       bindingName: tenantScopedBindingName,
       authScope: "tenant",
@@ -117,7 +120,19 @@ export function constantTimeStringEquals(left, right) {
  *
  * @param {{
  *   env: Record<string, unknown>,
- *   runtimeConfig: { environment: string, operations?: { depositRecheck?: { enabled?: boolean } } },
+ *   runtimeConfig: {
+ *     environment: string,
+ *     operations?: {
+ *       depositRecheck?: {
+ *         enabled?: boolean,
+ *         featureFlag?: {
+ *           configured?: boolean,
+ *           recognized?: boolean,
+ *           rawValue?: string | null
+ *         }
+ *       }
+ *     }
+ *   },
  *   authorizationHeader?: string,
  *   requestId?: string,
  *   tenant?: { tenantId: string, opsBindings?: { depositRecheckBearerToken?: string } },
@@ -127,6 +142,22 @@ export function constantTimeStringEquals(left, right) {
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
  */
 export async function authorizeOpsRoute(input) {
+  const depositRecheckFeatureFlag = input.runtimeConfig.operations?.depositRecheck?.featureFlag;
+
+  if (depositRecheckFeatureFlag?.configured && !depositRecheckFeatureFlag.recognized) {
+    throw new OpsRouteAuthorizationError(
+      503,
+      "ops_route_disabled_invalid_flag",
+      "Operational route is disabled because ENABLE_OPS_DEPOSIT_RECHECK has an invalid value.",
+      {
+        bindingName: ENABLE_OPS_DEPOSIT_RECHECK_BINDING,
+        environment: input.runtimeConfig.environment,
+        tenantId: input.tenantId,
+        rawValue: depositRecheckFeatureFlag.rawValue ?? null,
+      },
+    );
+  }
+
   if (!input.runtimeConfig.operations?.depositRecheck?.enabled) {
     throw new OpsRouteAuthorizationError(
       503,
