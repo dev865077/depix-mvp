@@ -13,6 +13,11 @@ const REQUIRED_TENANT_SECRET_BINDINGS = [
   "eulenWebhookSecret",
 ];
 
+const REQUIRED_TENANT_SPLIT_CONFIG_FIELDS = [
+  "depixSplitAddress",
+  "splitFee",
+];
+
 /**
  * Valida um campo textual dentro do TENANT_REGISTRY.
  *
@@ -29,6 +34,30 @@ function assertTenantString(value, field) {
 }
 
 /**
+ * Normaliza a configuracao obrigatoria de split por tenant.
+ *
+ * @param {string} tenantId Chave do tenant no registro.
+ * @param {Record<string, unknown>} input Conteudo bruto do split.
+ * @returns {{ depixSplitAddress: string, splitFee: string }} Split validado.
+ */
+function normalizeTenantSplitConfig(tenantId, input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`Missing splitConfig for tenant: ${tenantId}`);
+  }
+
+  const normalizedSplitConfig = {};
+
+  for (const field of REQUIRED_TENANT_SPLIT_CONFIG_FIELDS) {
+    normalizedSplitConfig[field] = assertTenantString(
+      input[field],
+      `TENANT_REGISTRY.${tenantId}.splitConfig.${field}`,
+    );
+  }
+
+  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (normalizedSplitConfig);
+}
+
+/**
  * Normaliza uma entrada bruta do registro de tenants.
  *
  * Este passo garante que cada tenant tenha:
@@ -36,6 +65,7 @@ function assertTenantString(value, field) {
  * - nome de exibicao
  * - parceiro Eulen opcional
  * - nomes dos bindings secretos obrigatorios
+ * - configuracao obrigatoria de split para cobranca
  *
  * @param {string} tenantId Chave do tenant no registro.
  * @param {Record<string, unknown>} input Conteudo bruto da entrada.
@@ -43,6 +73,10 @@ function assertTenantString(value, field) {
  *   tenantId: string,
  *   displayName: string,
  *   eulenPartnerId?: string,
+ *   splitConfig: {
+ *     depixSplitAddress: string,
+ *     splitFee: string
+ *   },
  *   secretBindings: Record<string, string>
  * }} Tenant validado.
  */
@@ -72,6 +106,7 @@ function normalizeTenantConfig(tenantId, input) {
     eulenPartnerId: typeof input.eulenPartnerId === "string" && input.eulenPartnerId.trim().length > 0
       ? input.eulenPartnerId.trim()
       : undefined,
+    splitConfig: normalizeTenantSplitConfig(tenantId, input.splitConfig),
     secretBindings: normalizedSecretBindings,
   };
 }
