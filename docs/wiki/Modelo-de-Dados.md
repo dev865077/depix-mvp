@@ -57,6 +57,12 @@ Atualizacoes vindas da maquina de pedidos devem usar `tenant_id`, `order_id` e
 o pedido, a segunda escrita nao altera a linha e a aplicacao pode observar o
 conflito.
 
+O helper `updateOrderByIdWithStepGuard()` separa explicitamente:
+
+- `reason: "updated"` quando a transicao foi gravada
+- `reason: "step_conflict"` quando o pedido existe, mas ja saiu do passo esperado
+- `reason: "not_found"` quando o pedido nao existe
+
 ## Diferenca importante
 
 O modelo canonico do projeto distingue dois IDs externos:

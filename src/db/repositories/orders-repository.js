@@ -190,7 +190,13 @@ export async function updateOrderById(db, tenantId, orderId, patch) {
  * @param {string} orderId Identificador do pedido.
  * @param {string} expectedCurrentStep Passo que a camada leu antes da transicao.
  * @param {Record<string, unknown>} patch Campos permitidos para update.
- * @returns {Promise<{order: Record<string, unknown> | null, didUpdate: boolean, conflict: boolean}>}
+ * @returns {Promise<{
+ *   order: Record<string, unknown> | null,
+ *   didUpdate: boolean,
+ *   conflict: boolean,
+ *   notFound: boolean,
+ *   reason: "updated" | "empty_patch" | "step_conflict" | "not_found"
+ * }>}
  */
 export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expectedCurrentStep, patch) {
   const patchEntries = getAllowedPatchEntries(
@@ -206,6 +212,8 @@ export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expect
       order: await getOrderById(db, tenantId, orderId),
       didUpdate: false,
       conflict: false,
+      notFound: false,
+      reason: "empty_patch",
     };
   }
 
@@ -228,6 +236,8 @@ export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expect
       order: updatedOrder,
       didUpdate: true,
       conflict: false,
+      notFound: false,
+      reason: "updated",
     };
   }
 
@@ -240,5 +250,7 @@ export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expect
     order: currentOrder ?? null,
     didUpdate: false,
     conflict: currentOrder !== null,
+    notFound: currentOrder === null,
+    reason: currentOrder ? "step_conflict" : "not_found",
   };
 }

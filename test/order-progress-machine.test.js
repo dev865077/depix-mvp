@@ -13,6 +13,7 @@ import {
   OrderProgressionError,
   advanceOrderProgression,
   createInitialOrderProgression,
+  normalizePersistedOrderProgressStep,
 } from "../src/order-flow/order-progress-machine.js";
 
 const BASE_CONTEXT = {
@@ -176,6 +177,17 @@ describe("order progress machine", () => {
         type: ORDER_PROGRESS_EVENTS.PAYMENT_CONFIRMED,
       }),
     ).toThrow(/Cannot apply/);
+  });
+
+  it("normalizes known legacy steps while keeping persistence guard on the stored value", () => {
+    const result = advance("awaiting_wallet", {
+      type: ORDER_PROGRESS_EVENTS.WALLET_RECEIVED,
+      walletAddress: "lq1qqexample",
+    });
+
+    expect(normalizePersistedOrderProgressStep("awaiting_wallet")).toBe(ORDER_PROGRESS_STATES.WALLET);
+    expect(result.currentStep).toBe(ORDER_PROGRESS_STATES.CONFIRMATION);
+    expect(result.persistenceGuard.expectedCurrentStep).toBe("awaiting_wallet");
   });
 
   it("supports explicit cancellation and failure terminal states", () => {

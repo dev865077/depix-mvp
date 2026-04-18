@@ -39,6 +39,7 @@ Estados atuais da progressao inicial:
 7. `completed`
 8. `failed`
 9. `canceled`
+10. `manual_review`
 
 `orders.current_step` guarda o estado da maquina. `orders.status` guarda o
 status operacional derivado do estado.
@@ -87,6 +88,13 @@ por migracao ou tratado explicitamente antes de chamar `advanceOrderProgression(
 
 Estados operacionais vindos do webhook da Eulen, como revisao manual, continuam
 sob responsabilidade do service de webhook ate a integracao completa do fluxo.
+O estado `manual_review` existe na maquina como terminal de compatibilidade para
+nao quebrar registros ja marcados para intervencao.
+
+Aliases legados conhecidos sao normalizados em codigo por
+`normalizePersistedOrderProgressStep()`, mantendo o valor persistido original em
+`persistenceGuard.expectedCurrentStep` para que a escrita condicional continue
+protegida contra corrida.
 
 Para Durable Objects, a regra muda apenas se houver necessidade real de
 coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente

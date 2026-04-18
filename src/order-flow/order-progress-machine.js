@@ -22,6 +22,7 @@ export const ORDER_PROGRESS_STATES = Object.freeze({
   COMPLETED: "completed",
   FAILED: "failed",
   CANCELED: "canceled",
+  MANUAL_REVIEW: "manual_review",
 });
 
 export const ORDER_PROGRESS_EVENTS = Object.freeze({
@@ -45,6 +46,19 @@ export const ORDER_STATUS_BY_STEP = Object.freeze({
   [ORDER_PROGRESS_STATES.COMPLETED]: "paid",
   [ORDER_PROGRESS_STATES.FAILED]: "failed",
   [ORDER_PROGRESS_STATES.CANCELED]: "canceled",
+  [ORDER_PROGRESS_STATES.MANUAL_REVIEW]: "under_review",
+});
+
+export const ORDER_PROGRESS_LEGACY_STEP_ALIASES = Object.freeze({
+  awaiting_amount: ORDER_PROGRESS_STATES.AMOUNT,
+  collecting_amount: ORDER_PROGRESS_STATES.AMOUNT,
+  awaiting_wallet: ORDER_PROGRESS_STATES.WALLET,
+  collecting_wallet: ORDER_PROGRESS_STATES.WALLET,
+  review: ORDER_PROGRESS_STATES.CONFIRMATION,
+  awaiting_confirmation: ORDER_PROGRESS_STATES.CONFIRMATION,
+  deposit_creation: ORDER_PROGRESS_STATES.CREATING_DEPOSIT,
+  pending_payment: ORDER_PROGRESS_STATES.AWAITING_PAYMENT,
+  paid: ORDER_PROGRESS_STATES.COMPLETED,
 });
 
 const KNOWN_STATES = new Set(Object.values(ORDER_PROGRESS_STATES));
@@ -101,10 +115,18 @@ function requireOrderBoundaryContext(context, event) {
   }
 }
 
+export function normalizePersistedOrderProgressStep(currentStep) {
+  return ORDER_PROGRESS_LEGACY_STEP_ALIASES[currentStep] ?? currentStep;
+}
+
 function requireKnownState(currentStep) {
-  if (!KNOWN_STATES.has(currentStep)) {
+  const normalizedStep = normalizePersistedOrderProgressStep(currentStep);
+
+  if (!KNOWN_STATES.has(normalizedStep)) {
     throw new OrderProgressionError("unknown_order_step", `Unknown order step: ${currentStep}.`, { currentStep });
   }
+
+  return normalizedStep;
 }
 
 function requireKnownEvent(event) {
@@ -208,6 +230,9 @@ export const orderProgressMachine = createMachine({
     [ORDER_PROGRESS_STATES.CANCELED]: {
       type: "final",
     },
+    [ORDER_PROGRESS_STATES.MANUAL_REVIEW]: {
+      type: "final",
+    },
   },
 });
 
@@ -273,21 +298,22 @@ export function createInitialOrderProgression(context = {}) {
  * eventos de dominio antes de chamar esta funcao.
  */
 export function advanceOrderProgression({ currentStep = ORDER_PROGRESS_STATES.DRAFT, context = {}, event }) {
-  requireKnownState(currentStep);
+  const machineStep = requireKnownState(currentStep);
   requireKnownEvent(event);
 
   const normalizedContext = normalizeOrderContext(context);
   requireOrderBoundaryContext(normalizedContext, event);
 
-  const currentSnapshot = createPersistedSnapshot(currentStep, normalizedContext);
+  const currentSnapshot = createPersistedSnapshot(machineStep, normalizedContext);
   const nextSnapshot = getNextSnapshot(orderProgressMachine, currentSnapshot, event);
 
   if (nextSnapshot === currentSnapshot) {
     throw new OrderProgressionError(
       "invalid_order_transition",
-      `Cannot apply ${event.type} while order is in ${currentStep}.`,
+      `Cannot apply ${event.type} while order is in ${machineStep}.`,
       {
         currentStep,
+        machineStep,
         eventType: event.type,
       },
     );

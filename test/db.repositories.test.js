@@ -493,14 +493,27 @@ async function assertGuardedOrderTransitionWrite() {
     currentStep: ORDER_PROGRESS_STATES.CONFIRMATION,
     status: "draft",
   });
+  const missingWrite = await updateOrderByIdWithStepGuard(db, tenantId, "missing_order", ORDER_PROGRESS_STATES.AMOUNT, {
+    currentStep: ORDER_PROGRESS_STATES.WALLET,
+    status: "draft",
+  });
 
   expect(updated.didUpdate).toBe(true);
   expect(updated.conflict).toBe(false);
+  expect(updated.notFound).toBe(false);
+  expect(updated.reason).toBe("updated");
   expect(updated.order?.currentStep).toBe(ORDER_PROGRESS_STATES.WALLET);
   expect(updated.order?.amountInCents).toBe(15000);
   expect(staleWrite.didUpdate).toBe(false);
   expect(staleWrite.conflict).toBe(true);
+  expect(staleWrite.notFound).toBe(false);
+  expect(staleWrite.reason).toBe("step_conflict");
   expect(staleWrite.order?.currentStep).toBe(ORDER_PROGRESS_STATES.WALLET);
+  expect(missingWrite.didUpdate).toBe(false);
+  expect(missingWrite.conflict).toBe(false);
+  expect(missingWrite.notFound).toBe(true);
+  expect(missingWrite.reason).toBe("not_found");
+  expect(missingWrite.order).toBeNull();
 }
 
 describe("database repositories", () => {
