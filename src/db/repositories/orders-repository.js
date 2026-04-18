@@ -10,8 +10,7 @@ import { getAllowedPatchEntries } from "../client.js";
 // Select base reaproveitado pelos readers do repositorio.
 // Mantemos aliases em camelCase para devolver objetos prontos para o restante
 // da aplicacao, sem espalhar nomes snake_case fora da borda SQL.
-const ORDER_SELECT_SQL = `
-  SELECT
+const ORDER_COLUMNS_SQL = `
     tenant_id AS tenantId,
     order_id AS orderId,
     user_id AS userId,
@@ -25,6 +24,11 @@ const ORDER_SELECT_SQL = `
     split_fee AS splitFee,
     created_at AS createdAt,
     updated_at AS updatedAt
+`;
+
+const ORDER_SELECT_SQL = `
+  SELECT
+    ${ORDER_COLUMNS_SQL}
   FROM orders
 `;
 
@@ -170,4 +174,83 @@ export async function updateOrderById(db, tenantId, orderId, patch) {
   const [, selectResult] = await db.batch([updateStatement, selectStatement]);
 
   return selectResult.results[0];
+}
+
+/**
+ * Atualiza um pedido somente se ele ainda estiver no passo esperado.
+ *
+ * Esta e a operacao recomendada para aplicar saidas da maquina XState. O
+ * `expectedCurrentStep` funciona como compare-and-set simples no D1: se outro
+ * request ja tiver avancado o pedido, o `UPDATE` nao toca em nenhuma linha e a
+ * camada de servico recebe `conflict: true` para observar/reagir sem sobrescrever
+ * o estado mais novo.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} orderId Identificador do pedido.
+ * @param {string} expectedCurrentStep Passo que a camada leu antes da transicao.
+ * @param {Record<string, unknown>} patch Campos permitidos para update.
+ * @returns {Promise<{
+ *   order: Record<string, unknown> | null,
+ *   didUpdate: boolean,
+ *   conflict: boolean,
+ *   notFound: boolean,
+ *   reason: "updated" | "empty_patch" | "step_conflict" | "not_found"
+ * }>}
+ */
+export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expectedCurrentStep, patch) {
+  const patchEntries = getAllowedPatchEntries(
+    {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    },
+    ORDER_UPDATE_COLUMNS,
+  );
+
+  if (patchEntries.length === 0) {
+    return {
+      order: await getOrderById(db, tenantId, orderId),
+      didUpdate: false,
+      conflict: false,
+      notFound: false,
+      reason: "empty_patch",
+    };
+  }
+
+  // A guarda de current_step transforma a escrita em uma transicao condicional.
+  // Isso protege contra retries, webhooks duplicados e requests concorrentes.
+  const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
+  const values = patchEntries.map(([, value]) => value);
+  const updatedOrder = await db
+    .prepare(
+      `UPDATE orders
+       SET ${setClause}
+       WHERE tenant_id = ? AND order_id = ? AND current_step = ?
+       RETURNING ${ORDER_COLUMNS_SQL}`,
+    )
+    .bind(...values, tenantId, orderId, expectedCurrentStep)
+    .first();
+
+  if (updatedOrder) {
+    return {
+      order: updatedOrder,
+      didUpdate: true,
+      conflict: false,
+      notFound: false,
+      reason: "updated",
+    };
+  }
+
+  const currentOrder = await db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(
+    tenantId,
+    orderId,
+  ).first();
+
+  return {
+    order: currentOrder ?? null,
+    didUpdate: false,
+    conflict: currentOrder !== null,
+    notFound: currentOrder === null,
+    reason: currentOrder ? "step_conflict" : "not_found",
+  };
 }

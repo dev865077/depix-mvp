@@ -42,6 +42,7 @@ Esta proposta se apoia em quatro referencias principais:
 - [Arquitetura-Geral.md](./Arquitetura-Geral.md)
 - [Tenancy-e-Roteamento.md](./Tenancy-e-Roteamento.md)
 - [Modelo-de-Dados.md](./Modelo-de-Dados.md)
+- [XState-e-Fluxo-de-Pedidos.md](./XState-e-Fluxo-de-Pedidos.md)
 - [Integracoes-Externas.md](./Integracoes-Externas.md)
 - [Estrutura-do-Repositorio.md](./Estrutura-do-Repositorio.md)
 - [Contribuicao-e-PRs.md](./Contribuicao-e-PRs.md)

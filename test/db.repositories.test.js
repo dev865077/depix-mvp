@@ -12,7 +12,13 @@ import {
   getDepositByQrId,
   updateDepositByDepositEntryId,
 } from "../src/db/repositories/deposits-repository.js";
-import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
+import {
+  createOrder,
+  getOrderById,
+  updateOrderById,
+  updateOrderByIdWithStepGuard,
+} from "../src/db/repositories/orders-repository.js";
+import { ORDER_PROGRESS_EVENTS, ORDER_PROGRESS_STATES, advanceOrderProgression } from "../src/order-flow/order-progress-machine.js";
 
 const LEGACY_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS orders (
@@ -446,7 +452,72 @@ async function assertLegacyMigrationBackfill() {
   expect(migratedEvents[0]?.qrId).toBe("legacy_deposit_001");
 }
 
+async function assertGuardedOrderTransitionWrite() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+  const tenantId = "alpha";
+  const orderId = "order_guarded_001";
+
+  await createOrder(db, {
+    tenantId,
+    orderId,
+    userId: "telegram_user_guarded_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: ORDER_PROGRESS_STATES.AMOUNT,
+    status: "draft",
+  });
+
+  const transition = advanceOrderProgression({
+    currentStep: ORDER_PROGRESS_STATES.AMOUNT,
+    context: {
+      tenantId,
+      orderId,
+      userId: "telegram_user_guarded_001",
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.AMOUNT_RECEIVED,
+      amountInCents: 15000,
+    },
+  });
+
+  const updated = await updateOrderByIdWithStepGuard(
+    db,
+    transition.persistenceGuard.tenantId,
+    transition.persistenceGuard.orderId,
+    transition.persistenceGuard.expectedCurrentStep,
+    transition.orderPatch,
+  );
+  const staleWrite = await updateOrderByIdWithStepGuard(db, tenantId, orderId, ORDER_PROGRESS_STATES.AMOUNT, {
+    currentStep: ORDER_PROGRESS_STATES.CONFIRMATION,
+    status: "draft",
+  });
+  const missingWrite = await updateOrderByIdWithStepGuard(db, tenantId, "missing_order", ORDER_PROGRESS_STATES.AMOUNT, {
+    currentStep: ORDER_PROGRESS_STATES.WALLET,
+    status: "draft",
+  });
+
+  expect(updated.didUpdate).toBe(true);
+  expect(updated.conflict).toBe(false);
+  expect(updated.notFound).toBe(false);
+  expect(updated.reason).toBe("updated");
+  expect(updated.order?.currentStep).toBe(ORDER_PROGRESS_STATES.WALLET);
+  expect(updated.order?.amountInCents).toBe(15000);
+  expect(staleWrite.didUpdate).toBe(false);
+  expect(staleWrite.conflict).toBe(true);
+  expect(staleWrite.notFound).toBe(false);
+  expect(staleWrite.reason).toBe("step_conflict");
+  expect(staleWrite.order?.currentStep).toBe(ORDER_PROGRESS_STATES.WALLET);
+  expect(missingWrite.didUpdate).toBe(false);
+  expect(missingWrite.conflict).toBe(false);
+  expect(missingWrite.notFound).toBe(true);
+  expect(missingWrite.reason).toBe("not_found");
+  expect(missingWrite.order).toBeNull();
+}
+
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
+  it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
 });

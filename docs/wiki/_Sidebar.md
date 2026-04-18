@@ -14,6 +14,7 @@
 - [Arquitetura Geral](Arquitetura-Geral)
 - [Tenancy e Roteamento](Tenancy-e-Roteamento)
 - [Modelo de Dados](Modelo-de-Dados)
+- [XState e Fluxo de Pedidos](XState-e-Fluxo-de-Pedidos)
 - [Integracoes Externas](Integracoes-Externas)
 
 ## Engenharia
