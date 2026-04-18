@@ -188,17 +188,19 @@ describe("ai pr review discussion gate", () => {
   it("keeps small review automation policy changes in the direct lane", () => {
     const gate = assessDiscussionGate([
       {
-        filename: ".github/workflows/ai-pr-review.yml",
-        additions: 1,
+        filename: ".github/prompts/ai-pr-discussion-product.md",
+        additions: 6,
         deletions: 0,
         patch: [
           "@@",
-          "+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_CLASSIFY_MODEL || 'gpt-5.4-nano' }}",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
         ].join("\n"),
       },
       {
         filename: "scripts/ai-pr-review.mjs",
-        additions: 230,
+        additions: 240,
         deletions: 0,
         patch: [
           "@@",
@@ -209,7 +211,7 @@ describe("ai pr review discussion gate", () => {
       },
       {
         filename: "test/ai-pr-review.test.js",
-        additions: 24,
+        additions: 28,
         deletions: 0,
         patch: [
           "@@",
@@ -219,13 +221,58 @@ describe("ai pr review discussion gate", () => {
         ].join("\n"),
       },
       {
-        filename: "docs/wiki/Contribuicao-e-PRs.md",
-        additions: 4,
-        deletions: 2,
+        filename: ".github/prompts/ai-pr-discussion-technical.md",
+        additions: 6,
+        deletions: 0,
         patch: [
           "@@",
-          "+- PR pequena de automacao de review pode ficar direta quando nao toca `GITHUB_TOKEN` no codigo executavel.",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
         ].join("\n"),
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-risk.md",
+        additions: 6,
+        deletions: 0,
+        patch: [
+          "@@",
+          "+- In `## Recommendation`, say exactly one of:",
+          "+  - `Approve`",
+          "+  - `Request changes`",
+        ].join("\n"),
+      },
+    ]);
+
+    expect(gate.requiresDiscussion).toBe(false);
+    expect(gate.route).toBe("direct_review");
+  });
+
+  it("keeps small review automation prompt-only tuning in the direct lane", () => {
+    const gate = assessDiscussionGate([
+      {
+        filename: ".github/prompts/ai-pr-discussion-product.md",
+        additions: 4,
+        deletions: 1,
+        patch: "@@\n+- Keep output very short.",
+      },
+      {
+        filename: ".github/prompts/ai-pr-discussion-synthesis.md",
+        additions: 4,
+        deletions: 1,
+        patch: "@@\n+- Keep output very short.",
+      },
+      {
+        filename: "scripts/ai-pr-review.mjs",
+        additions: 14,
+        deletions: 3,
+        patch: "@@\n+const allowedPromptPath = true;",
+      },
+      {
+        filename: "test/ai-pr-review.test.js",
+        additions: 12,
+        deletions: 0,
+        patch: "@@\n+expect(gate.route).toBe(\"direct_review\");",
       },
     ]);
 

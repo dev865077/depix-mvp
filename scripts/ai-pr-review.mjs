@@ -805,6 +805,11 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
 
   const allowedPaths = new Set([
     ".github/workflows/ai-pr-review.yml",
+    ".github/prompts/ai-pr-discussion-product.md",
+    ".github/prompts/ai-pr-discussion-technical.md",
+    ".github/prompts/ai-pr-discussion-risk.md",
+    ".github/prompts/ai-pr-discussion-synthesis.md",
+    ".github/prompts/ai-pr-review-doctrine.md",
     "scripts/ai-pr-review.mjs",
     "test/ai-pr-review.test.js",
     "docs/wiki/contribuicao-e-prs.md",
