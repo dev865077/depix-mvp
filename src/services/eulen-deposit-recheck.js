@@ -11,18 +11,32 @@
  * O objetivo aqui e complementar o webhook principal, nao substitui-lo.
  */
 import { EulenApiError, getEulenDepositStatus, resolveEulenAsyncResponse } from "../clients/eulen-client.js";
-import { createDepositEvent, listDepositEventsByDepositEntryId } from "../db/repositories/deposit-events-repository.js";
-import { getDepositByDepositEntryId, getDepositByQrId, updateDepositByDepositEntryId } from "../db/repositories/deposits-repository.js";
-import { getOrderById } from "../db/repositories/orders-repository.js";
+import {
+  buildCreateDepositEventStatement,
+  listDepositEventsByDepositEntryId,
+} from "../db/repositories/deposit-events-repository.js";
+import {
+  buildSelectDepositByDepositEntryIdStatement,
+  buildUpdateDepositByDepositEntryIdStatement,
+  getDepositByDepositEntryId,
+  getDepositByQrId,
+} from "../db/repositories/deposits-repository.js";
+import {
+  buildSelectOrderByIdStatement,
+  buildUpdateOrderByIdStatement,
+  getOrderById,
+} from "../db/repositories/orders-repository.js";
 import { log } from "../lib/logger.js";
 import {
-  applyWebhookTruthToAggregate,
   DepositCorrelationError,
   isLikelyUniqueConstraintError,
+  mapOrderPatchFromExternalStatus,
   normalizeEulenDepositStatusPayload,
+  reconcileOrderPatch,
 } from "./eulen-deposit-webhook.js";
 
 const RECHECK_DEPOSIT_STATUS_SOURCE = "recheck_deposit_status";
+const NON_REGRESSIVE_COMPLETED_REMOTE_STATUSES = new Set(["depix_sent", "expired", "canceled"]);
 
 /**
  * Erro controlado do service de recheck.
@@ -135,35 +149,84 @@ function findDuplicateRecheckEvent(savedEvents, incomingEvent) {
 /**
  * Decide se o agregado local ainda diverge da verdade remota.
  *
- * @param {Record<string, unknown>} deposit Deposito atual.
- * @param {Record<string, unknown>} order Pedido atual.
- * @param {{ qrId?: string, status?: string, expiration?: string }} remoteStatus Verdade remota reduzida.
+ * @param {Record<string, unknown>} depositPatch Patch calculado para o deposito.
+ * @param {Record<string, unknown>} orderPatch Patch calculado para o pedido.
  * @returns {boolean} Verdadeiro quando ainda ha algo para reparar.
  */
-function shouldRepairAggregateFromRemoteStatus(deposit, order, remoteStatus) {
+function shouldRepairAggregateFromRemoteStatus(depositPatch, orderPatch) {
+  return Object.keys(depositPatch).length > 0 || Object.keys(orderPatch).length > 0;
+}
+
+/**
+ * Decide se o agregado local ja representa um estado terminal concluido.
+ *
+ * O risco operacional principal do recheck e aceitar um `deposit-status`
+ * regressivo e sobrescrever um agregado ja concluido localmente. Mantemos a
+ * regra explicita aqui para que o service e a documentacao falem a mesma
+ * lingua.
+ *
+ * @param {Record<string, unknown>} deposit Deposito atual.
+ * @param {Record<string, unknown>} order Pedido atual.
+ * @returns {boolean} Verdadeiro quando o agregado local ja esta concluido.
+ */
+function isCompletedLocalAggregate(deposit, order) {
   return (
-    (remoteStatus.status && deposit.externalStatus !== remoteStatus.status)
-    || (remoteStatus.qrId && deposit.qrId !== remoteStatus.qrId)
-    || (remoteStatus.expiration && deposit.expiration !== remoteStatus.expiration)
-    || (
-      remoteStatus.status === "depix_sent"
-      && (order.status !== "paid" || order.currentStep !== "completed")
-    )
+    deposit.externalStatus === "depix_sent"
+    || order.status === "paid"
+    || order.currentStep === "completed"
   );
 }
 
 /**
- * Hidrata `qrId` e metadados de deposito sem sobrescrever outro agregado.
+ * Resolve o status remoto que pode ser aplicado sem regredir o agregado local.
+ *
+ * Politica operacional atual:
+ * - `depix_sent` e o sinal remoto de liquidacao concluida
+ * - uma vez que o agregado local esteja concluido, o recheck nao aceita um
+ *   status remoto nao terminal inferior como fonte de verdade
+ *
+ * Isso evita que um `deposit-status` atrasado devolva `pending` e desfaça um
+ * pedido que ja foi liquidado por webhook ou recheck anterior.
+ *
+ * @param {Record<string, unknown>} deposit Deposito atual.
+ * @param {Record<string, unknown>} order Pedido atual.
+ * @param {string} remoteExternalStatus Status remoto retornado pela Eulen.
+ * @returns {string} Status remoto autorizado para aplicacao.
+ */
+function resolveRecheckExternalStatus(deposit, order, remoteExternalStatus) {
+  if (
+    isCompletedLocalAggregate(deposit, order)
+    && !NON_REGRESSIVE_COMPLETED_REMOTE_STATUSES.has(remoteExternalStatus)
+  ) {
+    throw new DepositRecheckError(
+      409,
+      "deposit_status_regression",
+      "Remote deposit-status would regress a completed local aggregate.",
+      {
+        depositEntryId: deposit.depositEntryId,
+        localExternalStatus: deposit.externalStatus,
+        localOrderStatus: order.status,
+        localOrderCurrentStep: order.currentStep,
+        remoteExternalStatus,
+      },
+    );
+  }
+
+  return remoteExternalStatus;
+}
+
+/**
+ * Planeja o patch local de deposito sem escrever no banco ainda.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
  * @param {Record<string, unknown>} deposit Deposito alvo.
  * @param {{ qrId?: string, expiration?: string, status?: string }} remoteStatus Verdade remota reduzida.
- * @returns {Promise<Record<string, unknown>>} Deposito atualizado ou original.
+ * @returns {Promise<Record<string, unknown>>} Patch permitido para o deposito.
  */
-async function hydrateDepositFromRemoteStatus(db, tenantId, deposit, remoteStatus) {
+async function planDepositHydrationFromRemoteStatus(db, tenantId, deposit, remoteStatus) {
   if (!remoteStatus.qrId && !remoteStatus.expiration && !remoteStatus.status) {
-    return deposit;
+    return {};
   }
 
   if (
@@ -199,13 +262,145 @@ async function hydrateDepositFromRemoteStatus(db, tenantId, deposit, remoteStatu
     }
   }
 
-  const hydratedDeposit = await updateDepositByDepositEntryId(db, tenantId, deposit.depositEntryId, {
-    ...(remoteStatus.qrId ? { qrId: remoteStatus.qrId } : {}),
-    ...(remoteStatus.expiration ? { expiration: remoteStatus.expiration } : {}),
-    ...(remoteStatus.status ? { externalStatus: remoteStatus.status } : {}),
-  });
+  return {
+    ...(remoteStatus.qrId && deposit.qrId !== remoteStatus.qrId ? { qrId: remoteStatus.qrId } : {}),
+    ...(remoteStatus.expiration && deposit.expiration !== remoteStatus.expiration ? { expiration: remoteStatus.expiration } : {}),
+  };
+}
 
-  return hydratedDeposit ?? deposit;
+/**
+ * Calcula o plano completo de reconciliacao local para um recheck.
+ *
+ * A borda de recheck precisa separar leitura remota de persistencia local.
+ * Com isso, conseguimos validar conflito/precedencia antes de abrir a janela
+ * de escrita e depois gravar evento + agregados no mesmo batch do D1.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {Record<string, unknown>} deposit Deposito atual.
+ * @param {Record<string, unknown>} order Pedido atual.
+ * @param {{ qrId?: string, expiration?: string, status?: string }} remoteStatus Verdade remota reduzida.
+ * @returns {Promise<{
+ *   appliedExternalStatus: string,
+ *   depositPatch: Record<string, unknown>,
+ *   orderPatch: Record<string, unknown>,
+ *   resultingQrId: string | null | undefined
+ * }>}
+ */
+async function planRecheckAggregateMutation(db, tenantId, deposit, order, remoteStatus) {
+  const appliedExternalStatus = resolveRecheckExternalStatus(deposit, order, remoteStatus.status);
+  const depositPatch = await planDepositHydrationFromRemoteStatus(db, tenantId, deposit, remoteStatus);
+
+  if (deposit.externalStatus !== appliedExternalStatus) {
+    depositPatch.externalStatus = appliedExternalStatus;
+  }
+
+  const orderPatch = reconcileOrderPatch(order, mapOrderPatchFromExternalStatus(appliedExternalStatus));
+  const resultingQrId = depositPatch.qrId ?? deposit.qrId ?? remoteStatus.qrId ?? null;
+
+  return {
+    appliedExternalStatus,
+    depositPatch,
+    orderPatch,
+    resultingQrId,
+  };
+}
+
+/**
+ * Persiste evento + deposito + order no mesmo batch do D1.
+ *
+ * A intencao aqui e manter trilha de auditoria e agregado sempre alinhados: se
+ * qualquer passo falhar, o batch inteiro e abortado e nenhum write parcial deve
+ * sobreviver.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @param {string} orderId Pedido alvo.
+ * @param {Record<string, unknown>} eventInput Evento do recheck.
+ * @param {Record<string, unknown>} depositPatch Patch do deposito.
+ * @param {Record<string, unknown>} orderPatch Patch do pedido.
+ * @returns {Promise<{
+ *   savedEvent: Record<string, unknown> | null,
+ *   updatedDeposit: Record<string, unknown> | null,
+ *   updatedOrder: Record<string, unknown> | null
+ * }>}
+ */
+async function persistDepositRecheckAtomically(db, tenantId, depositEntryId, orderId, eventInput, depositPatch, orderPatch) {
+  const statements = [
+    buildCreateDepositEventStatement(db, eventInput),
+  ];
+  const depositUpdateStatement = buildUpdateDepositByDepositEntryIdStatement(db, tenantId, depositEntryId, depositPatch);
+  const orderUpdateStatement = buildUpdateOrderByIdStatement(db, tenantId, orderId, orderPatch);
+
+  if (depositUpdateStatement) {
+    statements.push(depositUpdateStatement);
+  }
+
+  if (orderUpdateStatement) {
+    statements.push(orderUpdateStatement);
+  }
+
+  statements.push(
+    buildSelectDepositByDepositEntryIdStatement(db, tenantId, depositEntryId),
+    buildSelectOrderByIdStatement(db, tenantId, orderId),
+  );
+
+  const results = await db.batch(statements);
+  const depositResult = results.at(-2);
+  const orderResult = results.at(-1);
+
+  return {
+    savedEvent: results[0]?.results?.[0] ?? null,
+    updatedDeposit: depositResult?.results?.[0] ?? null,
+    updatedOrder: orderResult?.results?.[0] ?? null,
+  };
+}
+
+/**
+ * Repara apenas o agregado local em um unico batch, sem tentar reinserir o
+ * evento de auditoria que ja existe.
+ *
+ * Esse caminho existe para retries concorrentes ou para replays em cima de um
+ * evento duplicado que ja foi persistido anteriormente.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @param {string} orderId Pedido alvo.
+ * @param {Record<string, unknown>} depositPatch Patch do deposito.
+ * @param {Record<string, unknown>} orderPatch Patch do pedido.
+ * @returns {Promise<{
+ *   updatedDeposit: Record<string, unknown> | null,
+ *   updatedOrder: Record<string, unknown> | null
+ * }>}
+ */
+async function persistAggregateRepairAtomically(db, tenantId, depositEntryId, orderId, depositPatch, orderPatch) {
+  const statements = [];
+  const depositUpdateStatement = buildUpdateDepositByDepositEntryIdStatement(db, tenantId, depositEntryId, depositPatch);
+  const orderUpdateStatement = buildUpdateOrderByIdStatement(db, tenantId, orderId, orderPatch);
+
+  if (depositUpdateStatement) {
+    statements.push(depositUpdateStatement);
+  }
+
+  if (orderUpdateStatement) {
+    statements.push(orderUpdateStatement);
+  }
+
+  statements.push(
+    buildSelectDepositByDepositEntryIdStatement(db, tenantId, depositEntryId),
+    buildSelectOrderByIdStatement(db, tenantId, orderId),
+  );
+
+  const results = await db.batch(statements);
+  const depositResult = results.at(-2);
+  const orderResult = results.at(-1);
+
+  return {
+    updatedDeposit: depositResult?.results?.[0] ?? null,
+    updatedOrder: orderResult?.results?.[0] ?? null,
+  };
 }
 
 /**
@@ -322,13 +517,14 @@ export async function processDepositRecheck(input) {
     throw error;
   }
 
-  let hydratedDeposit;
+  let mutationPlan;
 
   try {
-    hydratedDeposit = await hydrateDepositFromRemoteStatus(
+    mutationPlan = await planRecheckAggregateMutation(
       input.db,
       input.tenant.tenantId,
       deposit,
+      order,
       remoteStatus,
     );
   } catch (error) {
@@ -344,28 +540,36 @@ export async function processDepositRecheck(input) {
     remoteStatus,
   });
   const incomingEvent = {
-    externalStatus: remoteStatus.status,
+    externalStatus: mutationPlan.appliedExternalStatus,
     rawPayload: eventPayload,
   };
 
   let savedEvent;
-  let updatedDeposit = hydratedDeposit;
+  let updatedDeposit = deposit;
   let updatedOrder = order;
   let duplicate = false;
   let repairedAggregate = false;
 
   try {
-    savedEvent = await createDepositEvent(input.db, {
-      tenantId: input.tenant.tenantId,
-      orderId: hydratedDeposit.orderId,
-      depositEntryId: hydratedDeposit.depositEntryId,
-      qrId: hydratedDeposit.qrId ?? remoteStatus.qrId ?? null,
-      source: RECHECK_DEPOSIT_STATUS_SOURCE,
-      externalStatus: remoteStatus.status,
-      bankTxId: null,
-      blockchainTxId: null,
-      rawPayload: eventPayload,
-    });
+    ({ savedEvent, updatedDeposit, updatedOrder } = await persistDepositRecheckAtomically(
+      input.db,
+      input.tenant.tenantId,
+      deposit.depositEntryId,
+      deposit.orderId,
+      {
+        tenantId: input.tenant.tenantId,
+        orderId: deposit.orderId,
+        depositEntryId: deposit.depositEntryId,
+        qrId: mutationPlan.resultingQrId,
+        source: RECHECK_DEPOSIT_STATUS_SOURCE,
+        externalStatus: mutationPlan.appliedExternalStatus,
+        bankTxId: null,
+        blockchainTxId: null,
+        rawPayload: eventPayload,
+      },
+      mutationPlan.depositPatch,
+      mutationPlan.orderPatch,
+    ));
   } catch (error) {
     if (!isLikelyUniqueConstraintError(error)) {
       throw error;
@@ -373,22 +577,41 @@ export async function processDepositRecheck(input) {
 
     duplicate = true;
 
-    const savedEvents = await listDepositEventsByDepositEntryId(input.db, input.tenant.tenantId, hydratedDeposit.depositEntryId);
+    const savedEvents = await listDepositEventsByDepositEntryId(input.db, input.tenant.tenantId, deposit.depositEntryId);
     const duplicateEvent = findDuplicateRecheckEvent(savedEvents, incomingEvent);
 
     if (!duplicateEvent) {
       throw error;
     }
 
-    if (shouldRepairAggregateFromRemoteStatus(hydratedDeposit, order, remoteStatus)) {
-      ({ updatedDeposit, updatedOrder } = await applyWebhookTruthToAggregate(
+    const currentDeposit = await getDepositByDepositEntryId(input.db, input.tenant.tenantId, deposit.depositEntryId);
+    const currentOrder = await getOrderById(input.db, input.tenant.tenantId, deposit.orderId);
+
+    if (!currentDeposit || !currentOrder) {
+      throw error;
+    }
+
+    const duplicateRepairPlan = await planRecheckAggregateMutation(
+      input.db,
+      input.tenant.tenantId,
+      currentDeposit,
+      currentOrder,
+      remoteStatus,
+    );
+
+    if (shouldRepairAggregateFromRemoteStatus(duplicateRepairPlan.depositPatch, duplicateRepairPlan.orderPatch)) {
+      ({ updatedDeposit, updatedOrder } = await persistAggregateRepairAtomically(
         input.db,
         input.tenant.tenantId,
-        hydratedDeposit,
-        order,
-        remoteStatus.status,
+        currentDeposit.depositEntryId,
+        currentOrder.orderId,
+        duplicateRepairPlan.depositPatch,
+        duplicateRepairPlan.orderPatch,
       ));
       repairedAggregate = true;
+    } else {
+      updatedDeposit = currentDeposit;
+      updatedOrder = currentOrder;
     }
 
     log(input.runtimeConfig, {
@@ -399,8 +622,8 @@ export async function processDepositRecheck(input) {
       details: {
         depositEntryId,
         orderId: order.orderId,
-        qrId: hydratedDeposit.qrId ?? remoteStatus.qrId,
-        externalStatus: remoteStatus.status,
+        qrId: updatedDeposit?.qrId ?? mutationPlan.resultingQrId,
+        externalStatus: duplicateRepairPlan.appliedExternalStatus,
         eventId: duplicateEvent.id,
       },
     });
@@ -414,23 +637,15 @@ export async function processDepositRecheck(input) {
         repairedAggregate,
         source: RECHECK_DEPOSIT_STATUS_SOURCE,
         eventId: duplicateEvent.id,
-        depositEntryId: updatedDeposit?.depositEntryId ?? hydratedDeposit.depositEntryId,
-        qrId: updatedDeposit?.qrId ?? hydratedDeposit.qrId ?? remoteStatus.qrId,
+        depositEntryId: updatedDeposit?.depositEntryId ?? deposit.depositEntryId,
+        qrId: updatedDeposit?.qrId ?? mutationPlan.resultingQrId,
         orderId: updatedOrder?.orderId ?? order.orderId,
-        externalStatus: remoteStatus.status,
+        externalStatus: duplicateRepairPlan.appliedExternalStatus,
         orderStatus: updatedOrder?.status ?? order.status,
         orderCurrentStep: updatedOrder?.currentStep ?? order.currentStep,
       },
     };
   }
-
-  ({ updatedDeposit, updatedOrder } = await applyWebhookTruthToAggregate(
-    input.db,
-    input.tenant.tenantId,
-    hydratedDeposit,
-    order,
-    remoteStatus.status,
-  ));
 
   log(input.runtimeConfig, {
     level: "info",
@@ -440,8 +655,8 @@ export async function processDepositRecheck(input) {
     details: {
       depositEntryId,
       orderId: order.orderId,
-      qrId: updatedDeposit?.qrId ?? hydratedDeposit.qrId ?? remoteStatus.qrId,
-      externalStatus: remoteStatus.status,
+      qrId: updatedDeposit?.qrId ?? mutationPlan.resultingQrId,
+      externalStatus: mutationPlan.appliedExternalStatus,
       eventId: savedEvent?.id,
     },
   });
@@ -455,10 +670,10 @@ export async function processDepositRecheck(input) {
       repairedAggregate,
       source: RECHECK_DEPOSIT_STATUS_SOURCE,
       eventId: savedEvent?.id,
-      depositEntryId: updatedDeposit?.depositEntryId ?? hydratedDeposit.depositEntryId,
-      qrId: updatedDeposit?.qrId ?? hydratedDeposit.qrId ?? remoteStatus.qrId,
+      depositEntryId: updatedDeposit?.depositEntryId ?? deposit.depositEntryId,
+      qrId: updatedDeposit?.qrId ?? mutationPlan.resultingQrId,
       orderId: updatedOrder?.orderId ?? order.orderId,
-      externalStatus: remoteStatus.status,
+      externalStatus: mutationPlan.appliedExternalStatus,
       orderStatus: updatedOrder?.status ?? order.status,
       orderCurrentStep: updatedOrder?.currentStep ?? order.currentStep,
     },

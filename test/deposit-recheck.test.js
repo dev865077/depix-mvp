@@ -228,6 +228,41 @@ describe("deposit recheck route", () => {
     expect(savedEvents).toHaveLength(1);
   });
 
+  it("keeps concurrent identical rechecks idempotent for event history and aggregate state", async function assertConcurrentDuplicateRecheckHandling() {
+    const { db } = await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
+      return new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const [firstResponse, secondResponse] = await Promise.all([
+      requestDepositRecheck(),
+      requestDepositRecheck(),
+    ]);
+    const firstBody = await firstResponse.json();
+    const secondBody = await secondResponse.json();
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect([firstBody.duplicate, secondBody.duplicate].filter(Boolean)).toHaveLength(1);
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(savedEvents).toHaveLength(1);
+  });
+
   it("keeps tenant isolation explicit when the deposit belongs to another tenant", async function assertTenantIsolation() {
     await seedDepositAggregate({
       tenantId: "alpha",
@@ -387,5 +422,39 @@ describe("deposit recheck route", () => {
     expect(body.error.code).toBe("deposit_qr_id_mismatch");
     expect(body.error.details.localQrId).toBe("qr_alpha_local_existing");
     expect(body.error.details.remoteQrId).toBe("qr_alpha_remote_other");
+  });
+
+  it("rejects a regressive remote status when the local aggregate is already completed", async function assertCompletedAggregateRegressionProtection() {
+    const { db } = await seedDepositAggregate({
+      externalStatus: "depix_sent",
+      status: "paid",
+      currentStep: "completed",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("deposit_status_regression");
+    expect(currentDeposit?.externalStatus).toBe("depix_sent");
+    expect(currentOrder?.status).toBe("paid");
+    expect(currentOrder?.currentStep).toBe("completed");
+    expect(savedEvents).toHaveLength(0);
   });
 });

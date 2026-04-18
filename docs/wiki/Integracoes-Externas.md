@@ -55,11 +55,17 @@ O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-s
 
 Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e fica desabilitada quando o segredo operacional nao estiver configurado.
 
+O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, e o fallback por `deposits` continua como etapa separada de backlog para janelas mais amplas.
+
 Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
 
 Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
 
 No recheck operacional, a mesma politica vale para `deposit-status`: conflito de ownership de `qrId` devolve `deposit_qr_id_conflict`, e divergencia com um `qrId` ja correlacionado no deposito alvo devolve `deposit_qr_id_mismatch`.
+
+O write path do recheck foi desenhado para manter auditoria e agregado alinhados: o evento `recheck_deposit_status` e os updates em `deposits`/`orders` sao persistidos no mesmo batch do D1.
+
+Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao terminal nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
 
 ## Split em deposit
 
