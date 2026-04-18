@@ -56,6 +56,14 @@ describe("telegram runtime bootstrap", () => {
     expect(bot.botInfo?.username).toBe("alpha_bootstrap_bot");
   });
 
+  it("creates a Cloudflare-compatible webhook callback for the tenant runtime", function assertWebhookCallbackCreation() {
+    const tenants = readTenantRegistry(TEST_ENV);
+    const runtime = getTelegramRuntime(tenants.alpha);
+    const callback = runtime.createWebhookCallback("123456:telegram-token");
+
+    expect(callback).toBeTypeOf("function");
+  });
+
   it("normalizes the synthetic username when the tenant id has operational characters", function assertBootstrapUsernameNormalization() {
     const runtime = getTelegramRuntime({
       tenantId: "alpha-prod.internal",
