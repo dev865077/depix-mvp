@@ -11,6 +11,34 @@ const APP_ENVIRONMENTS = new Set(["local", "test", "production"]);
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
 
 /**
+ * Normaliza uma flag textual de runtime.
+ *
+ * Flags de operacao ficam em `vars`, nao em codigo. Esta funcao trata ausencia
+ * como `false` e aceita apenas o contrato explicito `true`/`false`.
+ *
+ * @param {string | undefined} value Valor bruto vindo do runtime.
+ * @param {string} key Nome do binding para mensagens de erro.
+ * @returns {boolean} Flag normalizada.
+ */
+export function readBooleanFlag(value, key) {
+  if (typeof value === "undefined") {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  if (normalizedValue === "true") {
+    return true;
+  }
+
+  if (normalizedValue === "false" || normalizedValue.length === 0) {
+    return false;
+  }
+
+  throw new Error(`Invalid boolean binding: ${key}`);
+}
+
+/**
  * Garante que um binding textual obrigatorio exista e tenha conteudo.
  *
  * @param {string | undefined} value Valor bruto vindo do runtime.
@@ -74,6 +102,9 @@ export function assertPositiveInteger(value, key) {
  *   secrets: {
  *     registryConfigured: boolean,
  *     tenantSecretBindingsConfigured: boolean
+ *   },
+ *   operations: {
+ *     depositRecheckEnabled: boolean
  *   }
  * }} Configuracao consolidada do runtime.
  */
@@ -97,6 +128,7 @@ export function readRuntimeConfig(env) {
     Object.values(tenant.secretBindings).every(Boolean)
     && Object.values(tenant.splitConfigBindings).every(Boolean)
   ));
+  const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
 
   return {
     appName,
@@ -111,6 +143,9 @@ export function readRuntimeConfig(env) {
     secrets: {
       registryConfigured: Boolean(env.TENANT_REGISTRY),
       tenantSecretBindingsConfigured: hasTenantSecretBindings,
+    },
+    operations: {
+      depositRecheckEnabled,
     },
   };
 }

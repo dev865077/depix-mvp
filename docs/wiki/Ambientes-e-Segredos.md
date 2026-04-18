@@ -23,6 +23,10 @@ Tambem existe um segredo operacional transversal:
 
 - `OPS_ROUTE_BEARER_TOKEN` para autenticar chamadas manuais no namespace `/ops`
 
+Tambem existe uma flag operacional explicita:
+
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` para habilitar de fato `POST /ops/:tenantId/recheck/deposit`
+
 ## Como o runtime resolve isso
 
 O registro nao sensivel fica em `TENANT_REGISTRY`. Cada tenant aponta para nomes de bindings secretos, e o runtime materializa esses valores quando necessario.
@@ -39,6 +43,28 @@ Para split, o registry usa `splitConfigBindings`:
 Os valores reais desses bindings ficam no Cloudflare Secrets Store em `test` e `production`, ou em `.dev.vars` no ambiente local.
 
 O mesmo principio vale para `OPS_ROUTE_BEARER_TOKEN`: ele nao deve entrar em `vars` versionadas nem em codigo. Em ambientes publicados, a recomendacao e materializa-lo como secret do Worker ou via Secrets Store.
+
+Quando o time quiser reduzir blast radius por tenant, o runtime tambem aceita um binding tenant-scoped com precedencia sobre o token global:
+
+- `OPS_ROUTE_BEARER_TOKEN_ALPHA`
+- `OPS_ROUTE_BEARER_TOKEN_BETA`
+
+Se o binding tenant-scoped existir, ele vale apenas para o `tenantId` correspondente e substitui o fallback global naquela rota.
+
+## Contrato de habilitacao
+
+- `ENABLE_OPS_DEPOSIT_RECHECK=false` ou ausente: a rota operacional responde `503 ops_route_disabled`
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` sem token configurado: a rota continua desabilitada com `503 ops_route_disabled`
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` com token global: a rota fica habilitada para o fluxo atual
+- `ENABLE_OPS_DEPOSIT_RECHECK=true` com token tenant-scoped: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
+
+## Ambientes de lancamento
+
+- `local`: pode habilitar para desenvolvimento e testes locais
+- `test`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional antes da validacao real
+- `production`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional antes de qualquer uso de suporte
+
+Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 
 ## Regra operacional
 

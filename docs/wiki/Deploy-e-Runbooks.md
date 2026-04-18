@@ -32,8 +32,10 @@
 
 ## Recheck de deposito
 
+- pre-condicao de rollout: `ENABLE_OPS_DEPOSIT_RECHECK=true`
 - payload minimo: `{ "depositEntryId": "..." }`
 - header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
+- opcional com menor blast radius: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN_<TENANT>>`
 - ancora local: `depositEntryId`
 - fonte de verdade remota: `deposit-status`
 - trilha local: evento `deposit_events.source = "recheck_deposit_status"`
@@ -42,7 +44,9 @@
 
 ## Contrato operacional do recheck
 
+- sem `ENABLE_OPS_DEPOSIT_RECHECK=true`, responde `503 ops_route_disabled`
 - a rota so opera quando `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
+- quando existir `OPS_ROUTE_BEARER_TOKEN_<TENANT>`, esse token tenant-scoped tem precedencia sobre o token global
 - sem esse binding, `POST /ops/:tenantId/recheck/deposit` responde `503 ops_route_disabled`
 - sem header Bearer, responde `401 ops_authorization_required`
 - com token invalido, responde `403 ops_authorization_invalid`
@@ -62,10 +66,24 @@
 - retry manual depois de `409 deposit_status_regression`, `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch` nao deve ser tratado como tentativa cega; primeiro e preciso entender a divergencia
 - quando o agregado local ja estiver concluido por `depix_sent`, o recheck nao aceita um `deposit-status` atrasado que volte com `pending`, `under_review` ou outro estado inferior
 
+## Acao do operador por resposta
+
+- `200 deposit_recheck_processed`: registrar `requestId`, `tenantId`, `depositEntryId`, `eventId` e seguir com a conciliacao concluida
+- `200 deposit_recheck_duplicate`: registrar `requestId` e tratar como replay idempotente; nao repetir indefinidamente
+- `401 ops_authorization_required` ou `403 ops_authorization_invalid`: validar token, escopo do tenant e rotacao recente do segredo antes de qualquer nova tentativa
+- `404 deposit_not_found`: confirmar se o `depositEntryId` pertence ao tenant do path; nao insistir com outro tenant no mesmo request
+- `409 order_not_found`: tratar como agregado local quebrado e abrir correcao de dados antes de novo recheck
+- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: parar retries cegos, anexar `requestId` e investigar correlacao local versus resposta remota
+- `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
+- `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: considerar falha transitoria ou upstream inconsistente; retry manual controlado e permitido
+- `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK` e binding do token antes de tratar como incidente de negocio
+
 ## Rollout e rollback
 
-- rollout: provisionar `OPS_ROUTE_BEARER_TOKEN` apenas nos ambientes que devem expor a ferramenta operacional, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
-- rollback rapido: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
+- rollout: provisionar `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional apenas nos ambientes que devem expor a ferramenta, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
+- rollout atual esperado: `test` e `production` so ficam operacionalmente ativos depois da provisao explicita desses bindings; sem isso, a rota permanece escura por desenho
+- rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` para `false`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
+- rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
 - rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
 
 ## Verificacao minima

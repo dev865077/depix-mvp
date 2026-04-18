@@ -63,6 +63,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "15.00%",
+    ENABLE_OPS_DEPOSIT_RECHECK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-test-token",
     ...overrides,
   };
@@ -228,6 +229,44 @@ describe("deposit recheck route", () => {
     expect(savedEvents).toHaveLength(1);
   });
 
+  it("records the audit event even when the aggregate patch is a no-op", async function assertNoOpAggregatePatch() {
+    const { db } = await seedDepositAggregate({
+      qrId: "qr_alpha_001",
+      externalStatus: "pending",
+      status: "pending",
+      currentStep: "awaiting_payment",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.externalStatus).toBe("pending");
+    expect(updatedDeposit?.externalStatus).toBe("pending");
+    expect(updatedOrder?.status).toBe("pending");
+    expect(updatedOrder?.currentStep).toBe("awaiting_payment");
+    expect(savedEvents).toHaveLength(1);
+    expect(savedEvents[0]?.source).toBe("recheck_deposit_status");
+  });
+
   it("keeps concurrent identical rechecks idempotent for event history and aggregate state", async function assertConcurrentDuplicateRecheckHandling() {
     const { db } = await seedDepositAggregate();
 
@@ -328,6 +367,23 @@ describe("deposit recheck route", () => {
     expect(body.error.code).toBe("ops_authorization_invalid");
   });
 
+  it("disables the route when the recheck feature flag is turned off", async function assertRouteDisabledByFeatureFlag() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen when feature flag is disabled"));
+
+    const response = await requestDepositRecheck({
+      envOverrides: {
+        ENABLE_OPS_DEPOSIT_RECHECK: "false",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
+  });
+
   it("disables the route when the operator bearer token binding is absent", async function assertRouteDisabledWithoutSecret() {
     await seedDepositAggregate();
 
@@ -343,6 +399,41 @@ describe("deposit recheck route", () => {
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("ops_route_disabled");
     expect(body.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN");
+  });
+
+  it("prefers tenant-scoped operator tokens over the global fallback token", async function assertTenantScopedOperatorToken() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const forbiddenResponse = await requestDepositRecheck({
+      authorizationHeader: "Bearer ops-route-test-token",
+      envOverrides: {
+        OPS_ROUTE_BEARER_TOKEN_ALPHA: "alpha-ops-token",
+      },
+    });
+    const forbiddenBody = await forbiddenResponse.json();
+    const allowedResponse = await requestDepositRecheck({
+      authorizationHeader: "Bearer alpha-ops-token",
+      envOverrides: {
+        OPS_ROUTE_BEARER_TOKEN_ALPHA: "alpha-ops-token",
+      },
+    });
+
+    expect(forbiddenResponse.status).toBe(403);
+    expect(forbiddenBody.error.code).toBe("ops_authorization_invalid");
+    expect(allowedResponse.status).toBe(200);
   });
 
   it("fails explicitly when deposit-status points to a qrId already owned by another deposit", async function assertQrIdConflict() {
@@ -456,5 +547,38 @@ describe("deposit recheck route", () => {
     expect(currentOrder?.status).toBe("paid");
     expect(currentOrder?.currentStep).toBe("completed");
     expect(savedEvents).toHaveLength(0);
+  });
+
+  it("does not persist partial local writes when the atomic batch fails", async function assertAtomicBatchRollback() {
+    const { db } = await seedDepositAggregate();
+    const batchSpy = vi.spyOn(db, "batch").mockRejectedValueOnce(new Error("synthetic batch failure"));
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("request_failed");
+    expect(currentDeposit?.externalStatus).toBe("pending");
+    expect(currentOrder?.status).toBe("pending");
+    expect(currentOrder?.currentStep).toBe("awaiting_payment");
+    expect(savedEvents).toHaveLength(0);
+
+    batchSpy.mockRestore();
   });
 });
