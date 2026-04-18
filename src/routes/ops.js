@@ -25,6 +25,10 @@ import {
   readDiagnosticAsyncMode,
   registerTelegramWebhookDiagnostic,
 } from "../services/local-diagnostic-validation.js";
+import {
+  authorizeOpsRoute,
+  OpsRouteAuthorizationError,
+} from "../services/ops-route-authorization.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
 
 export const opsRouter = new Hono();
@@ -59,6 +63,10 @@ function handleDiagnosticRouteError(c, error) {
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
 function handleDepositRecheckError(c, error) {
+  if (error instanceof OpsRouteAuthorizationError) {
+    return jsonError(c, error.status, error.code, error.message, error.details);
+  }
+
   if (error instanceof DepositRecheckError) {
     return jsonError(c, error.status, error.code, error.message, error.details);
   }
@@ -81,6 +89,15 @@ export async function handleDepositRecheck(c) {
     if (!tenant) {
       return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this operation.");
     }
+
+    await authorizeOpsRoute({
+      env: c.env,
+      runtimeConfig,
+      authorizationHeader: c.req.header("authorization"),
+      requestId: c.get("requestId"),
+      tenantId: tenant.tenantId,
+      path: c.req.path,
+    });
 
     if (!db) {
       throw new Error("Database binding is required to process the deposit recheck.");

@@ -33,10 +33,30 @@
 ## Recheck de deposito
 
 - payload minimo: `{ "depositEntryId": "..." }`
+- header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
 - ancora local: `depositEntryId`
 - fonte de verdade remota: `deposit-status`
 - trilha local: evento `deposit_events.source = "recheck_deposit_status"`
 - efeito esperado: hidratar `qrId` quando necessario e aplicar o status reconciliado em `deposits` e `orders`
+
+## Contrato operacional do recheck
+
+- a rota so opera quando `OPS_ROUTE_BEARER_TOKEN` estiver configurado como segredo do Worker
+- sem esse binding, `POST /ops/:tenantId/recheck/deposit` responde `503 ops_route_disabled`
+- sem header Bearer, responde `401 ops_authorization_required`
+- com token invalido, responde `403 ops_authorization_invalid`
+- se o deposito nao existir no tenant informado, responde `404 deposit_not_found`
+- se o agregado local estiver quebrado e o `order` nao existir, responde `409 order_not_found`
+- se `deposit-status` devolver `qrId` ja associado a outro deposito, responde `409 deposit_qr_id_conflict`
+- se `deposit-status` divergir de um `qrId` ja correlacionado no deposito atual, responde `409 deposit_qr_id_mismatch`
+- se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
+- se a consulta remota falhar, responde `502 deposit_status_unavailable`
+
+## Rollout e rollback
+
+- rollout: provisionar `OPS_ROUTE_BEARER_TOKEN`, publicar o deploy e validar um smoke test autenticado com um `depositEntryId` conhecido
+- rollback rapido: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
+- rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
 
 ## Verificacao minima
 

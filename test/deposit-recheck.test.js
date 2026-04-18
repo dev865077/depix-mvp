@@ -63,6 +63,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "15.00%",
+    OPS_ROUTE_BEARER_TOKEN: "ops-route-test-token",
     ...overrides,
   };
 }
@@ -106,14 +107,23 @@ async function seedDepositAggregate(input = {}) {
 
 async function requestDepositRecheck(options = {}) {
   const app = createApp();
+  const headers = {
+    "content-type": "application/json",
+  };
+
+  if (Object.prototype.hasOwnProperty.call(options, "authorizationHeader")) {
+    if (options.authorizationHeader) {
+      headers.authorization = options.authorizationHeader;
+    }
+  } else {
+    headers.authorization = "Bearer ops-route-test-token";
+  }
 
   return app.request(
     options.url ?? "https://example.com/ops/alpha/recheck/deposit",
     {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
+      headers,
       body: JSON.stringify(options.body ?? {
         depositEntryId: "deposit_entry_alpha_001",
       }),
@@ -253,5 +263,129 @@ describe("deposit recheck route", () => {
 
     expect(response.status).toBe(503);
     expect(body.error.code).toBe("recheck_dependency_unavailable");
+  });
+
+  it("rejects recheck calls without the operator bearer token", async function assertMissingOperatorAuthorization() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen without operator auth"));
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: undefined,
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe("ops_authorization_required");
+  });
+
+  it("rejects recheck calls with an invalid operator bearer token", async function assertInvalidOperatorAuthorization() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen with invalid operator auth"));
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer wrong-token",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("ops_authorization_invalid");
+  });
+
+  it("disables the route when the operator bearer token binding is absent", async function assertRouteDisabledWithoutSecret() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen when route is disabled"));
+
+    const response = await requestDepositRecheck({
+      envOverrides: {
+        OPS_ROUTE_BEARER_TOKEN: undefined,
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN");
+  });
+
+  it("fails explicitly when deposit-status points to a qrId already owned by another deposit", async function assertQrIdConflict() {
+    const { db } = await seedDepositAggregate({
+      qrId: null,
+    });
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "alpha_telegram_user_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 999,
+      walletAddress: "depix_wallet_alpha_002",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha_002",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_alpha_conflict_002",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T05:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_conflict_002",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("deposit_qr_id_conflict");
+    expect(body.error.details.conflictingDepositEntryId).toBe("deposit_entry_alpha_002");
+  });
+
+  it("fails explicitly when deposit-status disagrees with an already correlated qrId", async function assertQrIdMismatch() {
+    await seedDepositAggregate({
+      qrId: "qr_alpha_local_existing",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_remote_other",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("deposit_qr_id_mismatch");
+    expect(body.error.details.localQrId).toBe("qr_alpha_local_existing");
+    expect(body.error.details.remoteQrId).toBe("qr_alpha_remote_other");
   });
 });

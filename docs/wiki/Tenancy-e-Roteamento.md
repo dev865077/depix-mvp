@@ -4,6 +4,8 @@
 
 O sistema e multi-tenant por `tenantId`, com isolamento logico dentro de um unico Worker e de um unico banco.
 
+`tenantId` sozinho nao representa permissao operacional. Nas rotas manuais de suporte, ele define apenas o escopo do agregado que sera lido ou reconciliado.
+
 ## Onde o tenant entra
 
 - `/telegram/:tenantId/webhook`
@@ -43,3 +45,5 @@ O projeto le o registro de tenants, valida sua forma e so materializa segredos q
 `alpha` e `beta` aparecem hoje como tenants configurados nos ambientes versionados do projeto.
 
 Nao trate esses ids como meros placeholders sem validar o estado real de deploy, segredos e webhooks do ambiente correspondente.
+
+Para `POST /ops/:tenantId/recheck/deposit`, o isolamento por tenant e combinado com autenticacao explicita de operador via `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`.
