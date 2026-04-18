@@ -769,7 +769,15 @@ function isSmallNonSensitiveWorkflowChange(files, summary) {
     return false;
   }
 
-  return !changedLines.some((line) =>
+  const executableAutomationLines = files
+    .filter((file) => {
+      const normalizedPath = normalizeRepositoryPath(file.filename);
+
+      return normalizedPath === ".github/workflows/ai-pr-review.yml" || normalizedPath === "scripts/ai-pr-review.mjs";
+    })
+    .flatMap(getChangedPatchLines);
+
+  return !executableAutomationLines.some((line) =>
     SENSITIVE_WORKFLOW_CHANGE_PATTERNS.some((pattern) => pattern.test(line)),
   );
 }
@@ -813,7 +821,15 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
     return false;
   }
 
-  return !changedLines.some((line) =>
+  const executableAutomationLines = files
+    .filter((file) => {
+      const normalizedPath = normalizeRepositoryPath(file.filename);
+
+      return normalizedPath === ".github/workflows/ai-pr-review.yml" || normalizedPath === "scripts/ai-pr-review.mjs";
+    })
+    .flatMap(getChangedPatchLines);
+
+  return !executableAutomationLines.some((line) =>
     SENSITIVE_WORKFLOW_CHANGE_PATTERNS.some((pattern) => pattern.test(line)),
   );
 }

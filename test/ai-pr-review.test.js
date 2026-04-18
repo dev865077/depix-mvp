@@ -187,7 +187,7 @@ describe("ai pr review discussion gate", () => {
         deletions: 2,
         patch: [
           "@@",
-          "+- PR pequena de automacao de review pode ficar direta quando nao toca escopo sensivel.",
+          "+- PR pequena de automacao de review pode ficar direta quando nao toca `GITHUB_TOKEN` no codigo executavel.",
         ].join("\n"),
       },
     ]);
