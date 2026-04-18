@@ -46,8 +46,17 @@ O mesmo principio vale para `OPS_ROUTE_BEARER_TOKEN`: ele nao deve entrar em `va
 
 Quando o time quiser reduzir blast radius por tenant, o runtime tambem aceita um binding tenant-scoped com precedencia sobre o token global:
 
-- `OPS_ROUTE_BEARER_TOKEN_ALPHA`
-- `OPS_ROUTE_BEARER_TOKEN_BETA`
+- `OPS_ROUTE_BEARER_TOKEN_<TENANT_NORMALIZADO>`
+
+Normalizacao atual:
+
+- converte para maiusculas
+- troca caracteres fora de `[A-Z0-9]` por `_`
+
+Exemplo:
+
+- `alpha` -> `OPS_ROUTE_BEARER_TOKEN_ALPHA`
+- `cliente-beta` -> `OPS_ROUTE_BEARER_TOKEN_CLIENTE_BETA`
 
 Se o binding tenant-scoped existir, ele vale apenas para o `tenantId` correspondente e substitui o fallback global naquela rota.
 
@@ -65,6 +74,12 @@ Se o binding tenant-scoped existir, ele vale apenas para o `tenantId` correspond
 - `production`: deve receber `ENABLE_OPS_DEPOSIT_RECHECK=true` e o token operacional antes de qualquer uso de suporte
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
+
+## Onboarding de novo tenant
+
+- por padrao, novo tenant continua herdando o token global `OPS_ROUTE_BEARER_TOKEN`
+- quando o time quiser isolar esse tenant, provisiona `OPS_ROUTE_BEARER_TOKEN_<TENANT_NORMALIZADO>`
+- se o binding tenant-scoped estiver declarado e invalido, a rota falha fechada com `503 ops_route_disabled` ate a configuracao ser corrigida
 
 ## Regra operacional
 

@@ -85,7 +85,7 @@ export function resolveTenantScopedOpsBearerBindingName(tenantId) {
  *
  * @param {Record<string, unknown>} env Bindings do Worker.
  * @param {string | undefined} tenantId Tenant atual.
- * @returns {Promise<{ bindingName: string, token: string }>} Segredo esperado.
+ * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global", token: string }>} Segredo esperado.
  */
 async function readExpectedOpsBearerToken(env, tenantId) {
   const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(tenantId);
@@ -96,6 +96,7 @@ async function readExpectedOpsBearerToken(env, tenantId) {
     if (tenantScopedBindingDeclared) {
       return {
         bindingName: tenantScopedBindingName,
+        authScope: "tenant",
         token: await readSecretBindingValue(env, tenantScopedBindingName),
       };
     }
@@ -103,6 +104,7 @@ async function readExpectedOpsBearerToken(env, tenantId) {
 
   return {
     bindingName: OPS_ROUTE_BEARER_TOKEN_BINDING,
+    authScope: "global",
     token: await readSecretBindingValue(env, OPS_ROUTE_BEARER_TOKEN_BINDING),
   };
 }
@@ -154,16 +156,16 @@ export function constantTimeStringEquals(left, right) {
  *
  * @param {{
  *   env: Record<string, unknown>,
- *   runtimeConfig: { environment: string, operations?: { depositRecheckEnabled?: boolean } },
+ *   runtimeConfig: { environment: string, operations?: { depositRecheck?: { enabled?: boolean } } },
  *   authorizationHeader?: string,
  *   requestId?: string,
  *   tenantId?: string,
  *   path?: string
  * }} input Dependencias e metadados da requisicao.
- * @returns {Promise<void>} Resolve apenas quando a borda pode prosseguir.
+ * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
  */
 export async function authorizeOpsRoute(input) {
-  if (!input.runtimeConfig.operations?.depositRecheckEnabled) {
+  if (!input.runtimeConfig.operations?.depositRecheck?.enabled) {
     throw new OpsRouteAuthorizationError(
       503,
       "ops_route_disabled",
@@ -178,6 +180,7 @@ export async function authorizeOpsRoute(input) {
 
   let expectedBearerToken;
   let expectedBearerBindingName;
+  let expectedAuthScope;
   const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(input.tenantId);
   const tenantScopedBindingDeclared = tenantScopedBindingName
     ? Object.prototype.hasOwnProperty.call(input.env, tenantScopedBindingName)
@@ -188,6 +191,7 @@ export async function authorizeOpsRoute(input) {
 
     expectedBearerToken = resolvedBearerToken.token;
     expectedBearerBindingName = resolvedBearerToken.bindingName;
+    expectedAuthScope = resolvedBearerToken.authScope;
   } catch (error) {
     throw new OpsRouteAuthorizationError(
       503,
@@ -215,6 +219,8 @@ export async function authorizeOpsRoute(input) {
       details: {
         reason: "missing_or_malformed_bearer_token",
         path: input.path,
+        bindingName: expectedBearerBindingName,
+        authScope: expectedAuthScope,
       },
     });
 
@@ -226,6 +232,7 @@ export async function authorizeOpsRoute(input) {
         header: "Authorization",
         scheme: "Bearer",
         bindingName: expectedBearerBindingName,
+        authScope: expectedAuthScope,
       },
     );
   }
@@ -239,6 +246,8 @@ export async function authorizeOpsRoute(input) {
       details: {
         reason: "invalid_bearer_token",
         path: input.path,
+        bindingName: expectedBearerBindingName,
+        authScope: expectedAuthScope,
       },
     });
 
@@ -250,7 +259,13 @@ export async function authorizeOpsRoute(input) {
         header: "Authorization",
         scheme: "Bearer",
         bindingName: expectedBearerBindingName,
+        authScope: expectedAuthScope,
       },
     );
   }
+
+  return {
+    bindingName: expectedBearerBindingName,
+    authScope: expectedAuthScope,
+  };
 }

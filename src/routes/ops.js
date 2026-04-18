@@ -14,6 +14,7 @@ import { Hono } from "hono";
 
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
+import { log } from "../lib/logger.js";
 import {
   createEulenDiagnosticDeposit,
   DiagnosticServiceError,
@@ -63,11 +64,37 @@ function handleDiagnosticRouteError(c, error) {
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
 function handleDepositRecheckError(c, error) {
+  const runtimeConfig = c.get("runtimeConfig");
+
   if (error instanceof OpsRouteAuthorizationError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: "ops.deposit_recheck.authorization_failed",
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
     return jsonError(c, error.status, error.code, error.message, error.details);
   }
 
   if (error instanceof DepositRecheckError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: "ops.deposit_recheck.failed",
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
     return jsonError(c, error.status, error.code, error.message, error.details);
   }
 
@@ -90,13 +117,25 @@ export async function handleDepositRecheck(c) {
       return jsonError(c, 404, "tenant_not_resolved", "Tenant context is required for this operation.");
     }
 
-    await authorizeOpsRoute({
+    const authContext = await authorizeOpsRoute({
       env: c.env,
       runtimeConfig,
       authorizationHeader: c.req.header("authorization"),
       requestId: c.get("requestId"),
       tenantId: tenant.tenantId,
       path: c.req.path,
+    });
+
+    log(runtimeConfig, {
+      level: "info",
+      message: "ops.deposit_recheck.authorized",
+      tenantId: tenant.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        path: c.req.path,
+        authScope: authContext.authScope,
+        bindingName: authContext.bindingName,
+      },
     });
 
     if (!db) {

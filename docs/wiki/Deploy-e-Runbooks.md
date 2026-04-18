@@ -86,6 +86,15 @@
 - rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
 - rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
 
+## Checklist de aceite operacional
+
+- `test` habilitado e validado antes de qualquer uso em `production`
+- `production` habilitado so depois do smoke test autenticado em `test`
+- `/health` confirma `configuration.operations.depositRecheck.enabled`
+- `/health` expõe se a flag foi reconhecida e quais tenants ja possuem binding tenant-scoped declarado
+- operadores sabem se o tenant usa token global herdado ou override tenant-scoped
+- rollback rapido documentado por flag e por rotacao/remoção do segredo
+
 ## Verificacao minima
 
 - confirmar `GET /health`

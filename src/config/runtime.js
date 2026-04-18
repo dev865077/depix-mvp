@@ -42,6 +42,57 @@ export function readBooleanFlag(value, key) {
 }
 
 /**
+ * Descreve o estado operacional de uma flag textual sem expor segredo algum.
+ *
+ * Isso permite que `/health` revele se uma feature esta habilitada, ausente ou
+ * com valor desconhecido, sem transformar erro de configuracao em boot failure.
+ *
+ * @param {string | undefined} value Valor bruto do runtime.
+ * @returns {{ configured: boolean, recognized: boolean, rawValue: string | null }}
+ */
+export function describeBooleanFlagState(value) {
+  if (typeof value === "undefined") {
+    return {
+      configured: false,
+      recognized: false,
+      rawValue: null,
+    };
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  return {
+    configured: true,
+    recognized: TRUE_BOOLEAN_BINDING_VALUES.has(normalizedValue)
+      || FALSE_BOOLEAN_BINDING_VALUES.has(normalizedValue),
+    rawValue: normalizedValue,
+  };
+}
+
+/**
+ * Converte um tenantId em sufixo seguro para bindings operacionais.
+ *
+ * @param {string} tenantId Tenant atual.
+ * @returns {string} Sufixo seguro.
+ */
+function normalizeTenantIdForOpsBinding(tenantId) {
+  return tenantId.trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
+/**
+ * Lista quais tenants ja possuem binding tenant-scoped para a rota operacional.
+ *
+ * @param {Record<string, string | undefined>} env Runtime atual.
+ * @param {Record<string, { tenantId: string }>} tenants Tenants registrados.
+ * @returns {string[]} IDs de tenant com binding declarado.
+ */
+function listTenantScopedOpsBindings(env, tenants) {
+  return Object.values(tenants)
+    .filter((tenant) => Boolean(env[`OPS_ROUTE_BEARER_TOKEN_${normalizeTenantIdForOpsBinding(tenant.tenantId)}`]))
+    .map((tenant) => tenant.tenantId);
+}
+
+/**
  * Garante que um binding textual obrigatorio exista e tenha conteudo.
  *
  * @param {string | undefined} value Valor bruto vindo do runtime.
@@ -107,7 +158,16 @@ export function assertPositiveInteger(value, key) {
  *     tenantSecretBindingsConfigured: boolean
  *   },
  *   operations: {
- *     depositRecheckEnabled: boolean
+ *     depositRecheck: {
+ *       enabled: boolean,
+ *       featureFlag: {
+ *         configured: boolean,
+ *         recognized: boolean,
+ *         rawValue: string | null
+ *       },
+ *       globalBearerBindingConfigured: boolean,
+ *       tenantScopedBearerBindings: string[]
+ *     }
  *   }
  * }} Configuracao consolidada do runtime.
  */
@@ -132,6 +192,8 @@ export function readRuntimeConfig(env) {
     && Object.values(tenant.splitConfigBindings).every(Boolean)
   ));
   const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
+  const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
+  const tenantScopedOpsBindings = listTenantScopedOpsBindings(env, tenants);
 
   return {
     appName,
@@ -148,7 +210,12 @@ export function readRuntimeConfig(env) {
       tenantSecretBindingsConfigured: hasTenantSecretBindings,
     },
     operations: {
-      depositRecheckEnabled,
+      depositRecheck: {
+        enabled: depositRecheckEnabled,
+        featureFlag: depositRecheckFlagState,
+        globalBearerBindingConfigured: Boolean(env.OPS_ROUTE_BEARER_TOKEN),
+        tenantScopedBearerBindings: tenantScopedOpsBindings,
+      },
     },
   };
 }

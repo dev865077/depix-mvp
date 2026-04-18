@@ -19,6 +19,7 @@ export function handleHealth(c) {
       database: runtimeConfig.database,
       tenants: runtimeConfig.tenants,
       secrets: runtimeConfig.secrets,
+      operations: runtimeConfig.operations,
     },
   });
 }

@@ -20,6 +20,9 @@ export async function assertHealthResponse() {
   expect(body.configuration.database.bindingConfigured).toBe(true);
   expect(body.configuration.secrets.registryConfigured).toBe(true);
   expect(body.configuration.secrets.tenantSecretBindingsConfigured).toBe(true);
+  expect(body.configuration.operations.depositRecheck.enabled).toBe(true);
+  expect(body.configuration.operations.depositRecheck.featureFlag.configured).toBe(true);
+  expect(body.configuration.operations.depositRecheck.globalBearerBindingConfigured).toBe(false);
   expect(Object.keys(body.configuration.tenants)).toEqual(["alpha", "beta"]);
 }
 
