@@ -741,11 +741,11 @@ describe("deposit recheck route", () => {
     expect(savedEvents).toHaveLength(0);
   });
 
-  it("does not persist partial local writes when the atomic batch fails", async function assertAtomicBatchRollback() {
+  it("does not persist partial local writes when the atomic batch fails after deposit-status succeeds", async function assertAtomicBatchRollback() {
     const { db } = await seedDepositAggregate();
     const batchSpy = vi.spyOn(db, "batch").mockRejectedValueOnce(new Error("synthetic batch failure"));
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
         qrId: "qr_alpha_001",
         status: "depix_sent",
@@ -770,8 +770,43 @@ describe("deposit recheck route", () => {
     expect(currentOrder?.status).toBe("pending");
     expect(currentOrder?.currentStep).toBe("awaiting_payment");
     expect(savedEvents).toHaveLength(0);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     batchSpy.mockRestore();
+  });
+
+  it("logs which auth scope was selected when a tenant-scoped token authorizes the recheck", async function assertTenantScopedAuthorizationLogging() {
+    await seedDepositAggregate();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer alpha-ops-token",
+      envOverrides: {
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-token",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(consoleSpy.mock.calls.some(([entry]) => (
+      typeof entry === "string"
+      && entry.includes("\"message\":\"ops.deposit_recheck.authorized\"")
+      && entry.includes("\"authScope\":\"tenant\"")
+      && entry.includes("\"bindingName\":\"ALPHA_OPS_ROUTE_BEARER_TOKEN\"")
+    ))).toBe(true);
   });
 
   it("fails explicitly when the atomic batch cannot re-read the reconciled aggregate", async function assertMissingAggregateSnapshotAfterBatch() {

@@ -77,6 +77,7 @@
 - `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: considerar falha transitoria ou upstream inconsistente; retry manual controlado e permitido
 - `500 deposit_recheck_persistence_incomplete`: assumir que o batch pode ter sido persistido, anexar `requestId`, `tenantId`, `depositEntryId` e `orderId`, inspecionar o historico do deposito e repetir no maximo um retry controlado; o caminho continua idempotente por `depositEntryId` + payload do evento
+- `503 ops_route_disabled_invalid_flag`: corrigir o valor de `ENABLE_OPS_DEPOSIT_RECHECK`; typo ou valor legado mantem a rota desligada ate o deploy/config ser saneado
 - `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK` e binding do token antes de tratar como incidente de negocio
 
 ## Rollout e rollback
@@ -86,6 +87,13 @@
 - rollback rapido global: trocar `ENABLE_OPS_DEPOSIT_RECHECK` para `false`; a rota passa a devolver `503 ops_route_disabled` sem afetar webhook principal, Telegram ou leitura de saude
 - rollback rapido por segredo: remover ou rotacionar `OPS_ROUTE_BEARER_TOKEN` ou o binding tenant-scoped correspondente
 - rollback funcional: mesmo sem usar a rota, o caminho principal de confirmacao continua sendo o webhook da Eulen
+
+## Checklist de migracao para auth tenant-scoped
+
+- tenants existentes continuam no caminho global por padrao; nenhuma entrada antiga precisa ser alterada para o rollout inicial
+- para migrar um tenant, primeiro provisionar o novo segredo, depois declarar `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY`, validar em `test` com o token novo e so entao repetir em `production`
+- se o tenant override for declarado com binding ausente ou vazio, aquele tenant falha fechado com `503`; o rollback imediato e remover a declaracao do registry ou corrigir o segredo provisionado
+- todo request autorizado registra `authScope` e `bindingName` em log estruturado, o que vira a trilha canonica para triagem operacional
 
 ## Checklist de aceite operacional
 
