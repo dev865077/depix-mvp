@@ -1,16 +1,20 @@
 /**
  * Repositorio de cobrancas Pix/DePix.
  *
- * Este modulo persiste a intencao de deposito/cobranca e seus principais
- * atributos de reconciliacao, sempre sob escopo explicito de tenant.
+ * Este modulo explicita os dois identificadores externos relevantes da Eulen:
+ * - `depositEntryId`: `response.id` do `POST /deposit`
+ * - `qrId`: identificador usado no webhook e em consultas de reconciliacao
+ *
+ * Manter ambos no shape de leitura evita que camadas superiores precisem
+ * adivinhar se um campo representa a entrada criada ou o QR confirmado.
  */
 import { getAllowedPatchEntries } from "../client.js";
 
-// Alias em camelCase para manter a API interna do repositorio previsivel.
 const DEPOSIT_SELECT_SQL = `
   SELECT
     tenant_id AS tenantId,
-    deposit_id AS depositId,
+    deposit_entry_id AS depositEntryId,
+    qr_id AS qrId,
     order_id AS orderId,
     nonce AS nonce,
     qr_copy_paste AS qrCopyPaste,
@@ -25,18 +29,20 @@ const DEPOSIT_SELECT_SQL = `
 const INSERT_DEPOSIT_SQL = `
   INSERT INTO deposits (
     tenant_id,
-    deposit_id,
+    deposit_entry_id,
+    qr_id,
     order_id,
     nonce,
     qr_copy_paste,
     qr_image_url,
     external_status,
     expiration
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const DEPOSIT_UPDATE_COLUMNS = {
   tenantId: "tenant_id",
+  qrId: "qr_id",
   orderId: "order_id",
   nonce: "nonce",
   qrCopyPaste: "qr_copy_paste",
@@ -49,19 +55,37 @@ const DEPOSIT_UPDATE_COLUMNS = {
 /**
  * Garante defaults minimos para um deposito novo.
  *
+ * `qrId` pode nascer ausente, porque a Eulen primeiro devolve
+ * `depositEntryId` no `POST /deposit` e depois expoe `qrId` no status/webhook.
+ *
  * @param {Record<string, unknown>} input Payload vindo da camada de servico.
- * @returns {Record<string, unknown>} Deposito normalizado.
+ * @returns {{
+ *   tenantId: string,
+ *   depositEntryId: string,
+ *   qrId: string | null,
+ *   orderId: string,
+ *   nonce: string,
+ *   qrCopyPaste: string,
+ *   qrImageUrl: string,
+ *   externalStatus: string,
+ *   expiration: string | null
+ * }} Deposito normalizado.
  */
 function normalizeDepositInput(input) {
   return {
-    tenantId: input.tenantId,
-    depositId: input.depositId,
-    orderId: input.orderId,
-    nonce: input.nonce,
-    qrCopyPaste: input.qrCopyPaste,
-    qrImageUrl: input.qrImageUrl,
-    externalStatus: input.externalStatus ?? "pending",
-    expiration: input.expiration ?? null,
+    tenantId: String(input.tenantId),
+    depositEntryId: String(input.depositEntryId),
+    qrId: typeof input.qrId === "string" && input.qrId.trim().length > 0 ? input.qrId.trim() : null,
+    orderId: String(input.orderId),
+    nonce: String(input.nonce),
+    qrCopyPaste: String(input.qrCopyPaste),
+    qrImageUrl: String(input.qrImageUrl),
+    externalStatus: typeof input.externalStatus === "string" && input.externalStatus.trim().length > 0
+      ? input.externalStatus.trim()
+      : "pending",
+    expiration: typeof input.expiration === "string" && input.expiration.trim().length > 0
+      ? input.expiration.trim()
+      : null,
   };
 }
 
@@ -79,7 +103,8 @@ export async function createDeposit(db, input) {
   const deposit = normalizeDepositInput(input);
   const insertStatement = db.prepare(INSERT_DEPOSIT_SQL).bind(
     deposit.tenantId,
-    deposit.depositId,
+    deposit.depositEntryId,
+    deposit.qrId,
     deposit.orderId,
     deposit.nonce,
     deposit.qrCopyPaste,
@@ -87,9 +112,9 @@ export async function createDeposit(db, input) {
     deposit.externalStatus,
     deposit.expiration,
   );
-  const selectStatement = db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_id = ? LIMIT 1`).bind(
+  const selectStatement = db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? LIMIT 1`).bind(
     deposit.tenantId,
-    deposit.depositId,
+    deposit.depositEntryId,
   );
   const [, selectResult] = await db.batch([insertStatement, selectStatement]);
 
@@ -97,27 +122,60 @@ export async function createDeposit(db, input) {
 }
 
 /**
- * Busca um deposito pelo identificador externo e tenant.
+ * Busca um deposito pelo identificador de entrada retornado no create-deposit.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
- * @param {string} depositId Identificador canonico do deposito.
+ * @param {string} depositEntryId ID canonico da entrada criada na Eulen.
  * @returns {Promise<Record<string, unknown> | null>} Deposito encontrado.
  */
-export async function getDepositById(db, tenantId, depositId) {
-  return db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_id = ? LIMIT 1`).bind(tenantId, depositId).first();
+export async function getDepositByDepositEntryId(db, tenantId, depositEntryId) {
+  return db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? LIMIT 1`).bind(
+    tenantId,
+    depositEntryId,
+  ).first();
 }
 
 /**
- * Atualiza parcialmente um deposito com isolamento por tenant.
+ * Busca um deposito pelo `qrId` usado na reconciliacao externa.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
- * @param {string} depositId Identificador canonico do deposito.
+ * @param {string} qrId ID do QR informado pelo webhook ou por consultas remotas.
+ * @returns {Promise<Record<string, unknown> | null>} Deposito encontrado.
+ */
+export async function getDepositByQrId(db, tenantId, qrId) {
+  return db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND qr_id = ? LIMIT 1`).bind(tenantId, qrId).first();
+}
+
+/**
+ * Lista depositos que ainda nao tiveram `qrId` reconciliado localmente.
+ *
+ * Essa visao e usada para preencher o `qrId` via `deposit-status` quando o
+ * webhook chega antes de a correlacao ter sido materializada no banco.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @returns {Promise<Record<string, unknown>[]>} Depositos com `qrId` ausente.
+ */
+export async function listDepositsWithoutQrId(db, tenantId) {
+  const result = await db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND qr_id IS NULL ORDER BY created_at DESC`).bind(
+    tenantId,
+  ).all();
+
+  return result.results;
+}
+
+/**
+ * Atualiza parcialmente um deposito usando `depositEntryId` como ancora local.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId ID canonico da entrada criada na Eulen.
  * @param {Record<string, unknown>} patch Campos permitidos para update.
  * @returns {Promise<Record<string, unknown> | null>} Deposito apos update.
  */
-export async function updateDepositById(db, tenantId, depositId, patch) {
+export async function updateDepositByDepositEntryId(db, tenantId, depositEntryId, patch) {
   const patchEntries = getAllowedPatchEntries(
     {
       ...patch,
@@ -127,20 +185,19 @@ export async function updateDepositById(db, tenantId, depositId, patch) {
   );
 
   if (patchEntries.length === 0) {
-    return getDepositById(db, tenantId, depositId);
+    return getDepositByDepositEntryId(db, tenantId, depositEntryId);
   }
 
-  // O update dinamico e seguro porque so usamos colunas whitelisted.
   const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
   const values = patchEntries.map(([, value]) => value);
-  const updateStatement = db.prepare(`UPDATE deposits SET ${setClause} WHERE tenant_id = ? AND deposit_id = ?`).bind(
+  const updateStatement = db.prepare(`UPDATE deposits SET ${setClause} WHERE tenant_id = ? AND deposit_entry_id = ?`).bind(
     ...values,
     tenantId,
-    depositId,
+    depositEntryId,
   );
-  const selectStatement = db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_id = ? LIMIT 1`).bind(
+  const selectStatement = db.prepare(`${DEPOSIT_SELECT_SQL} WHERE tenant_id = ? AND deposit_entry_id = ? LIMIT 1`).bind(
     tenantId,
-    depositId,
+    depositEntryId,
   );
   const [, selectResult] = await db.batch([updateStatement, selectStatement]);
 

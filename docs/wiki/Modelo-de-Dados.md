@@ -18,7 +18,8 @@
 
 ### `deposits`
 
-- `deposit_id`
+- `deposit_entry_id`
+- `qr_id`
 - `order_id`
 - `nonce`
 - `qr_copy_paste`
@@ -31,7 +32,8 @@
 
 - `id`
 - `order_id`
-- `deposit_id`
+- `deposit_entry_id`
+- `qr_id`
 - `source`
 - `external_status`
 - `bank_tx_id`
@@ -44,7 +46,14 @@
 - `orders`, `deposits` e `deposit_events` formam um agregado operacional
 - escritas criticas multi-tabela devem usar `env.DB.batch()`
 - `nonce` representa a intencao da cobranca e deve ser reutilizado em retry controlado
+- `depositEntryId` ancora a cobranca local desde o `POST /deposit`
+- `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 
 ## Diferenca importante
 
-O schema atual ainda usa `deposit_id` como identificador principal da cobranca. A direcao canonica do projeto distingue `depositEntryId` de `qrId`. Essa diferenca precisa ficar explicita para evitar ambiguidade futura.
+O modelo canonico do projeto distingue dois IDs externos:
+
+- `depositEntryId`: `response.id` retornado pela Eulen no `POST /deposit`
+- `qrId`: identificador do QR/deposito usado em webhook, `deposit-status` e `deposits`
+
+O banco local persiste os dois papeis separadamente. `depositEntryId` nasce na criacao da cobranca; `qrId` pode ser hidratado depois via `deposit-status` ou pelo proprio webhook.

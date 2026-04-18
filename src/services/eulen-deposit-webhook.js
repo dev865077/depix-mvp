@@ -5,10 +5,17 @@
  * - validacao do segredo do webhook
  * - validacao do payload recebido
  * - idempotencia para redelivery
+ * - correlacao entre `qrId` externo e `depositEntryId` local
  * - aplicacao minima da verdade externa em deposits e orders
  */
-import { createDepositEvent, listDepositEventsByDepositId } from "../db/repositories/deposit-events-repository.js";
-import { getDepositById, updateDepositById } from "../db/repositories/deposits-repository.js";
+import { EulenApiError, getEulenDepositStatus, resolveEulenAsyncResponse } from "../clients/eulen-client.js";
+import { createDepositEvent, listDepositEventsByDepositEntryId } from "../db/repositories/deposit-events-repository.js";
+import {
+  getDepositByDepositEntryId,
+  getDepositByQrId,
+  listDepositsWithoutQrId,
+  updateDepositByDepositEntryId,
+} from "../db/repositories/deposits-repository.js";
 import { getOrderById, updateOrderById } from "../db/repositories/orders-repository.js";
 import { log } from "../lib/logger.js";
 
@@ -38,10 +45,6 @@ export function safeEqualString(left, right) {
 
 /**
  * Verifica se o header Authorization da Eulen bate com o segredo configurado.
- *
- * A documentacao da Eulen mostra o formato `Authorization: Basic <secret>`.
- * Tambem aceitamos o formato Basic convencional com `username:password`
- * codificado em Base64, desde que o `password` coincida com o segredo.
  *
  * @param {string | undefined} authorizationHeader Header bruto recebido.
  * @param {string} expectedSecret Segredo esperado para o tenant.
@@ -177,6 +180,33 @@ export function normalizeEulenDepositPayload(payload) {
 }
 
 /**
+ * Normaliza o payload relevante de `deposit-status` para correlacao local.
+ *
+ * @param {unknown} payload Corpo retornado pela Eulen.
+ * @returns {{ qrId?: string, status?: string, expiration?: string }} Dados relevantes para reconciliacao.
+ */
+export function normalizeEulenDepositStatusPayload(payload) {
+  if (
+    payload
+    && typeof payload === "object"
+    && !Array.isArray(payload)
+    && "response" in payload
+  ) {
+    return normalizeEulenDepositStatusPayload(payload.response);
+  }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {};
+  }
+
+  return {
+    qrId: typeof payload.qrId === "string" ? payload.qrId.trim() : undefined,
+    status: typeof payload.status === "string" ? payload.status.trim() : undefined,
+    expiration: typeof payload.expiration === "string" ? payload.expiration.trim() : undefined,
+  };
+}
+
+/**
  * Verifica se o evento recebido ja foi persistido anteriormente.
  *
  * @param {Record<string, unknown>[]} savedEvents Eventos ja registrados para o deposito.
@@ -237,7 +267,7 @@ export function reconcileOrderPatch(order, patch) {
  * @returns {Promise<{ updatedDeposit: Record<string, unknown> | null, updatedOrder: Record<string, unknown> | null }>} Agregado atualizado.
  */
 export async function applyWebhookTruthToAggregate(db, tenantId, deposit, order, externalStatus) {
-  const updatedDeposit = await updateDepositById(db, tenantId, deposit.depositId, {
+  const updatedDeposit = await updateDepositByDepositEntryId(db, tenantId, deposit.depositEntryId, {
     externalStatus,
   });
   const updatedOrder = await updateOrderById(
@@ -254,10 +284,100 @@ export async function applyWebhookTruthToAggregate(db, tenantId, deposit, order,
 }
 
 /**
- * Decide se um evento duplicado ainda e o mais recente no historico.
+ * Lembra o resultado remoto de `deposit-status` para um `depositEntryId`.
  *
- * Quando o evento duplicado e o ultimo salvo, um retry pode reparar um fluxo
- * que falhou depois de gravar o dedupe marker e antes de atualizar o agregado.
+ * @param {{
+ *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
+ *   tenant: { tenantId: string, eulenPartnerId?: string },
+ *   eulenApiToken: string,
+ *   depositEntryId: string
+ * }} input Dependencias da leitura remota.
+ * @returns {Promise<{ qrId?: string, status?: string, expiration?: string }>} Status remoto reduzido.
+ */
+async function readRemoteDepositStatusByEntryId(input) {
+  const response = await getEulenDepositStatus(input.runtimeConfig, {
+    apiToken: input.eulenApiToken,
+    partnerId: input.tenant.eulenPartnerId,
+  }, {
+    id: input.depositEntryId,
+    asyncMode: "false",
+  });
+  const resolvedResponse = await resolveEulenAsyncResponse(response);
+
+  return normalizeEulenDepositStatusPayload(resolvedResponse.data);
+}
+
+/**
+ * Tenta hidratar `qrId` localmente para depositos ainda nao reconciliados.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
+ *   tenant: { tenantId: string, eulenPartnerId?: string },
+ *   eulenApiToken: string,
+ *   webhookQrId: string
+ * }} input Dependencias da correlacao.
+ * @returns {Promise<Record<string, unknown> | null>} Deposito correlacionado ou `null`.
+ */
+async function hydrateMissingQrIdForWebhook(input) {
+  const candidates = await listDepositsWithoutQrId(input.db, input.tenant.tenantId);
+
+  for (const candidate of candidates) {
+    const remoteStatus = await readRemoteDepositStatusByEntryId({
+      runtimeConfig: input.runtimeConfig,
+      tenant: input.tenant,
+      eulenApiToken: input.eulenApiToken,
+      depositEntryId: candidate.depositEntryId,
+    });
+
+    if (!remoteStatus.qrId) {
+      continue;
+    }
+
+    const hydratedDeposit = await updateDepositByDepositEntryId(input.db, input.tenant.tenantId, candidate.depositEntryId, {
+      qrId: remoteStatus.qrId,
+      ...(remoteStatus.status ? { externalStatus: remoteStatus.status } : {}),
+      ...(remoteStatus.expiration ? { expiration: remoteStatus.expiration } : {}),
+    });
+
+    if (hydratedDeposit?.qrId === input.webhookQrId) {
+      return hydratedDeposit;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve o deposito alvo do webhook usando o identificador externo correto.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
+ *   tenant: { tenantId: string, eulenPartnerId?: string },
+ *   eulenApiToken: string,
+ *   qrId: string
+ * }} input Dependencias da resolucao.
+ * @returns {Promise<Record<string, unknown> | null>} Deposito correlacionado ou `null`.
+ */
+async function resolveDepositForWebhook(input) {
+  const localDeposit = await getDepositByQrId(input.db, input.tenant.tenantId, input.qrId);
+
+  if (localDeposit) {
+    return localDeposit;
+  }
+
+  return hydrateMissingQrIdForWebhook({
+    db: input.db,
+    runtimeConfig: input.runtimeConfig,
+    tenant: input.tenant,
+    eulenApiToken: input.eulenApiToken,
+    webhookQrId: input.qrId,
+  });
+}
+
+/**
+ * Decide se um evento duplicado ainda e o mais recente no historico.
  *
  * @param {Record<string, unknown> | undefined} duplicateEvent Evento duplicado encontrado.
  * @param {Record<string, unknown>[]} savedEvents Historico do deposito em ordem decrescente.
@@ -272,8 +392,9 @@ export function isLatestDuplicateEvent(duplicateEvent, savedEvents) {
  *
  * @param {{
  *   db: import("@cloudflare/workers-types").D1Database,
- *   runtimeConfig: Record<string, unknown>,
+ *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
  *   tenant: { tenantId: string, eulenPartnerId?: string },
+ *   eulenApiToken: string,
  *   authorizationHeader?: string,
  *   expectedSecret: string,
  *   rawBody: string,
@@ -361,7 +482,32 @@ export async function processEulenDepositWebhook(input) {
     };
   }
 
-  const deposit = await getDepositById(input.db, input.tenant.tenantId, payload.qrId);
+  let deposit;
+
+  try {
+    deposit = await resolveDepositForWebhook({
+      db: input.db,
+      runtimeConfig: input.runtimeConfig,
+      tenant: input.tenant,
+      eulenApiToken: input.eulenApiToken,
+      qrId: payload.qrId,
+    });
+  } catch (error) {
+    if (error instanceof EulenApiError) {
+      return {
+        ok: false,
+        status: 502,
+        code: "deposit_lookup_unavailable",
+        message: "Could not reconcile qrId against Eulen deposit-status.",
+        details: {
+          qrId: payload.qrId,
+          cause: error.details,
+        },
+      };
+    }
+
+    throw error;
+  }
 
   if (!deposit) {
     return {
@@ -375,7 +521,7 @@ export async function processEulenDepositWebhook(input) {
   const order = await getOrderById(input.db, input.tenant.tenantId, deposit.orderId);
 
   if (!order) {
-    throw new Error(`Missing order for deposit ${deposit.depositId}.`);
+    throw new Error(`Missing order for deposit entry ${deposit.depositEntryId}.`);
   }
 
   const incomingEvent = {
@@ -391,7 +537,8 @@ export async function processEulenDepositWebhook(input) {
     savedEvent = await createDepositEvent(input.db, {
       tenantId: input.tenant.tenantId,
       orderId: deposit.orderId,
-      depositId: deposit.depositId,
+      depositEntryId: deposit.depositEntryId,
+      qrId: deposit.qrId ?? payload.qrId,
       source: WEBHOOK_SOURCE,
       externalStatus: payload.status,
       bankTxId: payload.bankTxId ?? null,
@@ -403,7 +550,7 @@ export async function processEulenDepositWebhook(input) {
       throw error;
     }
 
-    const savedEvents = await listDepositEventsByDepositId(input.db, input.tenant.tenantId, deposit.depositId);
+    const savedEvents = await listDepositEventsByDepositEntryId(input.db, input.tenant.tenantId, deposit.depositEntryId);
     const duplicateEvent = findDuplicateWebhookEvent(savedEvents, incomingEvent);
 
     if (!duplicateEvent) {
@@ -415,7 +562,7 @@ export async function processEulenDepositWebhook(input) {
     const repairedAggregate = isLatestDuplicateEvent(duplicateEvent, savedEvents);
 
     if (repairedAggregate) {
-      const currentDeposit = await getDepositById(input.db, input.tenant.tenantId, deposit.depositId);
+      const currentDeposit = await getDepositByDepositEntryId(input.db, input.tenant.tenantId, deposit.depositEntryId);
       const currentOrder = await getOrderById(input.db, input.tenant.tenantId, deposit.orderId);
 
       if (!currentDeposit) {
@@ -441,7 +588,8 @@ export async function processEulenDepositWebhook(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestId,
       details: {
-        depositId: deposit.depositId,
+        depositEntryId: deposit.depositEntryId,
+        qrId: deposit.qrId ?? payload.qrId,
         eventId: duplicateEvent.id,
         externalStatus: payload.status,
       },
@@ -458,7 +606,8 @@ export async function processEulenDepositWebhook(input) {
         duplicate: true,
         repairedAggregate,
         eventId: duplicateEvent.id,
-        depositId: updatedDeposit?.depositId ?? deposit.depositId,
+        depositEntryId: updatedDeposit?.depositEntryId ?? deposit.depositEntryId,
+        qrId: updatedDeposit?.qrId ?? deposit.qrId ?? payload.qrId,
         orderId: updatedOrder?.orderId ?? deposit.orderId,
         externalStatus: payload.status,
         orderStatus: updatedOrder?.status,
@@ -481,7 +630,8 @@ export async function processEulenDepositWebhook(input) {
     tenantId: input.tenant.tenantId,
     requestId: input.requestId,
     details: {
-      depositId: deposit.depositId,
+      depositEntryId: deposit.depositEntryId,
+      qrId: deposit.qrId ?? payload.qrId,
       orderId: deposit.orderId,
       externalStatus: payload.status,
       eventId: savedEvent?.id,
@@ -496,7 +646,8 @@ export async function processEulenDepositWebhook(input) {
     details: {
       duplicate: false,
       eventId: savedEvent?.id,
-      depositId: updatedDeposit?.depositId ?? deposit.depositId,
+      depositEntryId: updatedDeposit?.depositEntryId ?? deposit.depositEntryId,
+      qrId: updatedDeposit?.qrId ?? deposit.qrId ?? payload.qrId,
       orderId: updatedOrder?.orderId ?? deposit.orderId,
       externalStatus: payload.status,
       orderStatus: updatedOrder?.status,

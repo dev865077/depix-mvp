@@ -679,11 +679,11 @@ export async function createEulenDiagnosticDeposit(input) {
   }
 
   const depositPayload = response?.data?.response;
-  const depositId = typeof depositPayload?.id === "string" ? depositPayload.id : undefined;
+  const depositEntryId = typeof depositPayload?.id === "string" ? depositPayload.id : undefined;
   const qrCopyPaste = typeof depositPayload?.qrCopyPaste === "string" ? depositPayload.qrCopyPaste : undefined;
   const qrImageUrl = typeof depositPayload?.qrImageUrl === "string" ? depositPayload.qrImageUrl : undefined;
 
-  if (!depositId || !qrCopyPaste || !qrImageUrl) {
+  if (!depositEntryId || !qrCopyPaste || !qrImageUrl) {
     throw new DiagnosticServiceError(502, "invalid_eulen_deposit_response", "Eulen deposit response did not contain the required fields.", {
       tenantId: input.tenant.tenantId,
       environment: input.runtimeConfig.environment,
@@ -708,7 +708,8 @@ export async function createEulenDiagnosticDeposit(input) {
 
     const deposit = await createDeposit(input.db, {
       tenantId: input.tenant.tenantId,
-      depositId,
+      depositEntryId,
+      qrId: null,
       orderId,
       nonce: response.nonce,
       qrCopyPaste,
@@ -729,7 +730,7 @@ export async function createEulenDiagnosticDeposit(input) {
     throw new DiagnosticServiceError(500, "diagnostic_seed_failed", "The local diagnostic aggregate could not be persisted.", {
       tenantId: input.tenant.tenantId,
       orderId,
-      depositId,
+      depositEntryId,
       cause: error instanceof Error ? error.message : String(error),
     });
   }

@@ -395,7 +395,8 @@ describe("ops diagnostics routes", () => {
     expect(response.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(body.ok).toBe(true);
-    expect(body.deposit.depositId).toBe("deposit_async_001");
+    expect(body.deposit.depositEntryId).toBe("deposit_async_001");
+    expect(body.deposit.qrId).toBeNull();
     expect(body.deposit.externalStatus).toBe("pending");
     expect(body.response.data.resolvedFromAsync).toBe(true);
   });

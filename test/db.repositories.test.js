@@ -1,13 +1,17 @@
 /**
  * Testes de persistencia do MVP.
  */
-
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { getDatabase } from "../src/db/client.js";
-import { createDepositEvent, listDepositEventsByDepositId } from "../src/db/repositories/deposit-events-repository.js";
-import { createDeposit, getDepositById, updateDepositById } from "../src/db/repositories/deposits-repository.js";
+import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
+import {
+  createDeposit,
+  getDepositByDepositEntryId,
+  getDepositByQrId,
+  updateDepositByDepositEntryId,
+} from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 
 const INITIAL_SCHEMA_STATEMENTS = [
@@ -31,7 +35,8 @@ const INITIAL_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
   `CREATE TABLE IF NOT EXISTS deposits (
     tenant_id TEXT NOT NULL,
-    deposit_id TEXT PRIMARY KEY NOT NULL,
+    deposit_entry_id TEXT PRIMARY KEY NOT NULL,
+    qr_id TEXT,
     order_id TEXT NOT NULL,
     nonce TEXT NOT NULL,
     qr_copy_paste TEXT NOT NULL,
@@ -44,14 +49,17 @@ const INITIAL_SCHEMA_STATEMENTS = [
   )`,
   "CREATE INDEX IF NOT EXISTS deposits_order_id_idx ON deposits (order_id)",
   "CREATE INDEX IF NOT EXISTS deposits_external_status_idx ON deposits (external_status)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_qr_id_unique_idx ON deposits (qr_id)",
   "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_id_idx ON deposits (tenant_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     tenant_id TEXT NOT NULL,
     order_id TEXT NOT NULL,
-    deposit_id TEXT NOT NULL,
+    deposit_entry_id TEXT NOT NULL,
+    qr_id TEXT,
     source TEXT NOT NULL,
     external_status TEXT NOT NULL,
     bank_tx_id TEXT,
@@ -59,16 +67,19 @@ const INITIAL_SCHEMA_STATEMENTS = [
     raw_payload TEXT NOT NULL,
     received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
-    FOREIGN KEY (deposit_id) REFERENCES deposits(deposit_id) ON DELETE CASCADE
+    FOREIGN KEY (deposit_entry_id) REFERENCES deposits(deposit_entry_id) ON DELETE CASCADE
   )`,
   "CREATE INDEX IF NOT EXISTS deposit_events_order_id_idx ON deposit_events (order_id)",
-  "CREATE INDEX IF NOT EXISTS deposit_events_deposit_id_idx ON deposit_events (deposit_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_deposit_entry_id_idx ON deposit_events (deposit_entry_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_qr_id_idx ON deposit_events (qr_id)",
   "CREATE INDEX IF NOT EXISTS deposit_events_source_idx ON deposit_events (source)",
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_id_idx ON deposit_events (tenant_id)",
-  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_idx ON deposit_events (tenant_id, deposit_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_entry_idx ON deposit_events (tenant_id, deposit_entry_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_tenant_qr_idx ON deposit_events (tenant_id, qr_id)",
   `CREATE UNIQUE INDEX IF NOT EXISTS deposit_events_idempotency_unique_idx ON deposit_events (
     tenant_id,
-    deposit_id,
+    deposit_entry_id,
+    IFNULL(qr_id, ''),
     source,
     external_status,
     IFNULL(bank_tx_id, ''),
@@ -113,7 +124,8 @@ export async function assertPersistenceFlow() {
 
   await createDeposit(db, {
     tenantId: "alpha",
-    depositId: "deposit_test_001",
+    depositEntryId: "deposit_entry_test_001",
+    qrId: "qr_test_001",
     orderId: "order_test_001",
     nonce: "nonce_test_001",
     qrCopyPaste: "00020101021226880014br.gov.bcb.pix2566pix.example/qr/123",
@@ -125,24 +137,26 @@ export async function assertPersistenceFlow() {
   await createDepositEvent(db, {
     tenantId: "alpha",
     orderId: "order_test_001",
-    depositId: "deposit_test_001",
+    depositEntryId: "deposit_entry_test_001",
+    qrId: "qr_test_001",
     source: "webhook",
     externalStatus: "pending",
     bankTxId: "bank_tx_001",
     blockchainTxId: null,
-    rawPayload: JSON.stringify({ status: "pending", depositId: "deposit_test_001" }),
+    rawPayload: JSON.stringify({ status: "pending", qrId: "qr_test_001" }),
   });
 
   const updatedOrder = await updateOrderById(db, "alpha", "order_test_001", {
     currentStep: "completed",
     status: "paid",
   });
-  const updatedDeposit = await updateDepositById(db, "alpha", "deposit_test_001", {
+  const updatedDeposit = await updateDepositByDepositEntryId(db, "alpha", "deposit_entry_test_001", {
     externalStatus: "depix_sent",
   });
   const savedOrder = await getOrderById(db, "alpha", "order_test_001");
-  const savedDeposit = await getDepositById(db, "alpha", "deposit_test_001");
-  const savedEvents = await listDepositEventsByDepositId(db, "alpha", "deposit_test_001");
+  const savedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_test_001");
+  const savedDepositByQrId = await getDepositByQrId(db, "alpha", "qr_test_001");
+  const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_test_001");
 
   expect(updatedOrder?.tenantId).toBe("alpha");
   expect(updatedOrder?.currentStep).toBe("completed");
@@ -153,13 +167,17 @@ export async function assertPersistenceFlow() {
   expect(savedOrder?.orderId).toBe("order_test_001");
   expect(savedOrder?.status).toBe("paid");
   expect(savedDeposit?.tenantId).toBe("alpha");
+  expect(savedDeposit?.depositEntryId).toBe("deposit_entry_test_001");
+  expect(savedDeposit?.qrId).toBe("qr_test_001");
   expect(savedDeposit?.orderId).toBe("order_test_001");
   expect(savedDeposit?.nonce).toBe("nonce_test_001");
   expect(savedDeposit?.externalStatus).toBe("depix_sent");
+  expect(savedDepositByQrId?.depositEntryId).toBe("deposit_entry_test_001");
   expect(savedEvents).toHaveLength(1);
   expect(savedEvents[0]?.tenantId).toBe("alpha");
   expect(savedEvents[0]?.orderId).toBe("order_test_001");
-  expect(savedEvents[0]?.depositId).toBe("deposit_test_001");
+  expect(savedEvents[0]?.depositEntryId).toBe("deposit_entry_test_001");
+  expect(savedEvents[0]?.qrId).toBe("qr_test_001");
 }
 
 describe("database repositories", () => {

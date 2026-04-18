@@ -35,6 +35,7 @@ export async function handleEulenDepositWebhook(c) {
     db,
     runtimeConfig,
     tenant,
+    eulenApiToken: await readTenantSecret(c.env, tenant, "eulenApiToken"),
     authorizationHeader: c.req.header("authorization"),
     expectedSecret: await readTenantSecret(c.env, tenant, "eulenWebhookSecret"),
     rawBody: await c.req.text(),

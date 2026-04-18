@@ -18,7 +18,7 @@
 - `tenantId` deve existir nas tabelas operacionais
 - `nonce` representa a intencao da cobranca
 - `depositEntryId` corresponde ao `response.id` da Eulen
-- `qrId` pode existir como identificador distinto depois
+- `qrId` pode existir como identificador distinto depois e deve ser persistido sem sobrescrever `depositEntryId`
 - escritas criticas multi-tabela devem usar `env.DB.batch()`
 
 ## Fora de escopo

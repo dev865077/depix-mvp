@@ -2,12 +2,17 @@
  * Testes do webhook principal de deposito da Eulen.
  */
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { getDatabase } from "../src/db/client.js";
-import { createDepositEvent, listDepositEventsByDepositId } from "../src/db/repositories/deposit-events-repository.js";
-import { createDeposit, getDepositById, updateDepositById } from "../src/db/repositories/deposits-repository.js";
+import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
+import {
+  createDeposit,
+  getDepositByDepositEntryId,
+  getDepositByQrId,
+  updateDepositByDepositEntryId,
+} from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
@@ -87,7 +92,8 @@ async function seedDepositAggregate() {
 
   await createDeposit(db, {
     tenantId: "alpha",
-    depositId: "qr_alpha_001",
+    depositEntryId: "deposit_entry_alpha_001",
+    qrId: "qr_alpha_001",
     orderId: "order_alpha_001",
     nonce: "nonce_alpha_001",
     qrCopyPaste: "0002010102122688qr-alpha-001",
@@ -121,6 +127,10 @@ async function requestEulenWebhook(options = {}) {
   );
 }
 
+afterEach(function restoreWebhookMocks() {
+  vi.restoreAllMocks();
+});
+
 describe("eulen deposit webhook", () => {
   it("processes a valid webhook and applies payment truth", async function assertValidWebhookProcessing() {
     await seedDepositAggregate();
@@ -131,12 +141,14 @@ describe("eulen deposit webhook", () => {
     const body = await response.json();
     const db = getDatabase(env);
     const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
-    const updatedDeposit = await getDepositById(db, "alpha", "qr_alpha_001");
-    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+    const updatedDeposit = await getDepositByQrId(db, "alpha", "qr_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.tenantId).toBe("alpha");
+    expect(body.depositEntryId).toBe("deposit_entry_alpha_001");
+    expect(body.qrId).toBe("qr_alpha_001");
     expect(body.externalStatus).toBe("depix_sent");
     expect(updatedOrder?.status).toBe("paid");
     expect(updatedOrder?.currentStep).toBe("completed");
@@ -153,7 +165,7 @@ describe("eulen deposit webhook", () => {
     });
     const body = await response.json();
     const db = getDatabase(env);
-    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
 
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("invalid_webhook_secret");
@@ -170,7 +182,7 @@ describe("eulen deposit webhook", () => {
       authorizationHeader: "Basic alpha-eulen-secret",
     });
     const secondBody = await secondResponse.json();
-    const savedEvents = await listDepositEventsByDepositId(getDatabase(env), "alpha", "qr_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(getDatabase(env), "alpha", "deposit_entry_alpha_001");
 
     expect(firstResponse.status).toBe(200);
     expect(secondResponse.status).toBe(200);
@@ -193,7 +205,8 @@ describe("eulen deposit webhook", () => {
     await createDepositEvent(db, {
       tenantId: "alpha",
       orderId: "order_alpha_001",
-      depositId: "qr_alpha_001",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: "qr_alpha_001",
       source: "webhook",
       externalStatus: "depix_sent",
       bankTxId: "bank_tx_alpha_001",
@@ -207,8 +220,8 @@ describe("eulen deposit webhook", () => {
     });
     const body = await response.json();
     const repairedOrder = await getOrderById(db, "alpha", "order_alpha_001");
-    const repairedDeposit = await getDepositById(db, "alpha", "qr_alpha_001");
-    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+    const repairedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
 
     expect(response.status).toBe(200);
     expect(body.duplicate).toBe(true);
@@ -240,7 +253,8 @@ describe("eulen deposit webhook", () => {
     await createDepositEvent(db, {
       tenantId: "alpha",
       orderId: "order_alpha_001",
-      depositId: "qr_alpha_001",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: "qr_alpha_001",
       source: "webhook",
       externalStatus: "pending",
       bankTxId: "bank_tx_alpha_001",
@@ -250,14 +264,15 @@ describe("eulen deposit webhook", () => {
     await createDepositEvent(db, {
       tenantId: "alpha",
       orderId: "order_alpha_001",
-      depositId: "qr_alpha_001",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: "qr_alpha_001",
       source: "webhook",
       externalStatus: "depix_sent",
       bankTxId: "bank_tx_alpha_001",
       blockchainTxId: "blockchain_tx_alpha_001",
       rawPayload: JSON.stringify(latestPayload),
     });
-    await updateDepositById(db, "alpha", "qr_alpha_001", {
+    await updateDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001", {
       externalStatus: "depix_sent",
     });
     await updateOrderById(db, "alpha", "order_alpha_001", {
@@ -271,8 +286,8 @@ describe("eulen deposit webhook", () => {
     });
     const body = await response.json();
     const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
-    const currentDeposit = await getDepositById(db, "alpha", "qr_alpha_001");
-    const savedEvents = await listDepositEventsByDepositId(db, "alpha", "qr_alpha_001");
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
 
     expect(response.status).toBe(200);
     expect(body.duplicate).toBe(true);
@@ -299,5 +314,61 @@ describe("eulen deposit webhook", () => {
 
     expect(response.status).toBe(409);
     expect(body.error.code).toBe("tenant_mismatch");
+  });
+
+  it("hydrates qrId from deposit-status before applying webhook truth", async function assertWebhookQrHydration() {
+    await resetDatabaseSchema();
+
+    const db = getDatabase(env);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      userId: "telegram_alpha_001",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_alpha",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: null,
+      orderId: "order_alpha_001",
+      nonce: "nonce_alpha_001",
+      qrCopyPaste: "0002010102122688qr-alpha-001",
+      qrImageUrl: "https://example.com/qr/alpha.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+    const hydratedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.qrId).toBe("qr_alpha_001");
+    expect(hydratedDeposit?.qrId).toBe("qr_alpha_001");
+    expect(hydratedDeposit?.externalStatus).toBe("depix_sent");
   });
 });
