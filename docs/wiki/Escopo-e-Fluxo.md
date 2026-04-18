@@ -33,7 +33,7 @@
 - as fronteiras canonicas de rota ja existem
 - a resolucao de tenant no path ja existe
 - a persistencia base ja existe
-- a maquina XState da progressao inicial ja existe como modulo puro
+- a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta

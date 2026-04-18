@@ -59,6 +59,7 @@ function buildBootstrapBotInfo(tenantConfig) {
  * @param {string} telegramBotToken Token real do bot no Telegram.
  * @param {{
  *   runtimeConfig?: Record<string, unknown>,
+ *   db?: import("@cloudflare/workers-types").D1Database,
  *   requestContext?: {
  *     requestId?: string,
  *     method?: string,
@@ -75,6 +76,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
   installTelegramReplyFlow(bot, {
     tenant: tenantConfig,
     runtimeConfig: options.runtimeConfig,
+    db: options.db,
     requestContext: options.requestContext,
   });
 
@@ -93,6 +95,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
  *     telegramBotToken: string,
  *     options?: {
  *       runtimeConfig?: Record<string, unknown>,
+ *       db?: import("@cloudflare/workers-types").D1Database,
  *       requestContext?: {
  *         requestId?: string,
  *         method?: string,
@@ -107,6 +110,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
  *           telegramBotToken: string,
  *           telegramWebhookSecret?: string,
  *           runtimeConfig?: Record<string, unknown>,
+ *           db?: import("@cloudflare/workers-types").D1Database,
  *           requestContext?: {
  *             requestId?: string,
  *             method?: string,
@@ -132,6 +136,7 @@ export function createTelegramRuntime(tenantConfig) {
         : input;
       const bot = createTelegramBot(tenantConfig, options.telegramBotToken, {
         runtimeConfig: options.runtimeConfig,
+        db: options.db,
         requestContext: options.requestContext,
       });
 
@@ -155,6 +160,7 @@ export function createTelegramRuntime(tenantConfig) {
  *     telegramBotToken: string,
  *     options?: {
  *       runtimeConfig?: Record<string, unknown>,
+ *       db?: import("@cloudflare/workers-types").D1Database,
  *       requestContext?: {
  *         requestId?: string,
  *         method?: string,
@@ -169,6 +175,7 @@ export function createTelegramRuntime(tenantConfig) {
  *           telegramBotToken: string,
  *           telegramWebhookSecret?: string,
  *           runtimeConfig?: Record<string, unknown>,
+ *           db?: import("@cloudflare/workers-types").D1Database,
  *           requestContext?: {
  *             requestId?: string,
  *             method?: string,

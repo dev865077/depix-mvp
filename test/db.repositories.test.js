@@ -15,6 +15,7 @@ import {
 import {
   createOrder,
   getOrderById,
+  getLatestOpenOrderByUser,
   updateOrderById,
   updateOrderByIdWithStepGuard,
 } from "../src/db/repositories/orders-repository.js";
@@ -516,8 +517,42 @@ async function assertGuardedOrderTransitionWrite() {
   expect(missingWrite.order).toBeNull();
 }
 
+async function assertLatestOpenOrderLookup() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_closed_001",
+    userId: "telegram_user_002",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "completed",
+    status: "paid",
+  });
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_open_001",
+    userId: "telegram_user_002",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "draft",
+    status: "draft",
+  });
+
+  const latestOpenOrder = await getLatestOpenOrderByUser(db, "alpha", "telegram_user_002");
+  const missingTenantOrder = await getLatestOpenOrderByUser(db, "beta", "telegram_user_002");
+
+  expect(latestOpenOrder?.orderId).toBe("order_open_001");
+  expect(latestOpenOrder?.currentStep).toBe("draft");
+  expect(missingTenantOrder).toBeNull();
+}
+
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
   it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
+  it("finds the latest open order for a tenant user without reviving terminal orders", assertLatestOpenOrderLookup);
 });

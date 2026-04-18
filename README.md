@@ -30,7 +30,7 @@ Ainda não está completo no `main`:
 
 - o fluxo conversacional completo do bot
 - o caminho operacional completo de recheck
-- `XState` no código de produção, embora a arquitetura-alvo já o considere parte da stack
+- `XState` ja materializa e persiste o pedido inicial em `draft`, mas a progressao conversacional completa ainda nao foi ligada ao bot
 
 A leitura correta do projeto é simples: a fundação da plataforma já existe, e o trabalho restante é a evolução controlada do fluxo de negócio.
 
