@@ -13,6 +13,7 @@ const REVIEW_MARKER = "<!-- ai-pr-review:openai -->";
 const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
+const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-pr-discussion-final:openai -->";
 const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
@@ -22,9 +23,9 @@ const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_PATCH_CHARS_PER_FILE = 3000;
 const MAX_PR_BODY_CHARS = 3000;
 const MAX_REVIEW_INPUT_CHARS = 18000;
-const MAX_SYNTHESIS_INPUT_CHARS = 26000;
-const MAX_AGENT_MEMO_CHARS = 5000;
-const MAX_OUTPUT_TOKENS = 8000;
+const MAX_SYNTHESIS_INPUT_CHARS = 12000;
+const MAX_AGENT_MEMO_CHARS = 1600;
+const MAX_OUTPUT_TOKENS = 1400;
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
 const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
@@ -655,6 +656,123 @@ async function addDiscussionComment(discussionId, body) {
 }
 
 /**
+ * Fetch existing top-level Discussion comments so reruns update the automation
+ * trail instead of spamming duplicate reviewer comments.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @returns {Promise<Array<{ id: string, body: string }>>} Existing comments.
+ */
+async function fetchDiscussionComments(discussionId) {
+  const query = `
+    query($discussionId: ID!) {
+      node(id: $discussionId) {
+        ... on Discussion {
+          comments(first: 100) {
+            nodes {
+              id
+              body
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, { discussionId });
+
+  return data?.node?.comments?.nodes ?? [];
+}
+
+/**
+ * Update one top-level GitHub Discussion comment.
+ *
+ * @param {string} commentId Discussion comment node id.
+ * @param {string} body Markdown comment body.
+ * @returns {Promise<{ id: string, url: string }>} Updated comment.
+ */
+async function updateDiscussionComment(commentId, body) {
+  const mutation = `
+    mutation($commentId: ID!, $body: String!) {
+      updateDiscussionComment(input: {
+        commentId: $commentId,
+        body: $body
+      }) {
+        comment {
+          id
+          url
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(mutation, { commentId, body });
+  const comment = data?.updateDiscussionComment?.comment;
+
+  if (!comment?.id) {
+    throw new Error("GitHub GraphQL response did not include the updated discussion comment.");
+  }
+
+  return comment;
+}
+
+/**
+ * Create or update a single automation-owned Discussion comment.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @param {Array<{ id: string, body: string }>} existingComments Existing comments.
+ * @param {string} marker Stable marker that identifies this automation comment.
+ * @param {string} body Markdown body.
+ * @returns {Promise<"created" | "updated">} Publication action.
+ */
+async function upsertDiscussionComment(discussionId, existingComments, marker, body) {
+  const existingComment = existingComments.find((comment) => typeof comment.body === "string" && comment.body.includes(marker));
+
+  if (existingComment) {
+    await updateDiscussionComment(existingComment.id, body);
+
+    return "updated";
+  }
+
+  await addDiscussionComment(discussionId, body);
+
+  return "created";
+}
+
+/**
+ * Best-effort close for answerable/resolved Discussions. GitHub API support can
+ * differ by repository/category, so failure is logged but never blocks review
+ * publication.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @returns {Promise<boolean>} True when the close mutation succeeds.
+ */
+async function closeDiscussionResolved(discussionId) {
+  const mutation = `
+    mutation($discussionId: ID!) {
+      closeDiscussion(input: {
+        discussionId: $discussionId,
+        reason: RESOLVED
+      }) {
+        discussion {
+          id
+          closed
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await githubGraphqlRequest(mutation, { discussionId });
+
+    return data?.closeDiscussion?.discussion?.closed === true;
+  } catch (error) {
+    logOperationalEvent("ai_pr_review.discussion.close_failed", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+
+    return false;
+  }
+}
+
+/**
  * Classify one changed file into a repository-specific review category.
  *
  * @param {string} filename GitHub file path.
@@ -1095,6 +1213,60 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
 }
 
 /**
+ * Render a bounded memo when one model role fails. The synthesis can still make
+ * the operational state visible instead of timing out the whole job silently.
+ *
+ * @param {string} role Reviewer role.
+ * @param {unknown} error Failure from the model call.
+ * @returns {string} Safe reviewer memo.
+ */
+export function buildModelFailureMemo(role, error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return [
+    "## Perspective",
+    `The ${role} reviewer could not complete within the automation budget.`,
+    "",
+    "## Findings",
+    "- Automated review role failed before producing a memo.",
+    `- Failure: \`${truncateText(message, 240).replace(/`/g, "'")}\``,
+    "",
+    "## Questions",
+    "- None.",
+    "",
+    "## Merge posture",
+    "Request changes until the discussion review can be rerun or manually accepted by a maintainer.",
+  ].join("\n");
+}
+
+/**
+ * Render a valid synthesis when specialist or synthesis generation fails.
+ *
+ * @param {Array<{ role: string, error: unknown }>} failures Model failures.
+ * @returns {string} Valid final synthesis.
+ */
+export function buildDiscussionDebateFailureSynthesis(failures) {
+  const failureBullets = failures.length > 0
+    ? failures.map(({ role, error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return `- ${role} review did not complete: \`${truncateText(message, 220).replace(/`/g, "'")}\``;
+    })
+    : ["- Discussion review did not complete for an unknown operational reason."];
+
+  return [
+    "Request changes",
+    "",
+    "## Findings",
+    ...failureBullets,
+    "- Rerun the discussion review after the transient model/API issue is resolved.",
+    "",
+    "## Recommendation",
+    "Request changes",
+  ].join("\n");
+}
+
+/**
  * Run the multi-role debate and return each memo plus the merge synthesis.
  *
  * @param {{
@@ -1110,19 +1282,34 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
  */
 async function generateDiscussionDebate(promptBundle, userPrompt, model) {
   console.log("Starting multi-role PR discussion review.");
-  const [product, technical, risk] = await Promise.all([
+  const roleResults = await Promise.allSettled([
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt), userPrompt, model),
     generateModelMarkdown(composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt), userPrompt, model),
   ]);
+  const roleNames = ["Product and scope", "Technical and architecture", "Risk, security, and operations"];
+  const failures = roleResults.flatMap((result, index) =>
+    result.status === "rejected" ? [{ role: roleNames[index], error: result.reason }] : []);
+  const [product, technical, risk] = roleResults.map((result, index) =>
+    result.status === "fulfilled" ? result.value : buildModelFailureMemo(roleNames[index], result.reason));
 
   console.log("Specialist PR review memos completed. Starting synthesis.");
-  const synthesis = await generateModelMarkdown(
-    composeSystemPrompt(promptBundle.doctrine, promptBundle.synthesisPrompt),
-    buildSynthesisUserPrompt(userPrompt, { product, technical, risk }),
-    model,
-    { expectRecommendation: true, maxInputChars: MAX_SYNTHESIS_INPUT_CHARS },
-  );
+  let synthesis = "";
+
+  if (failures.length > 0) {
+    synthesis = buildDiscussionDebateFailureSynthesis(failures);
+  } else {
+    try {
+      synthesis = await generateModelMarkdown(
+        composeSystemPrompt(promptBundle.doctrine, promptBundle.synthesisPrompt),
+        buildSynthesisUserPrompt(userPrompt, { product, technical, risk }),
+        model,
+        { expectRecommendation: true, maxInputChars: MAX_SYNTHESIS_INPUT_CHARS },
+      );
+    } catch (error) {
+      synthesis = buildDiscussionDebateFailureSynthesis([{ role: "Synthesis", error }]);
+    }
+  }
 
   console.log("Multi-role PR discussion synthesis completed.");
   return { product, technical, risk, synthesis };
@@ -1171,22 +1358,84 @@ export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model)
 export function buildDiscussionReviewComments(debate) {
   return [
     {
+      key: "product",
       role: "Product and scope",
-      body: [DISCUSSION_COMMENT_MARKER, "## Product and scope review", "", debate.product].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:product -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:product -->",
+        "## Product and scope review",
+        "",
+        debate.product,
+      ].join("\n"),
     },
     {
+      key: "technical",
       role: "Technical and architecture",
-      body: [DISCUSSION_COMMENT_MARKER, "## Technical and architecture review", "", debate.technical].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:technical -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:technical -->",
+        "## Technical and architecture review",
+        "",
+        debate.technical,
+      ].join("\n"),
     },
     {
+      key: "risk",
       role: "Risk, security, and operations",
-      body: [DISCUSSION_COMMENT_MARKER, "## Risk, security, and operations review", "", debate.risk].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:risk -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:risk -->",
+        "## Risk, security, and operations review",
+        "",
+        debate.risk,
+      ].join("\n"),
     },
     {
+      key: "synthesis",
       role: "Synthesis",
-      body: [DISCUSSION_COMMENT_MARKER, "## Synthesis", "", debate.synthesis].join("\n"),
+      marker: "<!-- ai-pr-discussion-role:synthesis -->",
+      body: [
+        DISCUSSION_COMMENT_MARKER,
+        "<!-- ai-pr-discussion-role:synthesis -->",
+        "## Synthesis",
+        "",
+        debate.synthesis,
+      ].join("\n"),
     },
   ];
+}
+
+/**
+ * Build the final visible lifecycle comment for the Discussion.
+ *
+ * @param {string} synthesis Final synthesis markdown.
+ * @param {boolean} wasClosed Whether the Discussion close mutation succeeded.
+ * @returns {string} Final Discussion status comment.
+ */
+export function buildDiscussionCompletionComment(synthesis, wasClosed = false) {
+  const recommendation = extractReviewRecommendation(synthesis) ?? "Request changes";
+  const isApproved = recommendation === "Approve";
+  const statusLine = isApproved
+    ? "Discussion concluded: all automated reviewer roles completed and no unresolved blockers remain."
+    : "Discussion concluded: automated reviewers still request changes before merge.";
+  const closeLine = isApproved
+    ? wasClosed
+      ? "GitHub marked this Discussion as resolved."
+      : "GitHub did not expose a close action for this Discussion, so this comment is the visible closure marker."
+    : "The Discussion remains open because the synthesis is not approved.";
+
+  return [
+    DISCUSSION_FINAL_COMMENT_MARKER,
+    "## Discussion status",
+    "",
+    statusLine,
+    closeLine,
+    "",
+    `Final recommendation: \`${recommendation}\``,
+  ].join("\n");
 }
 
 /**
@@ -1392,14 +1641,33 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const discussionComments = buildDiscussionReviewComments(debate);
+    const existingComments = await fetchDiscussionComments(discussion.id);
 
     for (const comment of discussionComments) {
-      await addDiscussionComment(discussion.id, comment.body);
-      logOperationalEvent("ai_pr_review.discussion_comment.created", {
+      const action = await upsertDiscussionComment(discussion.id, existingComments, comment.marker, comment.body);
+      logOperationalEvent("ai_pr_review.discussion_comment.published", {
+        action,
         role: comment.role,
         discussionUrl: discussion.url,
       });
     }
+
+    const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
+    const wasClosed = recommendation === "Approve" ? await closeDiscussionResolved(discussion.id) : false;
+    const finalCommentBody = buildDiscussionCompletionComment(debate.synthesis, wasClosed);
+    const finalCommentAction = await upsertDiscussionComment(
+      discussion.id,
+      existingComments,
+      DISCUSSION_FINAL_COMMENT_MARKER,
+      finalCommentBody,
+    );
+
+    logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
+      action: finalCommentAction,
+      recommendation,
+      closed: wasClosed,
+      discussionUrl: discussion.url,
+    });
 
     return { url: discussion.url, failure: null };
   } catch (error) {

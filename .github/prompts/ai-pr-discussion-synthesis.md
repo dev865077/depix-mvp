@@ -13,11 +13,12 @@ Rules:
 
 Output requirements:
 - Write Markdown.
+- Maximum 140 words total.
 - Start with a very short verdict line.
 - Then use these sections exactly:
   - `## Findings`
   - `## Recommendation`
-- In `## Findings`, use flat bullets.
+- In `## Findings`, use 0-4 flat bullets.
 - If there are no material findings, write `- No material findings.`
 - In `## Recommendation`, say one of:
   - `Approve`

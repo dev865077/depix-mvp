@@ -14,11 +14,13 @@ Rules:
 
 Output requirements:
 - Write Markdown.
+- Maximum 180 words total.
 - Use these sections exactly:
   - `## Perspective`
   - `## Findings`
   - `## Questions`
   - `## Merge posture`
-- In `## Findings`, use flat bullets.
-- In `## Questions`, use flat bullets. Write `- None.` when there is nothing important to ask.
-- In `## Merge posture`, give one short paragraph saying whether the implementation is technically ready to merge.
+- In `## Perspective`, write at most 2 sentences.
+- In `## Findings`, use 0-3 flat bullets.
+- In `## Questions`, use 0-2 flat bullets. Write `- None.` when there is nothing important to ask.
+- In `## Merge posture`, write at most 2 sentences saying whether the implementation is technically ready to merge.

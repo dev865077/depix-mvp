@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidReviewRecommendation,
+  buildDiscussionCompletionComment,
+  buildDiscussionDebateFailureSynthesis,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
+  buildModelFailureMemo,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
@@ -180,6 +183,12 @@ describe("ai pr review discussion rendering", () => {
     });
 
     expect(roleComments).toHaveLength(4);
+    expect(roleComments.map((comment) => comment.marker)).toEqual([
+      "<!-- ai-pr-discussion-role:product -->",
+      "<!-- ai-pr-discussion-role:technical -->",
+      "<!-- ai-pr-discussion-role:risk -->",
+      "<!-- ai-pr-discussion-role:synthesis -->",
+    ]);
     expect(roleComments.map((comment) => comment.role)).toEqual([
       "Product and scope",
       "Technical and architecture",
@@ -187,6 +196,36 @@ describe("ai pr review discussion rendering", () => {
       "Synthesis",
     ]);
     expect(roleComments.every((comment) => comment.body.includes("<!-- ai-pr-discussion-review:openai -->"))).toBe(true);
+  });
+
+  it("builds a visible final discussion status comment", () => {
+    const approved = buildDiscussionCompletionComment(
+      "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      true,
+    );
+    const blocked = buildDiscussionCompletionComment(
+      "Request changes\n\n## Findings\n- Fix timeout handling.\n\n## Recommendation\nRequest changes",
+      false,
+    );
+
+    expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
+    expect(approved).toContain("Discussion concluded");
+    expect(approved).toContain("Final recommendation: `Approve`");
+    expect(approved).toContain("marked this Discussion as resolved");
+    expect(blocked).toContain("Final recommendation: `Request changes`");
+    expect(blocked).toContain("remains open");
+  });
+
+  it("turns model timeouts into bounded request-changes output", () => {
+    const memo = buildModelFailureMemo("Technical and architecture", new DOMException("Timed out", "TimeoutError"));
+    const synthesis = buildDiscussionDebateFailureSynthesis([
+      { role: "Technical and architecture", error: new DOMException("Timed out", "TimeoutError") },
+    ]);
+
+    expect(memo).toContain("could not complete");
+    expect(memo.length).toBeLessThan(900);
+    expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
+    expect(synthesis).toContain("Rerun the discussion review");
   });
 
   it("builds the model payload from the GitHub pull_request shape", () => {
