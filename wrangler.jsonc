@@ -1,7 +1,7 @@
 // Configuracao principal do Cloudflare Worker.
 // O arquivo diferencia local, teste e producao sem colocar segredos em codigo.
 // Em test e production, os segredos por tenant entram via Cloudflare Secrets Store.
-// Cada tenant precisa declarar splitConfig completo porque split e obrigatorio no MVP.
+// Cada tenant declara apenas bindings de split; valores financeiros ficam no Secrets Store.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "depix-mvp",
@@ -23,7 +23,7 @@
     "LOG_LEVEL": "debug",
     "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
     "EULEN_API_TIMEOUT_MS": "10000",
-    "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-alpha\",\"splitFee\":\"12.50\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-beta\",\"splitFee\":\"15.00\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
+    "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfigBindings\":{\"depixSplitAddress\":\"ALPHA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"ALPHA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfigBindings\":{\"depixSplitAddress\":\"BETA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"BETA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
   },
   "env": {
     "test": {
@@ -57,6 +57,16 @@
           "secret_name": "test-alpha-eulen-webhook-secret"
         },
         {
+          "binding": "ALPHA_DEPIX_SPLIT_ADDRESS",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-depix-split-address"
+        },
+        {
+          "binding": "ALPHA_DEPIX_SPLIT_FEE",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-alpha-depix-split-fee"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "test-beta-telegram-bot-token"
@@ -75,6 +85,16 @@
           "binding": "BETA_EULEN_WEBHOOK_SECRET",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "test-beta-eulen-webhook-secret"
+        },
+        {
+          "binding": "BETA_DEPIX_SPLIT_ADDRESS",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-depix-split-address"
+        },
+        {
+          "binding": "BETA_DEPIX_SPLIT_FEE",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-beta-depix-split-fee"
         }
       ],
       "vars": {
@@ -83,7 +103,7 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
-        "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-alpha\",\"splitFee\":\"12.50\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-beta\",\"splitFee\":\"15.00\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
+        "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfigBindings\":{\"depixSplitAddress\":\"ALPHA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"ALPHA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfigBindings\":{\"depixSplitAddress\":\"BETA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"BETA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
       }
     },
     "production": {
@@ -117,6 +137,16 @@
           "secret_name": "production-alpha-eulen-webhook-secret"
         },
         {
+          "binding": "ALPHA_DEPIX_SPLIT_ADDRESS",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-depix-split-address"
+        },
+        {
+          "binding": "ALPHA_DEPIX_SPLIT_FEE",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-alpha-depix-split-fee"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "production-beta-telegram-bot-token"
@@ -135,6 +165,16 @@
           "binding": "BETA_EULEN_WEBHOOK_SECRET",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "production-beta-eulen-webhook-secret"
+        },
+        {
+          "binding": "BETA_DEPIX_SPLIT_ADDRESS",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-depix-split-address"
+        },
+        {
+          "binding": "BETA_DEPIX_SPLIT_FEE",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-beta-depix-split-fee"
         }
       ],
       "vars": {
@@ -143,7 +183,7 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
-        "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-alpha\",\"splitFee\":\"12.50\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfig\":{\"depixSplitAddress\":\"split-address-beta\",\"splitFee\":\"15.00\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
+        "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfigBindings\":{\"depixSplitAddress\":\"ALPHA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"ALPHA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfigBindings\":{\"depixSplitAddress\":\"BETA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"BETA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
       }
     }
   }

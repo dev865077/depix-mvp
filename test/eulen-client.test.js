@@ -9,9 +9,12 @@ import {
   buildEulenRequestHeaders,
   createEulenDeposit,
   EulenApiError,
+  isEulenAsyncResponsePointer,
   normalizeAsyncMode,
   pingEulen,
+  readEulenAsyncResult,
   requestEulenApi,
+  resolveEulenAsyncResponse,
 } from "../src/clients/eulen-client.js";
 
 const RUNTIME_CONFIG = {
@@ -147,6 +150,107 @@ export async function assertDepositRequestShape() {
   expect(response.nonce).toBe("nonce_deposit_001");
 }
 
+export async function assertAsyncResultPolling() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response("not ready", { status: 404 }))
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({
+        id: "deposit_async_001",
+        qrCopyPaste: "00020101021226asyncqr",
+        qrImageUrl: "https://example.com/qr/deposit_async_001.png",
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
+    );
+
+  const result = await readEulenAsyncResult({
+    urlResponse: "https://example.com/eulen-async/deposit-success",
+    expiration: "2026-04-18T12:00:00.000Z",
+  }, {
+    maxAttempts: 2,
+    pollDelayMs: 0,
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(result.attempt).toBe(2);
+  expect(result.data.id).toBe("deposit_async_001");
+}
+
+export async function assertAsyncResponseResolution() {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({
+      response: {
+        id: "deposit_async_002",
+        qrCopyPaste: "00020101021226asyncqr2",
+        qrImageUrl: "https://example.com/qr/deposit_async_002.png",
+      },
+      async: false,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+  );
+
+  const resolved = await resolveEulenAsyncResponse({
+    ok: true,
+    status: 202,
+    nonce: "nonce_async_001",
+    asyncMode: "true",
+    headers: {},
+    data: {
+      async: true,
+      urlResponse: "https://example.com/eulen-async/deposit-success",
+      expiration: "2026-04-18T12:00:00.000Z",
+    },
+  }, {
+    pollDelayMs: 0,
+  });
+
+  expect(resolved.data.async).toBe(false);
+  expect(resolved.data.resolvedFromAsync).toBe(true);
+  expect(resolved.data.response.id).toBe("deposit_async_002");
+  expect(resolved.data.asyncResult.status).toBe(200);
+}
+
+export async function assertAsyncBusinessErrorMapping() {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({
+      errorMessage: "The split portion exceeds the maximum allowed for this amount.",
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+  );
+
+  await expect(resolveEulenAsyncResponse({
+    ok: true,
+    status: 202,
+    nonce: "nonce_async_error",
+    asyncMode: "true",
+    headers: {},
+    data: {
+      async: true,
+      urlResponse: "https://example.com/eulen-async/deposit-error",
+      expiration: "2026-04-18T12:00:00.000Z",
+    },
+  }, {
+    pollDelayMs: 0,
+  })).rejects.toMatchObject({
+    name: "EulenApiError",
+    details: {
+      code: "eulen_async_result_failed",
+      nonce: "nonce_async_error",
+    },
+  });
+}
+
 describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
@@ -164,4 +268,14 @@ describe("eulen client", () => {
   it("requires the mandatory split fields on deposit payloads", assertDepositSplitContract);
   it("fails fast before calling Eulen when split config is missing", assertDepositFailsFastWithoutSplit);
   it("sends deposit requests only when the split config is complete", assertDepositRequestShape);
+  it("detects asynchronous response pointers", function assertAsyncPointerDetection() {
+    expect(isEulenAsyncResponsePointer({
+      async: true,
+      urlResponse: "https://example.com/result",
+    })).toBe(true);
+    expect(isEulenAsyncResponsePointer({ async: false })).toBe(false);
+  });
+  it("polls asynchronous Eulen result URLs with a bounded retry policy", assertAsyncResultPolling);
+  it("normalizes asynchronous Eulen responses into the standard response envelope", assertAsyncResponseResolution);
+  it("maps asynchronous Eulen business errors to standardized client errors", assertAsyncBusinessErrorMapping);
 });

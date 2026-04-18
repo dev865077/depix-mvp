@@ -45,3 +45,11 @@ Estado atual:
 ## Regra operacional central
 
 Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
+
+## Split em deposit
+
+Toda chamada real de `deposit` deve carregar split do tenant. O codigo nao aceita endereco ou fee de split vindos do operador na rota operacional; ele resolve `depixSplitAddress` e `splitFee` a partir dos bindings secretos do tenant.
+
+Antes de chamar a Eulen, o diagnostico valida se o split foi materializado e se nao parece placeholder. Isso evita transformar erro de configuracao local em erro 520 upstream.
+
+O `depixSplitAddress` aceita o endereco de recebimento gerado pela SideSwap. Na pratica, isso inclui enderecos Liquid confidenciais com prefixo `lq1`. O runtime remove espacos visuais antes de montar o payload para a Eulen.

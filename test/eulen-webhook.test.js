@@ -15,9 +15,9 @@ const TENANT_REGISTRY = JSON.stringify({
   alpha: {
     displayName: "Alpha",
     eulenPartnerId: "partner-alpha",
-    splitConfig: {
-      depixSplitAddress: "split-address-alpha",
-      splitFee: "12.50",
+    splitConfigBindings: {
+      depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+      splitFee: "ALPHA_DEPIX_SPLIT_FEE",
     },
     secretBindings: {
       telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
@@ -29,9 +29,9 @@ const TENANT_REGISTRY = JSON.stringify({
   beta: {
     displayName: "Beta",
     eulenPartnerId: "partner-beta",
-    splitConfig: {
-      depixSplitAddress: "split-address-beta",
-      splitFee: "15.00",
+    splitConfigBindings: {
+      depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+      splitFee: "BETA_DEPIX_SPLIT_FEE",
     },
     secretBindings: {
       telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
@@ -55,10 +55,14 @@ function createWorkerEnv() {
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
+    ALPHA_DEPIX_SPLIT_ADDRESS: "split-address-alpha",
+    ALPHA_DEPIX_SPLIT_FEE: "12.50%",
     BETA_TELEGRAM_BOT_TOKEN: "beta-bot-token",
     BETA_TELEGRAM_WEBHOOK_SECRET: "beta-telegram-secret",
     BETA_EULEN_API_TOKEN: "beta-eulen-token",
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
+    BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
+    BETA_DEPIX_SPLIT_FEE: "15.00%",
   };
 }
 

@@ -65,7 +65,7 @@ export function assertPositiveInteger(value, key) {
  *     tenantId: string,
  *     displayName: string,
  *     eulenPartnerId?: string,
- *     splitConfig: {
+ *     splitConfigBindings: {
  *       depixSplitAddress: string,
  *       splitFee: string
  *     },
@@ -93,7 +93,10 @@ export function readRuntimeConfig(env) {
   }
 
   const tenants = readTenantRegistry(env);
-  const hasTenantSecretBindings = Object.values(tenants).every((tenant) => Object.values(tenant.secretBindings).every(Boolean));
+  const hasTenantSecretBindings = Object.values(tenants).every((tenant) => (
+    Object.values(tenant.secretBindings).every(Boolean)
+    && Object.values(tenant.splitConfigBindings).every(Boolean)
+  ));
 
   return {
     appName,
