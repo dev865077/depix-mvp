@@ -9,12 +9,15 @@ import { readTenantRegistry } from "./tenants.js";
 
 const APP_ENVIRONMENTS = new Set(["local", "test", "production"]);
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
+const TRUE_BOOLEAN_BINDING_VALUES = new Set(["true", "1", "yes", "on"]);
+const FALSE_BOOLEAN_BINDING_VALUES = new Set(["false", "0", "no", "off", ""]);
 
 /**
  * Normaliza uma flag textual de runtime.
  *
  * Flags de operacao ficam em `vars`, nao em codigo. Esta funcao trata ausencia
- * como `false` e aceita apenas o contrato explicito `true`/`false`.
+ * e valores desconhecidos como `false`, aceitando aliases operacionais comuns
+ * para evitar que um typo ou legado de deploy derrube o Worker inteiro.
  *
  * @param {string | undefined} value Valor bruto vindo do runtime.
  * @param {string} key Nome do binding para mensagens de erro.
@@ -27,15 +30,15 @@ export function readBooleanFlag(value, key) {
 
   const normalizedValue = value.trim().toLowerCase();
 
-  if (normalizedValue === "true") {
+  if (TRUE_BOOLEAN_BINDING_VALUES.has(normalizedValue)) {
     return true;
   }
 
-  if (normalizedValue === "false" || normalizedValue.length === 0) {
+  if (FALSE_BOOLEAN_BINDING_VALUES.has(normalizedValue)) {
     return false;
   }
 
-  throw new Error(`Invalid boolean binding: ${key}`);
+  return false;
 }
 
 /**

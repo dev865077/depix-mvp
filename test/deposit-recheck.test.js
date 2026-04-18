@@ -384,6 +384,23 @@ describe("deposit recheck route", () => {
     expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
   });
 
+  it("keeps the worker up and leaves the route disabled when the feature flag value is unknown", async function assertUnknownFeatureFlagIsSafe() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen when feature flag is invalid"));
+
+    const response = await requestDepositRecheck({
+      envOverrides: {
+        ENABLE_OPS_DEPOSIT_RECHECK: "maybe",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("ENABLE_OPS_DEPOSIT_RECHECK");
+  });
+
   it("disables the route when the operator bearer token binding is absent", async function assertRouteDisabledWithoutSecret() {
     await seedDepositAggregate();
 
@@ -434,6 +451,24 @@ describe("deposit recheck route", () => {
     expect(forbiddenResponse.status).toBe(403);
     expect(forbiddenBody.error.code).toBe("ops_authorization_invalid");
     expect(allowedResponse.status).toBe(200);
+  });
+
+  it("fails closed when a tenant-scoped operator token binding is declared but invalid", async function assertInvalidTenantScopedOperatorBinding() {
+    await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not call Eulen with invalid tenant-scoped binding"));
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer ops-route-test-token",
+      envOverrides: {
+        OPS_ROUTE_BEARER_TOKEN_ALPHA: "",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN_ALPHA");
   });
 
   it("fails explicitly when deposit-status points to a qrId already owned by another deposit", async function assertQrIdConflict() {
@@ -578,6 +613,38 @@ describe("deposit recheck route", () => {
     expect(currentOrder?.status).toBe("pending");
     expect(currentOrder?.currentStep).toBe("awaiting_payment");
     expect(savedEvents).toHaveLength(0);
+
+    batchSpy.mockRestore();
+  });
+
+  it("fails explicitly when the atomic batch cannot re-read the reconciled aggregate", async function assertMissingAggregateSnapshotAfterBatch() {
+    const { db } = await seedDepositAggregate();
+    const batchSpy = vi.spyOn(db, "batch").mockResolvedValueOnce([
+      { results: [{ id: "event_recheck_001" }] },
+      { success: true, results: [] },
+      { success: true, results: [] },
+      { results: [] },
+      { results: [] },
+    ]);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("deposit_recheck_persistence_incomplete");
 
     batchSpy.mockRestore();
   });

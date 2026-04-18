@@ -349,11 +349,25 @@ async function persistDepositRecheckAtomically(db, tenantId, depositEntryId, ord
   const results = await db.batch(statements);
   const depositResult = results.at(-2);
   const orderResult = results.at(-1);
+  const updatedDeposit = depositResult?.results?.[0] ?? null;
+  const updatedOrder = orderResult?.results?.[0] ?? null;
+
+  if (!updatedDeposit || !updatedOrder) {
+    throw new DepositRecheckError(
+      500,
+      "deposit_recheck_persistence_incomplete",
+      "Atomic recheck write completed without a readable aggregate snapshot.",
+      {
+        depositEntryId,
+        orderId,
+      },
+    );
+  }
 
   return {
     savedEvent: results[0]?.results?.[0] ?? null,
-    updatedDeposit: depositResult?.results?.[0] ?? null,
-    updatedOrder: orderResult?.results?.[0] ?? null,
+    updatedDeposit,
+    updatedOrder,
   };
 }
 
@@ -396,10 +410,24 @@ async function persistAggregateRepairAtomically(db, tenantId, depositEntryId, or
   const results = await db.batch(statements);
   const depositResult = results.at(-2);
   const orderResult = results.at(-1);
+  const updatedDeposit = depositResult?.results?.[0] ?? null;
+  const updatedOrder = orderResult?.results?.[0] ?? null;
+
+  if (!updatedDeposit || !updatedOrder) {
+    throw new DepositRecheckError(
+      500,
+      "deposit_recheck_persistence_incomplete",
+      "Aggregate repair completed without a readable aggregate snapshot.",
+      {
+        depositEntryId,
+        orderId,
+      },
+    );
+  }
 
   return {
-    updatedDeposit: depositResult?.results?.[0] ?? null,
-    updatedOrder: orderResult?.results?.[0] ?? null,
+    updatedDeposit,
+    updatedOrder,
   };
 }
 

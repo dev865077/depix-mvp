@@ -91,14 +91,13 @@ async function readExpectedOpsBearerToken(env, tenantId) {
   const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(tenantId);
 
   if (tenantScopedBindingName) {
-    try {
+    const tenantScopedBindingDeclared = Object.prototype.hasOwnProperty.call(env, tenantScopedBindingName);
+
+    if (tenantScopedBindingDeclared) {
       return {
         bindingName: tenantScopedBindingName,
         token: await readSecretBindingValue(env, tenantScopedBindingName),
       };
-    } catch {
-      // Fallback intencional para o binding global enquanto a migracao para
-      // segredos por tenant ainda estiver em andamento.
     }
   }
 
@@ -179,6 +178,10 @@ export async function authorizeOpsRoute(input) {
 
   let expectedBearerToken;
   let expectedBearerBindingName;
+  const tenantScopedBindingName = resolveTenantScopedOpsBearerBindingName(input.tenantId);
+  const tenantScopedBindingDeclared = tenantScopedBindingName
+    ? Object.prototype.hasOwnProperty.call(input.env, tenantScopedBindingName)
+    : false;
 
   try {
     const resolvedBearerToken = await readExpectedOpsBearerToken(input.env, input.tenantId);
@@ -191,7 +194,9 @@ export async function authorizeOpsRoute(input) {
       "ops_route_disabled",
       "Operational route is disabled because its bearer token is not configured.",
       {
-        bindingName: expectedBearerBindingName ?? OPS_ROUTE_BEARER_TOKEN_BINDING,
+        bindingName: expectedBearerBindingName
+          ?? (tenantScopedBindingDeclared ? tenantScopedBindingName : undefined)
+          ?? OPS_ROUTE_BEARER_TOKEN_BINDING,
         environment: input.runtimeConfig.environment,
         tenantId: input.tenantId,
       },
