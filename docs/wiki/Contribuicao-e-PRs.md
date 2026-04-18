@@ -32,6 +32,13 @@ Explicitar:
 - o que nao foi validado
 - qual risco residual ficou aberto
 
+## Fluxo de documentacao da wiki
+
+- a pasta `docs/wiki` e o espelho versionado da wiki
+- apos merge de PR, o workflow de atualizacao da wiki pode propor e publicar ajustes automaticamente
+- mudancas manuais em pages da wiki continuam sujeitas a revisao normal de PR
+- nao criar paginas novas sem necessidade real
+
 ## Leitura correta
 
 PR pequena, coesa e verificavel e a unidade normal de progresso do projeto.

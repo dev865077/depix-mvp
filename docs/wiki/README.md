@@ -28,6 +28,7 @@ Esta proposta se apoia em quatro referencias principais:
 - footer fixo com fonte de verdade e caminho de manutencao
 - pagina nova de `Roadmap e Backlog`
 - linguagem mais consistente entre produto, arquitetura, engenharia e operacao
+- atualizacao automatica da pasta `docs/wiki` apos merge de PR, com publicacao da wiki real quando houver mudanca
 
 ## Paginas
 
@@ -58,3 +59,4 @@ Depois da aprovacao:
 1. sincronizar esta pasta com `depix-mvp.wiki.git`
 2. publicar no branch default da wiki
 3. validar links, sidebar e footer na wiki real
+4. manter a sincronizacao automatica via workflow de atualizacao da wiki quando um PR for mergeado

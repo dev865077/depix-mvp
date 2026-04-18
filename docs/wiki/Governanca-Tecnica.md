@@ -18,6 +18,7 @@
 - arvore formal de ADRs independentes
 - runbooks operacionais mais completos
 - consolidacao final da estrategia de CI
+- governanca da manutencao automatica da wiki apos merge
 
 ## Regra de longo prazo
 
