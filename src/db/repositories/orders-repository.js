@@ -171,3 +171,58 @@ export async function updateOrderById(db, tenantId, orderId, patch) {
 
   return selectResult.results[0];
 }
+
+/**
+ * Atualiza um pedido somente se ele ainda estiver no passo esperado.
+ *
+ * Esta e a operacao recomendada para aplicar saidas da maquina XState. O
+ * `expectedCurrentStep` funciona como compare-and-set simples no D1: se outro
+ * request ja tiver avancado o pedido, o `UPDATE` nao toca em nenhuma linha e a
+ * camada de servico recebe `conflict: true` para observar/reagir sem sobrescrever
+ * o estado mais novo.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} orderId Identificador do pedido.
+ * @param {string} expectedCurrentStep Passo que a camada leu antes da transicao.
+ * @param {Record<string, unknown>} patch Campos permitidos para update.
+ * @returns {Promise<{order: Record<string, unknown> | null, didUpdate: boolean, conflict: boolean}>}
+ */
+export async function updateOrderByIdWithStepGuard(db, tenantId, orderId, expectedCurrentStep, patch) {
+  const patchEntries = getAllowedPatchEntries(
+    {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    },
+    ORDER_UPDATE_COLUMNS,
+  );
+
+  if (patchEntries.length === 0) {
+    return {
+      order: await getOrderById(db, tenantId, orderId),
+      didUpdate: false,
+      conflict: false,
+    };
+  }
+
+  // A guarda de current_step transforma a escrita em uma transicao condicional.
+  // Isso protege contra retries, webhooks duplicados e requests concorrentes.
+  const setClause = patchEntries.map(([column]) => `${column} = ?`).join(", ");
+  const values = patchEntries.map(([, value]) => value);
+  const updateStatement = db
+    .prepare(`UPDATE orders SET ${setClause} WHERE tenant_id = ? AND order_id = ? AND current_step = ?`)
+    .bind(...values, tenantId, orderId, expectedCurrentStep);
+  const selectStatement = db.prepare(`${ORDER_SELECT_SQL} WHERE tenant_id = ? AND order_id = ? LIMIT 1`).bind(
+    tenantId,
+    orderId,
+  );
+  const [updateResult, selectResult] = await db.batch([updateStatement, selectStatement]);
+  const changedRows = updateResult.meta?.changes;
+  const didUpdate = typeof changedRows === "number" ? changedRows > 0 : selectResult.results[0]?.currentStep === patch.currentStep;
+
+  return {
+    order: selectResult.results[0] ?? null,
+    didUpdate,
+    conflict: !didUpdate,
+  };
+}

@@ -70,6 +70,17 @@ Fluxo recomendado dentro do Worker:
 com `tenantId` e `orderId`. Isso evita que uma request atrasada sobrescreva uma
 transicao mais nova do mesmo pedido.
 
+O repositorio de pedidos expoe `updateOrderByIdWithStepGuard()` para aplicar
+esse contrato no D1. Em caso de conflito, a funcao retorna `conflict: true` e o
+pedido atual, sem sobrescrever a linha.
+
+## Compatibilidade de dados
+
+A maquina aceita somente estados canonicos conhecidos. Linhas ja existentes que
+usem `draft`, `wallet`, `awaiting_payment` ou `completed` continuam dentro do
+vocabulario atual. Qualquer valor legado fora dessa lista deve ser normalizado
+por migracao ou tratado explicitamente antes de chamar `advanceOrderProgression()`.
+
 Para Durable Objects, a regra muda apenas se houver necessidade real de
 coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente
 para a progressao do pedido.
