@@ -1294,11 +1294,10 @@ export function buildDiscussionReviewComments(debate) {
 /**
  * Build the final visible lifecycle comment for the Discussion.
  *
- * @param {string} synthesis Final synthesis markdown.
+ * @param {string} recommendation Parsed final recommendation.
  * @returns {string} Final Discussion status comment.
  */
-export function buildDiscussionCompletionComment(synthesis) {
-  const recommendation = extractReviewRecommendation(synthesis) ?? "Request changes";
+export function buildDiscussionCompletionComment(recommendation) {
   const isApproved = recommendation === "Approve";
   const statusLine = isApproved
     ? "Discussion concluded: all automated reviewer roles completed and no unresolved blockers remain."
@@ -1532,7 +1531,7 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const recommendation = extractReviewRecommendation(debate.synthesis) ?? "Request changes";
-    const finalCommentBody = buildDiscussionCompletionComment(debate.synthesis);
+    const finalCommentBody = buildDiscussionCompletionComment(recommendation);
     await addDiscussionComment(discussion.id, finalCommentBody);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {

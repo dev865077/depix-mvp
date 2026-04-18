@@ -45,11 +45,13 @@ Explicitar:
 - PR que muda codigo de produto, workflow, configuracao, prompt operacional, script, integracao ou comportamento entra em Discussion antes do merge
 - PR grande de docs/testes tambem entra em Discussion, porque tamanho por si so aumenta risco de revisao
 - a Discussion e um artefato de revisao: produto/escopo, tecnica/arquitetura, risco/operacao e sintese final
+- a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - a PR so fica pronta para merge quando a sintese nao trouxer blocker material ou quando um mantenedor registrar explicitamente que aceitou o risco residual
 - a Discussion nao substitui os checks obrigatorios; ela documenta decisao, risco e alinhamento antes do merge
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
-- se a publicacao da Discussion falhar, o workflow deve degradar para comentario na PR com a sintese e o erro operacional, sem bloquear por indisponibilidade transitoria do GitHub Discussions
+- se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
+- se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional
 
 ## Fluxo de documentacao da wiki
