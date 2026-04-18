@@ -104,6 +104,8 @@
 - `/health` confirma `configuration.operations.depositRecheck.tenantOverrides.state` como sinal redigido de overrides locais; `invalid_config` nesse campo nao derruba a prontidao global, mas indica que ao menos um tenant com override declarado falhara fechado ate o segredo ser corrigido
 - `/health` mantem `configuration.tenants` como inventario legado de tenants para compatibilidade operacional e adiciona `configuration.tenantSummary` para checagens agregadas novas
 - `/health` nao lista detalhes tenant-level dentro de `tenantOverrides`; esse contrato e redigido por desenho: `{ state, invalidCount }`. A trilha tenant-level fica nos logs estruturados de request/config, com `requestId`, `tenantId`, `authScope`, `bindingName` operacional e outcome.
+- migracao de consumidores de `/health`: dashboards e probes existentes podem continuar lendo `configuration.tenants`; novos checks devem preferir `configuration.tenantSummary` para contagem/configuracao e `configuration.operations.depositRecheck` para a rota operacional
+- nomenclatura canonica: o log estruturado de configuracao usa `config.deposit_recheck.tenant_override_invalid`; a API de health usa `configuration.operations.depositRecheck.tenantOverrides.state = "invalid_config"` como sinal publico final
 - operadores sabem pela documentacao que override por tenant e opt-in e declarado no `TENANT_REGISTRY`
 - rollback rapido documentado por flag e por rotacao/remocao do segredo
 

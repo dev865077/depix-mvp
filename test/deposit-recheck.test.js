@@ -215,8 +215,8 @@ describe("deposit recheck route", () => {
       qrId: null,
     });
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
+      return new Response(JSON.stringify({
         qrId: "qr_alpha_001",
         status: "depix_sent",
         expiration: "2026-04-18T04:00:00Z",
@@ -225,8 +225,8 @@ describe("deposit recheck route", () => {
         headers: {
           "content-type": "application/json",
         },
-      }),
-    );
+      });
+    });
 
     const response = await requestDepositRecheck();
     const body = await response.json();
@@ -464,8 +464,8 @@ describe("deposit recheck route", () => {
   it("prefers tenant-scoped operator tokens over the global fallback token", async function assertTenantScopedOperatorToken() {
     await seedDepositAggregate();
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
+      return new Response(JSON.stringify({
         qrId: "qr_alpha_001",
         status: "depix_sent",
         expiration: "2026-04-18T04:00:00Z",
@@ -474,8 +474,8 @@ describe("deposit recheck route", () => {
         headers: {
           "content-type": "application/json",
         },
-      }),
-    );
+      });
+    });
 
     const forbiddenResponse = await requestDepositRecheck({
       authorizationHeader: "Bearer ops-route-test-token",
@@ -496,6 +496,118 @@ describe("deposit recheck route", () => {
     expect(forbiddenResponse.status).toBe(403);
     expect(forbiddenBody.error.code).toBe("ops_authorization_invalid");
     expect(allowedResponse.status).toBe(200);
+  });
+
+  it("proves declared tenant-scoped auth rejects the global token before upstream IO", async function assertTenantScopedOverrideRejectsGlobalTokenAtRoute() {
+    await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("global token must not reach Eulen when tenant override exists"),
+    );
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer ops-route-test-token",
+      envOverrides: {
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-token",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("ops_authorization_invalid");
+    expect(body.error.details.authScope).toBe("tenant");
+    expect(body.error.details.bindingName).toBe("ALPHA_OPS_ROUTE_BEARER_TOKEN");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("proves declared tenant-scoped auth accepts the tenant token at the route", async function assertTenantScopedOverrideAcceptsTenantTokenAtRoute() {
+    await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck({
+      authorizationHeader: "Bearer alpha-ops-token",
+      envOverrides: {
+        TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
+        ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-token",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("proves sequential retry idempotency at the route without duplicating recheck events", async function assertRouteLevelSequentialRetryIdempotency() {
+    const { db } = await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
+      return new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const firstResponse = await requestDepositRecheck();
+    const secondResponse = await requestDepositRecheck();
+    const secondBody = await secondResponse.json();
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(secondBody.duplicate).toBe(true);
+    expect(savedEvents).toHaveLength(1);
+  });
+
+  it("proves route-level terminal aggregates reject regressive remote statuses", async function assertRouteLevelTerminalRegressionProtection() {
+    const { db } = await seedDepositAggregate({
+      externalStatus: "depix_sent",
+      status: "paid",
+      currentStep: "completed",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "pending",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("deposit_status_regression");
+    expect(currentDeposit?.externalStatus).toBe("depix_sent");
+    expect(currentOrder?.status).toBe("paid");
+    expect(currentOrder?.currentStep).toBe("completed");
   });
 
   it("fails closed when a tenant-scoped operator token binding is declared but invalid", async function assertInvalidTenantScopedOperatorBinding() {

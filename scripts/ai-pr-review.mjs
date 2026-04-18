@@ -21,8 +21,9 @@ const RUN_MODE_DISCUSSION = "discussion";
 const MAX_FILES = 24;
 const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_PATCH_CHARS_PER_FILE = 7000;
+const MAX_CRITICAL_PATCH_CHARS_PER_FILE = 50000;
 const MAX_PR_BODY_CHARS = 3000;
-const MAX_REVIEW_INPUT_CHARS = 80000;
+const MAX_REVIEW_INPUT_CHARS = 200000;
 const MAX_SYNTHESIS_INPUT_CHARS = 16000;
 const MAX_AGENT_MEMO_CHARS = 2600;
 const MAX_OUTPUT_TOKENS = 2200;
@@ -893,9 +894,26 @@ function getFileReviewPriority(file) {
   const normalizedPath = normalizeRepositoryPath(file?.filename);
   const category = classifyReviewFile(normalizedPath);
   const categoryPriority = REVIEW_FILE_PRIORITY_BY_CATEGORY[category] ?? REVIEW_FILE_PRIORITY_BY_CATEGORY.other;
-  const criticalPathBoost = REVIEW_CRITICAL_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath)) ? 30 : 0;
+  const criticalPathBoost = isCriticalReviewFile(file) ? 30 : 0;
 
   return categoryPriority + criticalPathBoost;
+}
+
+/**
+ * Identify files whose diffs carry merge-critical operational evidence.
+ *
+ * These files own auth, persistence, health readiness, and request-level
+ * regression tests. They still compete inside the same bounded prompt, but each
+ * receives a larger per-file patch budget so a reviewer does not see the file
+ * name while missing the behavior that proves the current PR state.
+ *
+ * @param {any} file GitHub changed-file payload.
+ * @returns {boolean} True when the file should use the critical patch budget.
+ */
+function isCriticalReviewFile(file) {
+  const normalizedPath = normalizeRepositoryPath(file?.filename);
+
+  return REVIEW_CRITICAL_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
 }
 
 /**
@@ -1063,7 +1081,8 @@ function buildFilesReviewPayload(files) {
   const orderedFiles = sortFilesForReview(files);
   const selectedFiles = orderedFiles.slice(0, MAX_FILES);
   const sections = selectedFiles.map((file) => {
-    const patch = truncateText(file.patch ?? "[no patch available]", MAX_PATCH_CHARS_PER_FILE);
+    const patchLimit = isCriticalReviewFile(file) ? MAX_CRITICAL_PATCH_CHARS_PER_FILE : MAX_PATCH_CHARS_PER_FILE;
+    const patch = truncateText(file.patch ?? "[no patch available]", patchLimit);
 
     return [
       `### ${file.filename}`,

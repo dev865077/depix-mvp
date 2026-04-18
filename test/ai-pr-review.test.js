@@ -479,9 +479,14 @@ describe("ai pr review discussion rendering", () => {
       {
         filename: "src/services/eulen-deposit-recheck.js",
         status: "modified",
-        additions: 3,
+        additions: 650,
         deletions: 0,
-        patch: "@@\n+D1 batch persists audit event\n+aggregate updates stay idempotent\n+RECHECK_SENTINEL",
+        patch: [
+          "@@",
+          "+D1 batch persists audit event",
+          ...Array.from({ length: 640 }, () => "+critical recheck implementation evidence"),
+          "+RECHECK_SENTINEL",
+        ].join("\n"),
       },
       {
         filename: "src/routes/health.js",
@@ -530,6 +535,12 @@ describe("ai pr review discussion rendering", () => {
       expect(body).toContain(sentinel);
     }
 
+    const recheckSection = body.slice(
+      body.indexOf("### src/services/eulen-deposit-recheck.js"),
+      body.indexOf("### src/services/ops-route-authorization.js"),
+    );
+
+    expect(recheckSection).not.toContain("[truncated]");
     expect(body.indexOf("### src/services/eulen-deposit-recheck.js")).toBeLessThan(
       body.indexOf("### docs/wiki/Long-0.md"),
     );
