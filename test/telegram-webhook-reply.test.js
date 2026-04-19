@@ -405,6 +405,7 @@ describe("telegram webhook reply flow", () => {
       orderId: "order_help_amount",
       userId: "13211",
       currentStep: "amount",
+      status: "draft",
       amountInCents: null,
       walletAddress: null,
       expectedGuidance: "aguardando o valor",
@@ -413,6 +414,7 @@ describe("telegram webhook reply flow", () => {
       orderId: "order_help_wallet",
       userId: "13212",
       currentStep: "wallet",
+      status: "draft",
       amountInCents: 1050,
       walletAddress: null,
       expectedGuidance: "aguardando o endereço DePix/Liquid",
@@ -421,9 +423,28 @@ describe("telegram webhook reply flow", () => {
       orderId: "order_help_confirmation",
       userId: "13213",
       currentStep: "confirmation",
+      status: "draft",
       amountInCents: 1050,
       walletAddress: SIDESWAP_LQ_ADDRESS,
       expectedGuidance: "aguardando confirmação",
+    },
+    {
+      orderId: "order_help_creating_deposit",
+      userId: "13214",
+      currentStep: "creating_deposit",
+      status: "processing",
+      amountInCents: 1050,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      expectedGuidance: "criando o depósito Pix",
+    },
+    {
+      orderId: "order_help_awaiting_payment",
+      userId: "13215",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      amountInCents: 1050,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      expectedGuidance: "aguardando pagamento",
     },
   ])("answers /help from $currentStep without mutating the open order", async function assertHelpDoesNotMutateOrder(entry) {
     const app = createApp();
@@ -438,7 +459,7 @@ describe("telegram webhook reply flow", () => {
       amountInCents: entry.amountInCents,
       walletAddress: entry.walletAddress,
       currentStep: entry.currentStep,
-      status: "draft",
+      status: entry.status,
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
@@ -509,7 +530,7 @@ describe("telegram webhook reply flow", () => {
     expect(replies[0]).toContain("recomecar");
     expect(persistedOrder?.orderId).toBe(entry.orderId);
     expect(persistedOrder?.currentStep).toBe(entry.currentStep);
-    expect(persistedOrder?.status).toBe("draft");
+    expect(persistedOrder?.status).toBe(entry.status);
     expect(persistedOrder?.amountInCents).toBe(entry.amountInCents);
     expect(persistedOrder?.walletAddress).toBe(entry.walletAddress);
     expect(count?.count).toBe(1);

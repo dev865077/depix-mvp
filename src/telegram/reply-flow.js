@@ -644,6 +644,7 @@ function buildTelegramAmountPrompt(tenant) {
     "Para começar, envie o valor em BRL que você quer comprar.",
     "Exemplo: 100,00",
     "Se precisar de ajuda, envie /help.",
+    "Para recomeçar um pedido aberto, envie recomecar.",
   ].join("\n\n");
 }
 
