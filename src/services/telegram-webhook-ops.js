@@ -1,0 +1,287 @@
+/**
+ * Operacoes autenticadas de webhook do Telegram.
+ *
+ * Este modulo existe para tornar verificacao e registro de webhook uma
+ * ferramenta real de suporte, sem depender do gate de diagnostico local usado
+ * por investigacoes de desenvolvimento. O contrato aqui e:
+ * - autenticar na Bot API com os segredos reais do tenant
+ * - nunca expor o token do bot nem o secret do webhook
+ * - devolver apenas metadados operacionais e respostas redigidas do Telegram
+ */
+import { readTenantSecret } from "../config/tenants.js";
+
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+
+/**
+ * Erro controlado das operacoes de webhook do Telegram.
+ *
+ * A borda HTTP converte este erro em JSON estavel sem precisar conhecer a
+ * origem exata da falha interna.
+ */
+export class TelegramWebhookOpsError extends Error {
+  /**
+   * @param {number} status Status HTTP desejado para a resposta.
+   * @param {string} code Codigo estavel para troubleshooting.
+   * @param {string} message Mensagem principal.
+   * @param {Record<string, unknown>=} details Metadados adicionais.
+   * @param {unknown=} cause Erro original.
+   */
+  constructor(status, code, message, details = {}, cause = undefined) {
+    super(message, {
+      cause,
+    });
+
+    this.name = "TelegramWebhookOpsError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+/**
+ * Le um segredo obrigatorio do tenant com erro operacional estruturado.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @param {{ tenantId: string, secretBindings?: Record<string, string> }} tenant Tenant atual.
+ * @param {"telegramBotToken" | "telegramWebhookSecret"} secretKey Chave logica do segredo.
+ * @returns {Promise<string>} Valor materializado do segredo.
+ */
+async function readRequiredTelegramTenantSecret(env, tenant, secretKey) {
+  const bindingName = tenant.secretBindings?.[secretKey];
+
+  try {
+    return await readTenantSecret(env, tenant, secretKey);
+  } catch (error) {
+    throw new TelegramWebhookOpsError(
+      503,
+      "telegram_webhook_dependency_unavailable",
+      `Telegram webhook operation could not resolve the tenant secret ${secretKey}.`,
+      {
+        tenantId: tenant.tenantId,
+        secretKey,
+        bindingName,
+        cause: error instanceof Error ? error.message : String(error),
+      },
+      error,
+    );
+  }
+}
+
+/**
+ * Normaliza uma URL base publica para operacoes do webhook.
+ *
+ * @param {string | undefined} rawBaseUrl URL bruta informada pelo operador.
+ * @returns {string | null} URL canonica sem barra final.
+ */
+export function normalizeTelegramWebhookPublicBaseUrl(rawBaseUrl) {
+  if (typeof rawBaseUrl !== "string" || rawBaseUrl.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    return new URL(rawBaseUrl).toString().replace(/\/$/u, "");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Monta a URL canonica do webhook para um tenant.
+ *
+ * @param {string} publicBaseUrl Base publica do Worker.
+ * @param {string} tenantId Tenant atual.
+ * @returns {string} URL final do webhook.
+ */
+function buildTelegramWebhookUrl(publicBaseUrl, tenantId) {
+  return `${publicBaseUrl}/telegram/${tenantId}/webhook`;
+}
+
+/**
+ * Executa uma chamada para a Bot API do Telegram.
+ *
+ * @param {string} botToken Token real do bot.
+ * @param {string} method Metodo da Bot API.
+ * @param {Record<string, unknown>=} payload Payload opcional.
+ * @returns {Promise<{ ok: true, httpStatus: number, body: Record<string, unknown> | null }>} Resultado bruto redigido.
+ */
+async function callTelegramApi(botToken, method, payload = undefined) {
+  try {
+    const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${botToken}/${method}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+    const responseBody = await response.json().catch(() => null);
+
+    if (!response.ok || responseBody?.ok === false) {
+      throw new TelegramWebhookOpsError(
+        502,
+        "telegram_api_request_failed",
+        `Telegram API call ${method} failed.`,
+        {
+          method,
+          httpStatus: response.status,
+          responseBody,
+        },
+      );
+    }
+
+    return {
+      ok: true,
+      httpStatus: response.status,
+      body: responseBody,
+    };
+  } catch (error) {
+    if (error instanceof TelegramWebhookOpsError) {
+      throw error;
+    }
+
+    throw new TelegramWebhookOpsError(
+      502,
+      "telegram_api_transport_failed",
+      `Telegram API call ${method} could not be completed.`,
+      {
+        method,
+        cause: error instanceof Error ? error.message : String(error),
+      },
+      error,
+    );
+  }
+}
+
+/**
+ * Resume a identidade publica do bot sem expor o payload cru da Bot API.
+ *
+ * @param {Record<string, unknown> | null | undefined} responseBody Corpo decodificado de `getMe`.
+ * @returns {{ id: number | null, isBot: boolean | null, username: string | null }} Shape redigido.
+ */
+function summarizeTelegramBotIdentity(responseBody) {
+  const result = responseBody?.result;
+
+  return {
+    id: typeof result?.id === "number" ? result.id : null,
+    isBot: typeof result?.is_bot === "boolean" ? result.is_bot : null,
+    username: typeof result?.username === "string" ? result.username : null,
+  };
+}
+
+/**
+ * Resume o estado do webhook em um shape operacional estavel.
+ *
+ * @param {Record<string, unknown> | null | undefined} responseBody Corpo decodificado de `getWebhookInfo`.
+ * @returns {{
+ *   url: string | null,
+ *   hasCustomCertificate: boolean | null,
+ *   pendingUpdateCount: number | null,
+ *   maxConnections: number | null,
+ *   allowedUpdates: string[] | null,
+ *   lastErrorDate: number | null,
+ *   lastErrorMessage: string | null
+ * }} Estado redigido do webhook.
+ */
+function summarizeTelegramWebhookInfo(responseBody) {
+  const result = responseBody?.result;
+
+  return {
+    url: typeof result?.url === "string" ? result.url : null,
+    hasCustomCertificate: typeof result?.has_custom_certificate === "boolean"
+      ? result.has_custom_certificate
+      : null,
+    pendingUpdateCount: Number.isInteger(result?.pending_update_count)
+      ? result.pending_update_count
+      : null,
+    maxConnections: Number.isInteger(result?.max_connections)
+      ? result.max_connections
+      : null,
+    allowedUpdates: Array.isArray(result?.allowed_updates)
+      ? result.allowed_updates.filter((entry) => typeof entry === "string")
+      : null,
+    lastErrorDate: Number.isInteger(result?.last_error_date) ? result.last_error_date : null,
+    lastErrorMessage: typeof result?.last_error_message === "string"
+      ? result.last_error_message
+      : null,
+  };
+}
+
+/**
+ * Busca `getMe` e `getWebhookInfo` do tenant autenticado.
+ *
+ * @param {{
+ *   env: Record<string, unknown>,
+ *   tenant: { tenantId: string, secretBindings?: Record<string, string> },
+ *   environment: string,
+ *   publicBaseUrl?: string | null
+ * }} input Dependencias operacionais.
+ * @returns {Promise<Record<string, unknown>>} Snapshot do bot e do webhook.
+ */
+export async function getTelegramWebhookOpsInfo(input) {
+  const telegramBotToken = await readRequiredTelegramTenantSecret(input.env, input.tenant, "telegramBotToken");
+  const expectedWebhookUrl = input.publicBaseUrl
+    ? buildTelegramWebhookUrl(input.publicBaseUrl, input.tenant.tenantId)
+    : null;
+  const [getMeResult, getWebhookInfoResult] = await Promise.all([
+    callTelegramApi(telegramBotToken, "getMe"),
+    callTelegramApi(telegramBotToken, "getWebhookInfo"),
+  ]);
+
+  return {
+    ok: true,
+    tenantId: input.tenant.tenantId,
+    environment: input.environment,
+    expectedWebhookUrl,
+    telegramApi: {
+      getMeHttpStatus: getMeResult.httpStatus,
+      getWebhookInfoHttpStatus: getWebhookInfoResult.httpStatus,
+    },
+    bot: summarizeTelegramBotIdentity(getMeResult.body),
+    webhook: summarizeTelegramWebhookInfo(getWebhookInfoResult.body),
+  };
+}
+
+/**
+ * Registra explicitamente o webhook do tenant atual.
+ *
+ * @param {{
+ *   env: Record<string, unknown>,
+ *   tenant: { tenantId: string, secretBindings?: Record<string, string> },
+ *   environment: string,
+ *   publicBaseUrl: string | null
+ * }} input Dependencias operacionais.
+ * @returns {Promise<Record<string, unknown>>} Resultado da operacao.
+ */
+export async function registerTelegramWebhookOps(input) {
+  if (!input.publicBaseUrl) {
+    throw new TelegramWebhookOpsError(
+      400,
+      "public_base_url_required",
+      "A valid publicBaseUrl is required to register the Telegram webhook.",
+    );
+  }
+
+  const [telegramBotToken, telegramWebhookSecret] = await Promise.all([
+    readRequiredTelegramTenantSecret(input.env, input.tenant, "telegramBotToken"),
+    readRequiredTelegramTenantSecret(input.env, input.tenant, "telegramWebhookSecret"),
+  ]);
+  const webhookUrl = buildTelegramWebhookUrl(input.publicBaseUrl, input.tenant.tenantId);
+  const setWebhookResult = await callTelegramApi(telegramBotToken, "setWebhook", {
+    url: webhookUrl,
+    secret_token: telegramWebhookSecret,
+    allowed_updates: ["message"],
+  });
+  const getWebhookInfoResult = await callTelegramApi(telegramBotToken, "getWebhookInfo");
+
+  return {
+    ok: true,
+    tenantId: input.tenant.tenantId,
+    environment: input.environment,
+    webhookUrl,
+    telegramApi: {
+      setWebhookHttpStatus: setWebhookResult.httpStatus,
+      getWebhookInfoHttpStatus: getWebhookInfoResult.httpStatus,
+    },
+    registered: true,
+    webhook: summarizeTelegramWebhookInfo(getWebhookInfoResult.body),
+  };
+}

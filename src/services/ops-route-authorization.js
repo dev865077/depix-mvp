@@ -27,6 +27,68 @@ const DEPOSIT_RECHECK_OPERATION = {
 };
 
 /**
+ * Resolve apenas o gate de feature-flag de uma operacao `/ops`.
+ *
+ * Algumas rotas operacionais mutam agregados financeiros e precisam de rollout
+ * explicito por flag; outras, como diagnostico autenticado de webhook, dependem
+ * apenas do bearer operacional. Separar este passo permite reutilizar a mesma
+ * autorizacao sem acoplar toda rota `/ops` ao contrato de flag financeira.
+ *
+ * @param {{
+ *   runtimeConfig: {
+ *     environment: string,
+ *     operations?: Record<string, {
+ *       enabled?: boolean,
+ *       featureFlag?: {
+ *         configured?: boolean,
+ *         recognized?: boolean,
+ *         rawValue?: string | null
+ *       }
+ *     }>
+ *   },
+ *   operation?: {
+ *     runtimeKey: string,
+ *     featureFlagBindingName: string,
+ *     invalidFlagCode: string,
+ *     disabledCode: string
+ *   },
+ *   tenantId?: string
+ * }} input Dependencias e metadados da rota.
+ * @returns {void}
+ */
+export function assertOpsOperationEnabled(input) {
+  const operation = input.operation ?? DEPOSIT_RECHECK_OPERATION;
+  const featureFlag = input.runtimeConfig.operations?.[operation.runtimeKey]?.featureFlag;
+
+  if (featureFlag?.configured && !featureFlag.recognized) {
+    throw new OpsRouteAuthorizationError(
+      503,
+      operation.invalidFlagCode,
+      `Operational route is disabled because ${operation.featureFlagBindingName} has an invalid value.`,
+      {
+        bindingName: operation.featureFlagBindingName,
+        environment: input.runtimeConfig.environment,
+        tenantId: input.tenantId,
+        rawValue: featureFlag.rawValue ?? null,
+      },
+    );
+  }
+
+  if (!input.runtimeConfig.operations?.[operation.runtimeKey]?.enabled) {
+    throw new OpsRouteAuthorizationError(
+      503,
+      operation.disabledCode,
+      `Operational route is disabled because ${operation.featureFlagBindingName} is not enabled.`,
+      {
+        bindingName: operation.featureFlagBindingName,
+        environment: input.runtimeConfig.environment,
+        tenantId: input.tenantId,
+      },
+    );
+  }
+}
+
+/**
  * Erro controlado de autorizacao de rota operacional.
  */
 export class OpsRouteAuthorizationError extends Error {
@@ -124,28 +186,16 @@ export function constantTimeStringEquals(left, right) {
 }
 
 /**
- * Garante que a rota operacional esteja habilitada e autenticada.
+ * Garante que a requisicao operacional autenticada enviou o bearer correto.
+ *
+ * Esta funcao e a camada compartilhada de autenticacao de `/ops`. Ela nao
+ * assume feature flag; apenas resolve o segredo esperado, valida o header e
+ * registra negacoes com metadados redigidos.
  *
  * @param {{
  *   env: Record<string, unknown>,
  *   runtimeConfig: {
- *     environment: string,
- *     operations?: {
- *       depositRecheck?: {
- *         enabled?: boolean,
- *         featureFlag?: {
- *           configured?: boolean,
- *           recognized?: boolean,
- *           rawValue?: string | null
- *         }
- *       }
- *     }
- *   },
- *   operation?: {
- *     runtimeKey: string,
- *     featureFlagBindingName: string,
- *     invalidFlagCode: string,
- *     disabledCode: string
+ *     environment: string
  *   },
  *   authorizationHeader?: string,
  *   requestId?: string,
@@ -155,37 +205,7 @@ export function constantTimeStringEquals(left, right) {
  * }} input Dependencias e metadados da requisicao.
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
  */
-export async function authorizeOpsRoute(input) {
-  const operation = input.operation ?? DEPOSIT_RECHECK_OPERATION;
-  const featureFlag = input.runtimeConfig.operations?.[operation.runtimeKey]?.featureFlag;
-
-  if (featureFlag?.configured && !featureFlag.recognized) {
-    throw new OpsRouteAuthorizationError(
-      503,
-      operation.invalidFlagCode,
-      `Operational route is disabled because ${operation.featureFlagBindingName} has an invalid value.`,
-      {
-        bindingName: operation.featureFlagBindingName,
-        environment: input.runtimeConfig.environment,
-        tenantId: input.tenantId,
-        rawValue: featureFlag.rawValue ?? null,
-      },
-    );
-  }
-
-  if (!input.runtimeConfig.operations?.[operation.runtimeKey]?.enabled) {
-    throw new OpsRouteAuthorizationError(
-      503,
-      operation.disabledCode,
-      `Operational route is disabled because ${operation.featureFlagBindingName} is not enabled.`,
-      {
-        bindingName: operation.featureFlagBindingName,
-        environment: input.runtimeConfig.environment,
-        tenantId: input.tenantId,
-      },
-    );
-  }
-
+export async function authorizeOpsRequest(input) {
   let expectedBearerToken;
   let expectedBearerBindingName;
   let expectedAuthScope;
@@ -271,4 +291,42 @@ export async function authorizeOpsRoute(input) {
     bindingName: expectedBearerBindingName,
     authScope: expectedAuthScope,
   };
+}
+
+/**
+ * Garante que a rota operacional esteja habilitada e autenticada.
+ *
+ * @param {{
+ *   env: Record<string, unknown>,
+ *   runtimeConfig: {
+ *     environment: string,
+ *     operations?: {
+ *       depositRecheck?: {
+ *         enabled?: boolean,
+ *         featureFlag?: {
+ *           configured?: boolean,
+ *           recognized?: boolean,
+ *           rawValue?: string | null
+ *         }
+ *       }
+ *     }
+ *   },
+ *   operation?: {
+ *     runtimeKey: string,
+ *     featureFlagBindingName: string,
+ *     invalidFlagCode: string,
+ *     disabledCode: string
+ *   },
+ *   authorizationHeader?: string,
+ *   requestId?: string,
+ *   tenant?: { tenantId: string, opsBindings?: { depositRecheckBearerToken?: string } },
+ *   tenantId?: string,
+ *   path?: string
+ * }} input Dependencias e metadados da requisicao.
+ * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
+ */
+export async function authorizeOpsRoute(input) {
+  assertOpsOperationEnabled(input);
+
+  return authorizeOpsRequest(input);
 }

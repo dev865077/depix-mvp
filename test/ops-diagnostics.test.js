@@ -91,7 +91,7 @@ describe("ops diagnostics routes", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const { response, body } = await requestJson(
       app,
-      "https://example.com/ops/alpha/telegram/register-webhook",
+      "https://example.com/ops/alpha/eulen/create-deposit",
       {
         method: "POST",
         headers: {
@@ -457,62 +457,6 @@ describe("ops diagnostics routes", () => {
     expect(response.status).toBe(502);
     expect(body.error.code).toBe("eulen_async_deposit_failed");
     expect(body.error.details.errorMessage).toContain("split portion exceeds");
-  });
-
-  it("returns structured Telegram diagnostics when local validation is enabled", async function assertTelegramDiagnosticsSuccess() {
-    const app = createApp();
-    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input) {
-      const url = String(input);
-
-      if (url.includes("/getMe")) {
-        return new Response(JSON.stringify({
-          ok: true,
-          result: {
-            id: 123456,
-            is_bot: true,
-            username: "depix_alpha_test_bot",
-          },
-        }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        });
-      }
-
-      if (url.includes("/getWebhookInfo")) {
-        return new Response(JSON.stringify({
-          ok: true,
-          result: {
-            url: "https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook",
-            pending_update_count: 0,
-          },
-        }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        });
-      }
-
-      throw new Error(`Unexpected Telegram method call: ${url}`);
-    });
-
-    const { response, body } = await requestJson(
-      app,
-      "https://example.com/ops/alpha/telegram/webhook-info?baseUrl=https://depix-mvp-test.dev865077.workers.dev",
-      { method: "GET" },
-      createWorkerEnv({
-        ENABLE_LOCAL_DIAGNOSTICS: "true",
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.tenantId).toBe("alpha");
-    expect(body.expectedWebhookUrl).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
-    expect(body.getMe.body.result.username).toBe("depix_alpha_test_bot");
-    expect(body.getWebhookInfo.body.result.url).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
   });
 
   it("allows Eulen diagnostics to run without unrelated Telegram secret values", async function assertEulenSecretIsolation() {
