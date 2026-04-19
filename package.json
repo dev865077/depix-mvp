@@ -19,6 +19,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "bech32": "2.0.0",
+    "blech32": "1.1.2",
     "grammy": "^1.42.0",
     "hono": "4.12.12",
     "xstate": "^5.30.0"

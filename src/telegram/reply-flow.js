@@ -9,7 +9,16 @@
  */
 import { log } from "../lib/logger.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
-import { receiveTelegramOrderAmount, startTelegramOrderConversation } from "../services/order-registration.js";
+import {
+  cancelTelegramOpenOrder,
+  receiveTelegramOrderAmount,
+  receiveTelegramOrderWallet,
+  startTelegramOrderConversation,
+} from "../services/order-registration.js";
+import {
+  confirmTelegramOrder,
+  TelegramOrderConfirmationError,
+} from "../services/telegram-order-confirmation.js";
 import { formatBrlAmountInCents } from "./brl-amount.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
@@ -25,6 +34,7 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
  * @param {import("grammy").Bot} bot Instancia do bot atual.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
+ *   env?: Record<string, unknown>,
  *   runtimeConfig?: Record<string, unknown>,
  *   db?: import("@cloudflare/workers-types").D1Database,
  *   requestContext?: {
@@ -71,21 +81,102 @@ export function installTelegramReplyFlow(bot, input) {
       "text_message_reply",
       async function replyToTextMessage(ctx) {
         const orderSession = await startTelegramConversationOrder(ctx, input);
-        const amountSession = await receiveTelegramOrderAmount({
-          db: input.db,
-          tenant: input.tenant,
-          order: orderSession.order,
-          rawText: ctx.msg.text,
-        });
+        const normalizedText = normalizeTelegramDecisionText(ctx.msg.text);
 
-        logTelegramAmountResult(ctx, input, amountSession);
+        if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.AMOUNT) {
+          const amountSession = await receiveTelegramOrderAmount({
+            db: input.db,
+            tenant: input.tenant,
+            order: orderSession.order,
+            rawText: ctx.msg.text,
+          });
 
-        if (amountSession.parseResult && !amountSession.parseResult.ok) {
-          await ctx.reply(buildTelegramInvalidAmountReply(amountSession.parseResult));
+          logTelegramAmountResult(ctx, input, amountSession);
+
+          if (amountSession.parseResult && !amountSession.parseResult.ok) {
+            await ctx.reply(buildTelegramInvalidAmountReply(amountSession.parseResult));
+            return;
+          }
+
+          await ctx.reply(buildTelegramOrderStepReply(input.tenant, amountSession.order));
           return;
         }
 
-        await ctx.reply(buildTelegramOrderStepReply(input.tenant, amountSession.order));
+        if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.WALLET) {
+          const walletSession = await receiveTelegramOrderWallet({
+            db: input.db,
+            tenant: input.tenant,
+            order: orderSession.order,
+            rawText: ctx.msg.text,
+          });
+
+          logTelegramWalletResult(ctx, input, walletSession);
+
+          if (walletSession.parseResult && !walletSession.parseResult.ok) {
+            await ctx.reply(buildTelegramInvalidWalletReply(walletSession.parseResult));
+            return;
+          }
+
+          await ctx.reply(buildTelegramOrderStepReply(input.tenant, walletSession.order));
+          return;
+        }
+
+        if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.CONFIRMATION) {
+          if (isTelegramCancellationDecision(normalizedText)) {
+            const canceledSession = await cancelTelegramOpenOrder({
+              db: input.db,
+              tenant: input.tenant,
+              order: orderSession.order,
+            });
+
+            logTelegramConfirmationDecision(ctx, input, "cancel", canceledSession.order, {
+              accepted: canceledSession.accepted,
+              conflict: canceledSession.conflict,
+            });
+
+            await ctx.reply(buildTelegramCanceledReply());
+            return;
+          }
+
+          if (isTelegramConfirmationDecision(normalizedText)) {
+            try {
+              const confirmationSession = await confirmTelegramOrder({
+                env: input.env,
+                db: input.db,
+                tenant: input.tenant,
+                runtimeConfig: input.runtimeConfig,
+                order: orderSession.order,
+              });
+
+              logTelegramConfirmationDecision(ctx, input, "confirm", confirmationSession.order, {
+                accepted: confirmationSession.accepted,
+                conflict: confirmationSession.conflict,
+                depositEntryId: confirmationSession.deposit?.depositEntryId,
+              });
+
+              if (confirmationSession.deposit) {
+                await sendTelegramDepositReadyReply(ctx, input.tenant, confirmationSession.order, confirmationSession.deposit);
+                return;
+              }
+
+              await ctx.reply(buildTelegramOrderStepReply(input.tenant, confirmationSession.order));
+              return;
+            } catch (error) {
+              if (error instanceof TelegramOrderConfirmationError) {
+                logTelegramConfirmationFailure(ctx, input, orderSession.order, error);
+                await ctx.reply(error.userMessage);
+                return;
+              }
+
+              throw error;
+            }
+          }
+
+          await ctx.reply(buildTelegramConfirmationPrompt(orderSession.order));
+          return;
+        }
+
+        await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
       },
     ),
   );
@@ -175,10 +266,7 @@ export function buildTelegramOrderStepReply(tenant, order) {
     case ORDER_PROGRESS_STATES.WALLET:
       return buildTelegramWalletPrompt(tenant, order);
     case ORDER_PROGRESS_STATES.CONFIRMATION:
-      return [
-        `Seu pedido ${tenant.displayName} está aguardando confirmação.`,
-        "Revise os dados e confirme quando estiver tudo certo.",
-      ].join("\n\n");
+      return buildTelegramConfirmationPrompt(order);
     case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
       return [
         `Seu pedido ${tenant.displayName} já está criando o depósito Pix.`,
@@ -220,6 +308,26 @@ export function buildTelegramInvalidAmountReply(parseResult) {
 }
 
 /**
+ * Mensagem de rejeicao para endereco DePix/Liquid invalido.
+ *
+ * @param {{ reason: string }} parseResult Resultado invalido do parser.
+ * @returns {string} Texto final para o usuario.
+ */
+export function buildTelegramInvalidWalletReply(parseResult) {
+  const reasonByCode = {
+    empty: "Você enviou uma mensagem vazia.",
+    uri_not_supported: "Envie apenas o endereço, sem URI ou prefixo de aplicativo.",
+    invalid_format: "Não reconheci esse endereço.",
+  };
+
+  return [
+    reasonByCode[parseResult.reason] ?? "Não reconheci esse endereço.",
+    "Cole um endereço DePix/Liquid começando com lq1 ou ex1.",
+    "Se a SideSwap mostrar o endereço quebrado em grupos, pode colar tudo como aparece.",
+  ].join("\n\n");
+}
+
+/**
  * Mensagem para a etapa de coleta do endereco DePix/Liquid.
  *
  * @param {{ displayName: string }} tenant Tenant atual.
@@ -235,6 +343,142 @@ function buildTelegramWalletPrompt(tenant, order) {
     amountLine,
     "Agora envie seu endereço DePix/Liquid para continuarmos.",
   ].join("\n\n");
+}
+
+/**
+ * Mensagem de resumo para confirmacao antes de criar deposito.
+ *
+ * @param {{ amountInCents?: unknown, walletAddress?: unknown }} order Pedido aberto.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramConfirmationPrompt(order) {
+  const amountLine = Number.isSafeInteger(order?.amountInCents)
+    ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
+    : "Valor: pendente";
+  const walletLine = typeof order?.walletAddress === "string" && order.walletAddress.length > 0
+    ? `Endereço: ${order.walletAddress}`
+    : "Endereço: pendente";
+
+  return [
+    "Confira seu pedido:",
+    amountLine,
+    walletLine,
+    "Se estiver tudo certo, envie: sim, confirmar ou ok.",
+    "Se quiser encerrar este pedido, envie: cancelar.",
+  ].join("\n");
+}
+
+/**
+ * Mensagem curta para pedido cancelado pelo usuario.
+ *
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramCanceledReply() {
+  return [
+    "Pedido cancelado com sucesso.",
+    "Quando quiser tentar de novo, envie /start.",
+  ].join("\n\n");
+}
+
+/**
+ * Mensagem principal enviada quando o Pix foi criado com sucesso.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ amountInCents?: unknown }} order Pedido confirmado.
+ * @returns {string} Texto curto de orientacao.
+ */
+function buildTelegramDepositReadyCaption(tenant, order) {
+  const amountLine = Number.isSafeInteger(order?.amountInCents)
+    ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
+    : "Valor: conforme pedido";
+
+  return [
+    `Pedido confirmado em ${tenant.displayName}.`,
+    amountLine,
+    "Seu Pix ja foi gerado.",
+  ].join("\n");
+}
+
+/**
+ * Mensagem de copia-e-cola do Pix.
+ *
+ * @param {{ qrCopyPaste?: unknown }} deposit Deposito criado na Eulen.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramPixCopyPasteReply(deposit) {
+  return [
+    "Pix copia e cola:",
+    String(deposit?.qrCopyPaste ?? ""),
+  ].join("\n");
+}
+
+/**
+ * Envia a resposta final do Pix ao usuario com fallback para texto puro.
+ *
+ * O envio da imagem do QR e desejavel, mas nao pode impedir a entrega do
+ * copia-e-cola. Se o `sendPhoto` falhar por qualquer motivo do Telegram, o
+ * bot ainda devolve o texto util na mesma conversa.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ amountInCents?: unknown }} order Pedido confirmado.
+ * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown }} deposit Deposito criado.
+ * @returns {Promise<void>} Promessa resolvida apos os envios.
+ */
+async function sendTelegramDepositReadyReply(ctx, tenant, order, deposit) {
+  const caption = buildTelegramDepositReadyCaption(tenant, order);
+  const copyPasteReply = buildTelegramPixCopyPasteReply(deposit);
+
+  if (typeof deposit?.qrImageUrl === "string" && deposit.qrImageUrl.length > 0) {
+    try {
+      await ctx.replyWithPhoto(deposit.qrImageUrl, {
+        caption,
+      });
+      await ctx.reply(copyPasteReply);
+      return;
+    } catch {
+      await ctx.reply(caption);
+      await ctx.reply(copyPasteReply);
+      return;
+    }
+  }
+
+  await ctx.reply(caption);
+  await ctx.reply(copyPasteReply);
+}
+
+/**
+ * Normaliza o texto livre usado como decisao na etapa de confirmacao.
+ *
+ * @param {string} text Texto bruto recebido.
+ * @returns {string} Texto reduzido para comparacao.
+ */
+function normalizeTelegramDecisionText(text) {
+  return typeof text === "string"
+    ? text.trim().toLowerCase()
+    : "";
+}
+
+/**
+ * Detecta comandos curtos de confirmacao.
+ *
+ * @param {string} normalizedText Texto ja normalizado.
+ * @returns {boolean} Verdadeiro quando a mensagem confirma o pedido.
+ */
+function isTelegramConfirmationDecision(normalizedText) {
+  return normalizedText === "sim"
+    || normalizedText === "confirmar"
+    || normalizedText === "ok";
+}
+
+/**
+ * Detecta o cancelamento simples do pedido na etapa de confirmacao.
+ *
+ * @param {string} normalizedText Texto ja normalizado.
+ * @returns {boolean} Verdadeiro quando a mensagem pede cancelamento.
+ */
+function isTelegramCancellationDecision(normalizedText) {
+  return normalizedText === "cancelar";
 }
 
 /**
@@ -421,6 +665,109 @@ function logTelegramAmountResult(ctx, input, amountSession) {
     amountInCents: amountSession.parseResult.amountInCents,
     currentStep: amountSession.order.currentStep,
     status: amountSession.order.status,
+  });
+}
+
+/**
+ * Registra o resultado da tentativa de interpretar endereco DePix/Liquid.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   conflict: boolean,
+ *   parseResult: { ok: boolean, reason?: string, walletAddress?: string } | null
+ * }} walletSession Resultado do service de endereco.
+ */
+function logTelegramWalletResult(ctx, input, walletSession) {
+  if (!walletSession.parseResult) {
+    return;
+  }
+
+  if (!walletSession.parseResult.ok) {
+    logTelegramEvent(input, "info", "telegram.order.wallet_rejected", {
+      handlerName: ctx.state.telegramHandler,
+      orderId: walletSession.order.orderId,
+      userId: walletSession.order.userId,
+      reason: walletSession.parseResult.reason,
+      currentStep: walletSession.order.currentStep,
+    });
+    return;
+  }
+
+  logTelegramEvent(input, walletSession.conflict ? "warn" : "info", walletSession.accepted
+    ? "telegram.order.wallet_received"
+    : "telegram.order.wallet_conflict", {
+    handlerName: ctx.state.telegramHandler,
+    orderId: walletSession.order.orderId,
+    userId: walletSession.order.userId,
+    walletAddressPrefix: walletSession.parseResult.walletAddress?.slice(0, 3),
+    currentStep: walletSession.order.currentStep,
+    status: walletSession.order.status,
+  });
+}
+
+/**
+ * Registra o resultado de uma decisao de confirmacao ou cancelamento.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {"confirm" | "cancel"} decision Tipo da decisao do usuario.
+ * @param {Record<string, unknown>} order Pedido apos a tentativa.
+ * @param {Record<string, unknown>} details Metadados adicionais.
+ */
+function logTelegramConfirmationDecision(ctx, input, decision, order, details) {
+  logTelegramEvent(input, "info", `telegram.order.${decision}_handled`, {
+    handlerName: ctx.state.telegramHandler,
+    orderId: order.orderId,
+    userId: order.userId,
+    currentStep: order.currentStep,
+    status: order.status,
+    ...details,
+  });
+}
+
+/**
+ * Registra falhas controladas da confirmacao antes da resposta ao usuario.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {Record<string, unknown>} order Pedido que tentou confirmar.
+ * @param {{ code: string, details?: Record<string, unknown> }} error Erro controlado do service.
+ */
+function logTelegramConfirmationFailure(ctx, input, order, error) {
+  logTelegramEvent(input, "warn", "telegram.order.confirmation_failed", {
+    handlerName: ctx.state.telegramHandler,
+    orderId: order.orderId,
+    userId: order.userId,
+    currentStep: order.currentStep,
+    errorCode: error.code,
+    ...error.details,
   });
 }
 

@@ -58,6 +58,7 @@ function buildBootstrapBotInfo(tenantConfig) {
  * @param {{ tenantId: string, displayName: string }} tenantConfig Tenant resolvido.
  * @param {string} telegramBotToken Token real do bot no Telegram.
  * @param {{
+ *   env?: Record<string, unknown>,
  *   runtimeConfig?: Record<string, unknown>,
  *   db?: import("@cloudflare/workers-types").D1Database,
  *   requestContext?: {
@@ -75,6 +76,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
 
   installTelegramReplyFlow(bot, {
     tenant: tenantConfig,
+    env: options.env,
     runtimeConfig: options.runtimeConfig,
     db: options.db,
     requestContext: options.requestContext,
@@ -109,6 +111,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
  *       | {
  *           telegramBotToken: string,
  *           telegramWebhookSecret?: string,
+ *           env?: Record<string, unknown>,
  *           runtimeConfig?: Record<string, unknown>,
  *           db?: import("@cloudflare/workers-types").D1Database,
  *           requestContext?: {
@@ -135,6 +138,7 @@ export function createTelegramRuntime(tenantConfig) {
         ? { telegramBotToken: input }
         : input;
       const bot = createTelegramBot(tenantConfig, options.telegramBotToken, {
+        env: options.env,
         runtimeConfig: options.runtimeConfig,
         db: options.db,
         requestContext: options.requestContext,

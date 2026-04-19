@@ -53,6 +53,7 @@ export async function handleTelegramWebhook(c) {
   const webhookHandler = telegramRuntime.createWebhookCallback({
     telegramBotToken,
     telegramWebhookSecret,
+    env: c.env,
     runtimeConfig,
     db,
     requestContext: {

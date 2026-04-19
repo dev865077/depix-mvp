@@ -167,6 +167,28 @@ export async function getDepositByQrId(db, tenantId, qrId) {
 }
 
 /**
+ * Busca o deposito mais recente associado a um pedido local.
+ *
+ * O fluxo do Telegram usa esta leitura como ancora de idempotencia depois da
+ * confirmacao do usuario. Se um retry ou webhook duplicado chegar apos a
+ * cobranca ja ter sido criada, a camada de servico consegue reutilizar o
+ * deposito existente sem disparar uma nova chamada externa.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} orderId Identificador local do pedido.
+ * @returns {Promise<Record<string, unknown> | null>} Deposito mais recente do pedido, se existir.
+ */
+export async function getLatestDepositByOrderId(db, tenantId, orderId) {
+  return db.prepare(
+    `${DEPOSIT_SELECT_SQL}
+     WHERE tenant_id = ? AND order_id = ?
+     ORDER BY julianday(updated_at) DESC, julianday(created_at) DESC
+     LIMIT 1`,
+  ).bind(tenantId, orderId).first();
+}
+
+/**
  * Lista depositos que ainda precisam de reconciliacao segura de `qrId`.
  *
  * O conjunto inclui:
