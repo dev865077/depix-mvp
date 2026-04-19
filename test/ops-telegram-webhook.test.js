@@ -138,6 +138,63 @@ describe("ops telegram webhook routes", () => {
     expect(body.webhook.url).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
   });
 
+  it("ignores the legacy baseUrl query alias so the ops contract stays canonical", async function assertWebhookInfoCanonicalQueryContract() {
+    const app = createApp();
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input) {
+      const url = String(input);
+
+      if (url.includes("/getMe")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            id: 123456,
+            is_bot: true,
+            username: "depix_alpha_test_bot",
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/getWebhookInfo")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            url: "https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook",
+            pending_update_count: 0,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected Telegram method call: ${url}`);
+    });
+
+    const { response, body } = await requestJson(
+      app,
+      "https://example.com/ops/alpha/telegram/webhook-info?baseUrl=https://depix-mvp-test.dev865077.workers.dev",
+      {
+        method: "GET",
+        headers: {
+          authorization: "Bearer ops-route-test-token",
+        },
+      },
+      createWorkerEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.expectedWebhookUrl).toBeNull();
+  });
+
   it("registers the tenant webhook with secret token and message-only updates", async function assertWebhookRegistrationSuccess() {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {

@@ -383,9 +383,7 @@ export async function handleTelegramWebhookInfo(c) {
       env: c.env,
       tenant,
       environment: runtimeConfig.environment,
-      publicBaseUrl: normalizeTelegramWebhookPublicBaseUrl(
-        c.req.query("publicBaseUrl") ?? c.req.query("baseUrl") ?? undefined,
-      ),
+      publicBaseUrl: normalizeTelegramWebhookPublicBaseUrl(c.req.query("publicBaseUrl") ?? undefined),
     }));
   } catch (error) {
     return handleTelegramWebhookOpsRouteError(c, error, {
