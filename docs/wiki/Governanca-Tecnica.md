@@ -26,7 +26,9 @@
 - issue nova pode receber triagem automatica de impacto
 - `baixo` segue para PR direta
 - `medio` e `alto` geram Discussion com debate curto entre perspectivas de produto, tecnica e risco
-- a decisao registrada na issue e na Discussion vira insumo para a PR pequena e coesa
+- quando a triagem abrir Discussion, a issue entra na lane de planning review com quatro papeis especializados: produto, technical, scrum e risk
+- a decisao registrada na Discussion vira insumo para a PR pequena e coesa
+- a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis
 
 ## Regra de longo prazo
 
