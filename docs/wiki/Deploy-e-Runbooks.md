@@ -9,6 +9,14 @@
 - `npm run db:query:local`
 - `npm run deploy:test`
 - `npm run deploy:production`
+- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO]`
+
+## Hosts publicos canonicos
+
+- `test`: `https://depix-mvp-test.dev865077.workers.dev`
+- `production`: `https://depix-mvp-production.dev865077.workers.dev`
+
+O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canonico deste repositorio. Para validacao operacional, smoke test e evidencia de issue, use sempre os hosts acima.
 
 ## Endpoints operacionais
 
@@ -93,3 +101,46 @@
 - `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: confirmar disponibilidade da Eulen e do binding do tenant antes de repetir a operacao
 - `503 telegram_webhook_dependency_unavailable`: conferir se `telegramBotToken` e `telegramWebhookSecret` foram materializados para o tenant antes de tentar registrar ou consultar o webhook
+- `500 deposit_recheck_persistence_incomplete`: assumir que o batch pode ter sido persistido, anexar `requestId`, `tenantId`, `depositEntryId` e `orderId`, inspecionar o historico do deposito e repetir no maximo um retry controlado; o caminho continua idempotente por `depositEntryId` + payload do evento
+- `503 ops_route_disabled_invalid_flag`: corrigir o valor de `ENABLE_OPS_DEPOSIT_RECHECK`; typo ou valor legado mantem a rota desligada ate o deploy/config ser saneado
+- `503 ops_route_disabled`: confirmar flag `ENABLE_OPS_DEPOSIT_RECHECK`, token global e eventual override tenant-scoped antes de tratar como incidente de negocio
+
+## Fallback por janela via `deposits`
+
+- pre-condicao de rollout: flag propria `ENABLE_OPS_DEPOSITS_FALLBACK=true`
+- endpoint: `POST /ops/:tenantId/reconcile/deposits`
+- payload minimo: `{ "start": "2026-04-18T00:00:00Z", "end": "2026-04-19T00:00:00Z" }`
+- payload opcional: `status`, por exemplo `{ "status": "depix_sent" }`
+- header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` ou token tenant-scoped declarado em `opsBindings.depositRecheckBearerToken`
+- fonte de verdade remota: `deposits`
+- trilha local: evento `deposit_events.source = "recheck_deposits_list"`
+- limite local: `start` e `end` precisam ser datas parseaveis, `start < end`, janela maxima de 24h e no maximo 200 linhas remotas
+- correlacao: `/deposits` retorna linhas compactas por `qrId`; o runtime aplica somente linhas cujo `qrId` exista no tenant local
+- linhas sem deposito local sao reportadas como `skipped/local_deposit_not_found`, sem escrita
+- agregados locais ja concluidos nao aceitam status remoto inferior; a linha e reportada como `skipped/status_regression`
+- replay da mesma janela e idempotente pelo indice unico de `deposit_events`, sem duplicar evento
+
+## Rollout e rollback
+
+- rollout do recheck por deposito: habilitar `ENABLE_OPS_DEPOSIT_RECHECK=true` e provisionar `OPS_ROUTE_BEARER_TOKEN`
+- rollout do fallback por janela: habilitar `ENABLE_OPS_DEPOSITS_FALLBACK=true` e provisionar o mesmo bearer operacional
+- se a rota estiver desabilitada por flag ausente, o rollback mais rapido e remover a flag do ambiente sem alterar o codigo
+- se um tenant-scoped binding quebrar o fluxo, remover ou corrigir `opsBindings.depositRecheckBearerToken` no registro do tenant
+- a rota de fallback por janela nao deve ser usada como substituto do webhook principal; ela existe para reconciliar janelas curtas quando callbacks atrasarem ou falharem
+
+## Evidencia controlada para QR no Telegram
+
+- antes da execucao manual, alinhar o ambiente com `npm run deploy:test` ou `npm run deploy:production`
+- depois do deploy, registrar `GET /health` e `wrangler deployments status` do ambiente
+- para issue de smoke ate QR, preferir a ferramenta versionada:
+
+```bash
+node scripts/collect-qr-flow-evidence.mjs --env production --tenant beta --since 2026-04-19T02:00:00Z
+```
+
+- a saida Markdown ja vem pronta para issue ou PR, com:
+  - `health`
+  - versao atual do Worker
+  - estado das migrations
+  - ultimas `orders` Telegram
+  - ultimas `deposits` correlacionadas ao canal Telegram
