@@ -22,6 +22,7 @@
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
 - o comentario final mais recente da planning Discussion e o estado canonico da prontidao da issue
+- comentarios antigos automatizados de planning review e final status nao devem contaminar uma nova rodada; replies humanas nesses comentarios permanecem como contexto operacional da resolucao
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
 - itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos de forma explicita
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
