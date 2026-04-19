@@ -18,21 +18,25 @@ import { log } from "../lib/logger.js";
 import {
   createEulenDiagnosticDeposit,
   DiagnosticServiceError,
-  getTelegramWebhookDiagnostics,
-  normalizeDiagnosticPublicBaseUrl,
   parseDiagnosticJsonBody,
   pingEulenDiagnostic,
   readDiagnosticAmountInCents,
   readDiagnosticAsyncMode,
-  registerTelegramWebhookDiagnostic,
 } from "../services/local-diagnostic-validation.js";
 import {
+  authorizeOpsRequest,
   authorizeOpsRoute,
   ENABLE_OPS_DEPOSITS_FALLBACK_BINDING,
   OpsRouteAuthorizationError,
 } from "../services/ops-route-authorization.js";
 import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
+import {
+  getTelegramWebhookOpsInfo,
+  normalizeTelegramWebhookPublicBaseUrl,
+  registerTelegramWebhookOps,
+  TelegramWebhookOpsError,
+} from "../services/telegram-webhook-ops.js";
 
 export const opsRouter = new Hono();
 
@@ -53,6 +57,52 @@ function handleDiagnosticRouteError(c, error) {
         ...(error.details ? { details: error.details } : {}),
       },
     }, error.status);
+  }
+
+  throw error;
+}
+
+/**
+ * Converte erros conhecidos das rotas operacionais de webhook do Telegram.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @param {unknown} error Erro capturado durante a execucao.
+ * @param {{ authorizationFailed: string, operationFailed: string }} messages Mensagens estaveis de log.
+ * @returns {Response} Resposta pronta para a borda HTTP.
+ */
+function handleTelegramWebhookOpsRouteError(c, error, messages) {
+  const runtimeConfig = c.get("runtimeConfig");
+
+  if (error instanceof OpsRouteAuthorizationError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: messages.authorizationFailed,
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
+    return jsonError(c, error.status, error.code, error.message, error.details);
+  }
+
+  if (error instanceof TelegramWebhookOpsError) {
+    log(runtimeConfig, {
+      level: error.status >= 500 ? "error" : "warn",
+      message: messages.operationFailed,
+      tenantId: c.get("tenant")?.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        code: error.code,
+        path: c.req.path,
+        ...error.details,
+      },
+    });
+
+    return jsonError(c, error.status, error.code, error.message, error.details);
   }
 
   throw error;
@@ -291,6 +341,10 @@ export async function handleDepositsFallback(c) {
 /**
  * Busca `getMe` e `getWebhookInfo` do bot do tenant atual.
  *
+ * Diferente dos diagnosticos locais da issue #42, esta rota foi promovida
+ * para operacao real: ela exige bearer operacional e pode rodar em `test` e
+ * `production` sem abrir uma superficie publica desprotegida.
+ *
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Estado atual do webhook no Telegram.
  */
@@ -300,23 +354,50 @@ export async function handleTelegramWebhookInfo(c) {
     const runtimeConfig = c.get("runtimeConfig");
 
     if (!tenant) {
-      throw new DiagnosticServiceError(400, "tenant_required", "Resolved tenant is required.");
+      throw new TelegramWebhookOpsError(400, "tenant_required", "Resolved tenant is required.");
     }
 
-    return c.json(await getTelegramWebhookDiagnostics({
-      enableLocalDiagnostics: c.env.ENABLE_LOCAL_DIAGNOSTICS,
+    const authContext = await authorizeOpsRequest({
+      env: c.env,
+      runtimeConfig,
+      authorizationHeader: c.req.header("authorization"),
+      requestId: c.get("requestId"),
+      tenant,
+      tenantId: tenant.tenantId,
+      path: c.req.path,
+    });
+
+    log(runtimeConfig, {
+      level: "info",
+      message: "ops.telegram_webhook_info.authorized",
+      tenantId: tenant.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        path: c.req.path,
+        authScope: authContext.authScope,
+        bindingName: authContext.bindingName,
+      },
+    });
+
+    return c.json(await getTelegramWebhookOpsInfo({
       env: c.env,
       tenant,
       environment: runtimeConfig.environment,
-      publicBaseUrl: normalizeDiagnosticPublicBaseUrl(c.req.query("baseUrl") ?? undefined),
+      publicBaseUrl: normalizeTelegramWebhookPublicBaseUrl(c.req.query("publicBaseUrl") ?? undefined),
     }));
   } catch (error) {
-    return handleDiagnosticRouteError(c, error);
+    return handleTelegramWebhookOpsRouteError(c, error, {
+      authorizationFailed: "ops.telegram_webhook_info.authorization_failed",
+      operationFailed: "ops.telegram_webhook_info.failed",
+    });
   }
 }
 
 /**
  * Registra explicitamente o webhook do Telegram para o tenant atual.
+ *
+ * Esta rota e o caminho canonicamente autenticado para repair operacional de
+ * webhook em `test` e `production`.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resultado da operacao de registro.
@@ -327,23 +408,55 @@ export async function handleTelegramWebhookRegistration(c) {
     const runtimeConfig = c.get("runtimeConfig");
 
     if (!tenant) {
-      throw new DiagnosticServiceError(400, "tenant_required", "Resolved tenant is required.");
+      throw new TelegramWebhookOpsError(400, "tenant_required", "Resolved tenant is required.");
     }
 
+    const authContext = await authorizeOpsRequest({
+      env: c.env,
+      runtimeConfig,
+      authorizationHeader: c.req.header("authorization"),
+      requestId: c.get("requestId"),
+      tenant,
+      tenantId: tenant.tenantId,
+      path: c.req.path,
+    });
     const body = parseDiagnosticJsonBody(await c.req.text());
-    const publicBaseUrl = normalizeDiagnosticPublicBaseUrl(
+
+    log(runtimeConfig, {
+      level: "info",
+      message: "ops.telegram_webhook_registration.authorized",
+      tenantId: tenant.tenantId,
+      requestId: c.get("requestId"),
+      details: {
+        path: c.req.path,
+        authScope: authContext.authScope,
+        bindingName: authContext.bindingName,
+      },
+    });
+
+    const publicBaseUrl = normalizeTelegramWebhookPublicBaseUrl(
       typeof body.publicBaseUrl === "string" ? body.publicBaseUrl : undefined,
     );
 
-    return c.json(await registerTelegramWebhookDiagnostic({
-      enableLocalDiagnostics: c.env.ENABLE_LOCAL_DIAGNOSTICS,
+    if (!publicBaseUrl) {
+      throw new TelegramWebhookOpsError(
+        400,
+        "public_base_url_required",
+        "A valid publicBaseUrl is required to register the Telegram webhook.",
+      );
+    }
+
+    return c.json(await registerTelegramWebhookOps({
       env: c.env,
       tenant,
       environment: runtimeConfig.environment,
       publicBaseUrl,
     }));
   } catch (error) {
-    return handleDiagnosticRouteError(c, error);
+    return handleTelegramWebhookOpsRouteError(c, error, {
+      authorizationFailed: "ops.telegram_webhook_registration.authorization_failed",
+      operationFailed: "ops.telegram_webhook_registration.failed",
+    });
   }
 }
 

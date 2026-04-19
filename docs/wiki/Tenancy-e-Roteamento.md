@@ -48,4 +48,6 @@ O endpoint `GET /health` publica um inventario redigido de tenants: ele confirma
 
 Nao trate esses ids como meros placeholders sem validar o estado real de deploy, segredos e webhooks do ambiente correspondente.
 
-Para `POST /ops/:tenantId/recheck/deposit`, o isolamento por tenant e combinado com autenticacao explicita de operador via `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`.
+Para `POST /ops/:tenantId/recheck/deposit` e para as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*`, o isolamento por tenant e combinado com autenticacao explicita de operador via `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`.
+
+Nas rotas `/ops/:tenantId/telegram/*`, o `tenantId` continua apenas delimitando qual bot e quais segredos serao usados. Ele nunca substitui a autenticacao do operador.

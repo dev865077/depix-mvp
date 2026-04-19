@@ -31,6 +31,7 @@
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status` e reconcilia `deposits` + `orders`
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list` e reconcilia linhas compactas por `qrId`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
+- as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 
 ## Recheck de deposito
 
@@ -67,6 +68,19 @@
 - retry manual depois de `502 deposit_status_unavailable` e permitido
 - retry manual depois de `409 deposit_status_regression`, `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch` nao deve ser tratado como tentativa cega; primeiro e preciso entender a divergencia
 - quando o agregado local ja estiver concluido por `depix_sent`, o recheck nao aceita um `deposit-status` atrasado que volte com `pending`, `under_review` ou outro estado inferior
+
+## Webhook do Telegram
+
+- `GET /ops/:tenantId/telegram/webhook-info` exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
+- `POST /ops/:tenantId/telegram/register-webhook` exige o mesmo bearer operacional
+- `GET /ops/:tenantId/telegram/webhook-info` consulta `getMe` e `getWebhookInfo` com o token real do tenant
+- `GET /ops/:tenantId/telegram/webhook-info` aceita apenas o query param canonico `publicBaseUrl` quando o operador quiser comparar a URL publica esperada
+- `POST /ops/:tenantId/telegram/register-webhook` chama `setWebhook` com `secret_token` do tenant e `allowed_updates=["message"]`
+- no `register-webhook`, `publicBaseUrl` e obrigatoria no corpo JSON; a rota nao infere host automaticamente para evitar registrar o bot contra a origin errada
+- migracao operacional: os endpoints antigos de diagnostico local nao sao mais a ferramenta de suporte para webhook; o contrato canonico agora e sempre `/ops/:tenantId/telegram/*` com bearer operacional e `publicBaseUrl` explicita quando houver comparacao ou mutacao de endpoint
+- em `production`, sempre confirmar explicitamente a base publica desejada antes de chamar `register-webhook`
+- se o ambiente nao materializar `telegramBotToken` ou `telegramWebhookSecret`, a rota falha fechada com `503 telegram_webhook_dependency_unavailable`
+- se o bearer estiver ausente ou invalido, responde `401 ops_authorization_required` ou `403 ops_authorization_invalid`
 
 ## Acao do operador por resposta
 

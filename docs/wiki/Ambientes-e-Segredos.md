@@ -21,7 +21,7 @@ O projeto depende de secrets por tenant para:
 
 Tambem existe um segredo operacional transversal:
 
-- `OPS_ROUTE_BEARER_TOKEN` para autenticar chamadas manuais no namespace `/ops`
+- `OPS_ROUTE_BEARER_TOKEN` para autenticar chamadas manuais no namespace `/ops`, incluindo recheck, fallback e operacoes de webhook do Telegram
 
 Tambem existe uma flag operacional explicita:
 
