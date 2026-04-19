@@ -9,6 +9,14 @@
 - `npm run db:query:local`
 - `npm run deploy:test`
 - `npm run deploy:production`
+- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO]`
+
+## Hosts publicos canonicos
+
+- `test`: `https://depix-mvp-test.dev865077.workers.dev`
+- `production`: `https://depix-mvp-production.dev865077.workers.dev`
+
+O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canonico deste repositorio. Para validacao operacional, smoke test e evidencia de issue, use sempre os hosts acima.
 
 ## Endpoints operacionais
 
@@ -93,3 +101,20 @@
 - `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: confirmar disponibilidade da Eulen e do binding do tenant antes de repetir a operacao
 - `503 telegram_webhook_dependency_unavailable`: conferir se `telegramBotToken` e `telegramWebhookSecret` foram materializados para o tenant antes de tentar registrar ou consultar o webhook
+
+## Evidencia controlada para QR no Telegram
+
+- antes da execucao manual, alinhar o ambiente com `npm run deploy:test` ou `npm run deploy:production`
+- depois do deploy, registrar `GET /health` e `wrangler deployments status` do ambiente
+- para issue de smoke ate QR, preferir a ferramenta versionada:
+
+```bash
+node scripts/collect-qr-flow-evidence.mjs --env production --tenant beta --since 2026-04-19T02:00:00Z
+```
+
+- a saida Markdown ja vem pronta para issue ou PR, com:
+  - `health`
+  - versao atual do Worker
+  - estado das migrations
+  - ultimas `orders` Telegram
+  - ultimas `deposits` correlacionadas ao canal Telegram
