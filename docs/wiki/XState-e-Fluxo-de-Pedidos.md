@@ -97,7 +97,7 @@ Aliases legados conhecidos sao normalizados em codigo por
 `persistenceGuard.expectedCurrentStep` para que a escrita condicional continue
 protegida contra corrida.
 
-Para Telegram, a progressao atual usa a etapa `amount` como entrada validada de valor: quando o pedido esta em `amount`, um valor BRL valido aplica `AMOUNT_RECEIVED`, persiste `amountInCents` e avanca o pedido para `wallet`. Mensagens invalidas ou replays fora de contexto nao devem reabrir um passo ja avancado.
+Para Telegram, a progressao atual usa a etapa `amount` como entrada validada de valor: quando o pedido esta em `amount`, um valor BRL valido aplica `AMOUNT_RECEIVED`, persiste `amountInCents` e avanca o pedido para `wallet`. Quando o pedido esta em `wallet`, um endereco DePix/Liquid valido aplica `WALLET_RECEIVED`, persiste `walletAddress` e avanca o pedido para `confirmation`. Em `confirmation`, a confirmacao do usuario aplica `CUSTOMER_CONFIRMED` e dispara a criacao do deposito real; `cancelar` aplica `CANCEL_ORDER` e encerra o pedido.
 
 Para Durable Objects, a regra muda apenas se houver necessidade real de
 coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente

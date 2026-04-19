@@ -17,8 +17,12 @@ Estado atual:
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
 - o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
-- mensagens invalidas de valor nao avancam o pedido e retornam orientacao de correcao
+- o endereco informado pelo usuario na etapa `wallet` e validado de forma conservadora como DePix/Liquid antes de avancar para `confirmation`
+- em `confirmation`, `sim`, `confirmar` e `ok` disparam a criacao do deposito real na Eulen
+- em `confirmation`, `cancelar` encerra o pedido sem criar deposito
+- mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
+- replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 
 ## Eulen
@@ -50,6 +54,9 @@ Estado atual:
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
 - o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
+- a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
+- a criacao de deposito persiste `orders` e `deposits` juntos para evitar duplicidade silenciosa
+- em falha da Eulen, o pedido e marcado como `failed` e o usuario recebe instrucoes para recomecar
 
 ## Regra operacional central
 
@@ -79,4 +86,4 @@ Toda chamada real de `deposit` deve carregar split do tenant. O codigo nao aceit
 
 Antes de chamar a Eulen, o diagnostico valida se o split foi materializado e se nao parece placeholder. Isso evita transformar erro de configuracao local em erro 520 upstream.
 
-O `depixSplitAddress` aceita o endereco de recebimento gerado pela SideSwap. Na pratica, isso inclui enderecos Liquid confidenciais com prefixo `lq1`. O runtime remove espacos visuais antes de montar o payload para a Eulen.
+O `depixSplitAddress` aceita o endereco de recebimento gerado pela SideSwap. Na pratica, isso inclui enderecos Liquid confidenciais com prefixo `lq1` e enderecos documentados `ex1`. O runtime remove espacos visuais e normaliza o texto antes de montar o payload para a Eulen.

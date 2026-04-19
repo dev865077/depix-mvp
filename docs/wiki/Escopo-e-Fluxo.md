@@ -21,8 +21,11 @@
 - `qrId` pode existir como identificador distinto depois e deve ser persistido sem sobrescrever `depositEntryId`
 - escritas criticas multi-tabela devem usar `env.DB.batch()`
 - o fluxo Telegram agora coleta o valor do pedido em `amount` antes de avancar para `wallet`
+- o fluxo Telegram agora coleta o endereco DePix/Liquid em `wallet` antes de avancar para `confirmation`
+- em `confirmation`, `sim`, `confirmar` e `ok` criam o deposito real; `cancelar` encerra o pedido
 - valores BRL simples aceitos no chat devem ser conservadores e nao ambíguos
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `wallet`
+- replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `confirmation`
 
 ## Fora de escopo
 
@@ -40,7 +43,9 @@
 - o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
 - `/start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
 - a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
-- mensagens invalidas mantem o pedido em `amount` e orientam o usuario a reenviar o valor
+- a etapa de `wallet` agora valida endereco DePix/Liquid enviado no Telegram, persiste `walletAddress` e avanca o pedido para `confirmation`
+- mensagens invalidas mantem o pedido no passo atual e orientam o usuario a reenviar a informacao correta
+- a confirmacao de pedido ainda depende da integracao completa com a Eulen para criar o deposito final
 - o processamento real do fluxo ainda esta incompleto
 
 ## Leitura correta
