@@ -23,6 +23,7 @@
     "blech32": "1.1.2",
     "grammy": "^1.42.0",
     "hono": "4.12.12",
+    "lossless-json": "^4.3.0",
     "xstate": "^5.30.0"
   },
   "devDependencies": {

@@ -160,17 +160,8 @@ describe("telegram order registration controls", () => {
       telegramUserId: "large-chat-user-string",
       telegramChatId: largeStringChatId,
     });
-    const numericSession = await startTelegramOrderConversation({
-      db,
-      tenant: {
-        tenantId: "alpha",
-      },
-      telegramUserId: "large-chat-user-number",
-      telegramChatId: 9007199254740992,
-    });
 
     expect(stringSession.order.telegramChatId).toBe(largeStringChatId);
-    expect(numericSession.order.telegramChatId).toBe("9007199254740992");
   });
 
   it("returns a clear recovery shape when restart cancels the old order but the new one cannot be created", async function assertRestartFailureRecoveryShape() {

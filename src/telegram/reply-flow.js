@@ -39,6 +39,7 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
  *   env?: Record<string, unknown>,
  *   runtimeConfig?: Record<string, unknown>,
  *   db?: import("@cloudflare/workers-types").D1Database,
+ *   rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *   requestContext?: {
  *     requestId?: string,
  *     method?: string,
@@ -749,7 +750,7 @@ async function startTelegramConversationOrder(ctx, input) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
-  const telegramChatId = resolveTelegramChatId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx, input.rawTelegramUpdate);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -985,7 +986,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
-  const telegramChatId = resolveTelegramChatId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx, input.rawTelegramUpdate);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -1421,10 +1422,12 @@ function resolveTelegramReplyChatId(update) {
  * sempre o unico modo operacional do Telegram.
  *
  * @param {any} ctx Contexto atual do grammY.
+ * @param {{ chatId?: string, parseFailed: boolean } | undefined} rawTelegramUpdate Metadados extraidos do corpo bruto.
  * @returns {string | number | undefined} Identificador do chat, quando existir.
  */
-function resolveTelegramChatId(ctx) {
-  return ctx.chat?.id
+function resolveTelegramChatId(ctx, rawTelegramUpdate) {
+  return rawTelegramUpdate?.chatId
+    ?? ctx.chat?.id
     ?? ctx.message?.chat?.id
     ?? ctx.update?.message?.chat?.id
     ?? ctx.update?.callback_query?.message?.chat?.id

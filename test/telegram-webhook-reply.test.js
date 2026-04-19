@@ -386,6 +386,79 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("persists a large numeric Telegram chat id from the raw webhook payload without precision loss", async function assertLargeRawChatIdPersistence() {
+    const app = createApp();
+    const largeChatId = "9007199254740993123";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.text).toBe(buildTelegramStartReply({
+        displayName: "Alpha",
+      }));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 501002,
+          date: 1713434402,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: `{
+          "update_id": 501002,
+          "message": {
+            "message_id": 501002,
+            "date": 1713434402,
+            "text": "/start",
+            "entities": [
+              {
+                "type": "bot_command",
+                "offset": 0,
+                "length": 6
+              }
+            ],
+            "chat": {
+              "id": ${largeChatId},
+              "type": "private"
+            },
+            "from": {
+              "id": 501002,
+              "is_bot": false,
+              "first_name": "Pedro"
+            }
+          }
+        }`,
+      },
+      createWorkerEnv(),
+    );
+    const savedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501002");
+
+    expect(response.status).toBe(200);
+    expect(savedOrder?.telegramChatId).toBe(largeChatId);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("answers /help without creating a Telegram order", async function assertHelpDoesNotCreateOrder() {
     const app = createApp();
     const workerEnv = createWorkerEnv();
