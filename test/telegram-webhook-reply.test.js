@@ -794,6 +794,322 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    {
+      currentStep: "amount",
+      amountInCents: null,
+      walletAddress: null,
+    },
+    {
+      currentStep: "wallet",
+      amountInCents: 1050,
+      walletAddress: null,
+    },
+    {
+      currentStep: "confirmation",
+      amountInCents: 1050,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+    },
+  ])("cancels an open order from $currentStep via /cancel", async function assertCancelableStates(entry) {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const orderId = `order_cancel_${entry.currentStep}`;
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId,
+      userId: "866",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: entry.amountInCents,
+      walletAddress: entry.walletAddress,
+      currentStep: entry.currentStep,
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.text).toContain("Pedido cancelado com sucesso.");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 14,
+          date: 1713434415,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/cancel",
+          chatId: 8606,
+          fromId: 866,
+          updateId: 49,
+        }),
+      },
+      workerEnv,
+    );
+    const canceledOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", orderId)
+      .first();
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "866");
+
+    expect(response.status).toBe(200);
+    expect(canceledOrder?.currentStep).toBe("canceled");
+    expect(canceledOrder?.status).toBe("canceled");
+    expect(currentOrder).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a new order on /start after a previous order was canceled", async function assertStartAfterCancelCreatesNewOrder() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_cancel_then_restart",
+      userId: "877",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 1050,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 15,
+          date: 1713434416,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/cancel",
+          chatId: 8707,
+          fromId: 877,
+          updateId: 50,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 8707,
+          fromId: 877,
+          updateId: 51,
+        }),
+      },
+      workerEnv,
+    );
+
+    const canceledOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_cancel_then_restart")
+      .first();
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "877");
+
+    expect(canceledOrder?.currentStep).toBe("canceled");
+    expect(currentOrder?.orderId).not.toBe("order_cancel_then_restart");
+    expect(currentOrder?.currentStep).toBe("amount");
+    expect(replies[0]).toContain("Pedido cancelado com sucesso.");
+    expect(replies[1]).toContain("envie o valor em BRL");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("restarts an open order when the user sends recomecar", async function assertRestartControlFlow() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    await createOrder(getDatabase(env), {
+      tenantId: "beta",
+      orderId: "order_restart_text",
+      userId: "888",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 5000,
+      currentStep: "wallet",
+      status: "draft",
+    });
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 16,
+          date: 1713434417,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "recomecar",
+          chatId: 8808,
+          fromId: 888,
+          updateId: 52,
+        }),
+      },
+      workerEnv,
+    );
+    const canceledOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("beta", "order_restart_text")
+      .first();
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "888");
+
+    expect(response.status).toBe(200);
+    expect(canceledOrder?.currentStep).toBe("canceled");
+    expect(currentOrder?.orderId).not.toBe("order_restart_text");
+    expect(currentOrder?.currentStep).toBe("amount");
+    expect(replies[0]).toContain("Pedido anterior cancelado.");
+    expect(replies[0]).toContain("Vamos recomecar do inicio.");
+    expect(replies[0]).toContain("envie o valor em BRL");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not create a new order when cancel/restart arrives without an open order", async function assertNoOpenOrderControlReplies() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 17,
+          date: 1713434418,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/cancel",
+          chatId: 8909,
+          fromId: 899,
+          updateId: 53,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "recomecar",
+          chatId: 8909,
+          fromId: 899,
+          updateId: 54,
+        }),
+      },
+      workerEnv,
+    );
+
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "899");
+
+    expect(currentOrder).toBeNull();
+    expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
+    expect(replies[1]).toContain("Nao existe pedido aberto para recomecar.");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("does not create a second Eulen deposit when confirmar is replayed after awaiting_payment", async function assertConfirmationReplayIdempotency() {
     const app = createApp();
     const workerEnv = createWorkerEnv();
