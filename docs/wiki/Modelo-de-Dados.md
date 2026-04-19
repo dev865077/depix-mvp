@@ -8,6 +8,7 @@
 - `user_id`
 - `channel`
 - `product_type`
+- `telegram_chat_id`
 - `amount_in_cents`
 - `wallet_address`
 - `current_step`
@@ -50,6 +51,12 @@
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
+- `orders.telegram_chat_id` guarda o destino real do chat Telegram para notificacoes assincronas futuras; ele nao deve ser inferido a partir de `user_id`
+- pedidos legados com `telegram_chat_id = NULL` continuam legiveis, mas nao possuem destino assincrono seguro ate serem hidratados por um novo update Telegram do mesmo tenant, usuario e canal
+- a hidratacao de `telegram_chat_id` deve usar o pedido aberto mais recente selecionado por `tenant_id`, `user_id`, `channel`, `updated_at DESC` e `created_at DESC`
+- a escrita de `telegram_chat_id` deve ser atomica e usar `tenant_id`, `order_id`, `user_id`, `channel` e `telegram_chat_id IS NULL` no `WHERE`
+- se um update chegar com chat diferente do `telegram_chat_id` persistido, o sistema nao deve sobrescrever o destino e deve registrar `telegram.order.chat_divergence_detected`
+- `telegram_chat_id = NULL` significa "sem destino assincrono seguro"; a etapa futura de notificacao nao pode usar `user_id` como fallback implicito
 - quando o pedido aberto estiver em `draft`, o comando `/start` avanca o agregado para `amount` sem criar uma nova linha
 - quando o pedido estiver em `amount`, o valor BRL recebido no Telegram deve atualizar `amount_in_cents` e avancar o `current_step` para `wallet`
 - quando o pedido estiver em `wallet`, o endereco DePix/Liquid recebido no Telegram deve atualizar `wallet_address` e avancar o `current_step` para `confirmation`

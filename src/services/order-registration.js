@@ -13,6 +13,7 @@
 import {
   createOrder,
   getLatestOpenOrderByUser,
+  hydrateOrderTelegramChatIdIfMissing,
   updateOrderByIdWithStepGuard,
 } from "../db/repositories/orders-repository.js";
 import {
@@ -27,6 +28,16 @@ import { parseTelegramWalletAddress } from "../telegram/wallet-address.js";
 
 const DEFAULT_ORDER_CHANNEL = "telegram";
 const DEFAULT_PRODUCT_TYPE = "depix";
+const TELEGRAM_CHAT_BINDING_RESULTS = Object.freeze({
+  MISSING_INCOMING_CHAT: "telegram_chat_missing",
+  CREATED_WITH_CHAT: "telegram_chat_created",
+  ALREADY_MATCHED: "telegram_chat_already_matched",
+  HYDRATED_LEGACY: "telegram_chat_hydrated_legacy_order",
+  HYDRATED_BY_CONCURRENT_REQUEST: "telegram_chat_hydrated_by_concurrent_request",
+  MISMATCH: "telegram_chat_id_mismatch",
+  HYDRATION_CONFLICT: "telegram_chat_hydration_conflict",
+  ORDER_NOT_FOUND: "telegram_chat_order_not_found",
+});
 
 /**
  * Normaliza o identificador do usuario do Telegram para o contrato do banco.
@@ -47,6 +58,28 @@ function normalizeTelegramUserId(telegramUserId) {
   }
 
   return String(telegramUserId).trim();
+}
+
+/**
+ * Normaliza o destino de chat do Telegram para persistencia.
+ *
+ * O Telegram pode enviar `chat.id` como numero ou string. Persistimos texto
+ * para manter o contrato igual ao `user_id` e evitar comparacoes numericas
+ * implicitas entre runtimes, testes e D1.
+ *
+ * @param {string | number | undefined | null} telegramChatId Chat bruto do update.
+ * @returns {string | null} Chat normalizado ou `null` quando ausente.
+ */
+function normalizeTelegramChatId(telegramChatId) {
+  if (Number.isSafeInteger(telegramChatId)) {
+    return String(telegramChatId);
+  }
+
+  if (typeof telegramChatId === "string" && telegramChatId.trim().length > 0) {
+    return telegramChatId.trim();
+  }
+
+  return null;
 }
 
 /**
@@ -76,6 +109,175 @@ export async function getTelegramOpenOrderForUser(input) {
 }
 
 /**
+ * Aplica o contrato de persistencia do `telegram_chat_id` para um pedido
+ * selecionado.
+ *
+ * Esta funcao concentra a regra de negocio do issue #120. Ela nao conhece
+ * grammY nem Eulen: recebe apenas o chat normalizado pela borda, decide se a
+ * escrita e permitida, delega a atualizacao atomica ao repository e devolve uma
+ * classificacao explicita para logging/controle do handler.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   tenant: { tenantId: string },
+ *   order: Record<string, unknown>,
+ *   channel: string,
+ *   telegramChatId?: string | number | null
+ * }} input Pedido selecionado e chat recebido.
+ * @returns {Promise<{
+ *   order: Record<string, unknown>,
+ *   accepted: boolean,
+ *   blocked: boolean,
+ *   result: string,
+ *   incomingTelegramChatId: string | null,
+ *   persistedTelegramChatId: string | null
+ * }>} Resultado classificado da associacao de chat.
+ */
+async function bindTelegramChatToOrder(input) {
+  const incomingTelegramChatId = normalizeTelegramChatId(input.telegramChatId);
+  const persistedTelegramChatId = normalizeTelegramChatId(input.order.telegramChatId);
+
+  if (!incomingTelegramChatId) {
+    return {
+      order: input.order,
+      accepted: true,
+      blocked: false,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.MISSING_INCOMING_CHAT,
+      incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  if (persistedTelegramChatId === incomingTelegramChatId) {
+    return {
+      order: input.order,
+      accepted: true,
+      blocked: false,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.ALREADY_MATCHED,
+      incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  if (persistedTelegramChatId) {
+    return {
+      order: input.order,
+      accepted: false,
+      blocked: true,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.MISMATCH,
+      incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  const hydration = await hydrateOrderTelegramChatIdIfMissing(input.db, {
+    tenantId: input.tenant.tenantId,
+    orderId: String(input.order.orderId),
+    userId: String(input.order.userId),
+    channel: input.channel,
+    telegramChatId: incomingTelegramChatId,
+  });
+  const classification = classifyTelegramChatHydrationResult({
+    hydration,
+    incomingTelegramChatId,
+  });
+
+  if (classification.notFound) {
+    throw new Error("Telegram chat hydration failed because the selected order disappeared before update.");
+  }
+
+  return classification;
+}
+
+/**
+ * Classifica o resultado da tentativa atomica de hidratar `telegram_chat_id`.
+ *
+ * Esta funcao e pura para que a regra mais sensivel do contrato seja testavel
+ * sem criar uma corrida real no D1. A camada SQL continua responsavel pela
+ * atomicidade; esta classificacao define o que fazer quando o update perdeu a
+ * corrida e precisou reler o pedido.
+ *
+ * @param {{
+ *   hydration: {
+ *     order: Record<string, unknown> | null,
+ *     didUpdate: boolean,
+ *     notFound: boolean
+ *   },
+ *   incomingTelegramChatId: string
+ * }} input Resultado do repository e chat recebido.
+ * @returns {{
+ *   order: Record<string, unknown> | null,
+ *   accepted: boolean,
+ *   blocked: boolean,
+ *   notFound: boolean,
+ *   result: string,
+ *   incomingTelegramChatId: string,
+ *   persistedTelegramChatId: string | null
+ * }} Classificacao deterministica da tentativa.
+ */
+export function classifyTelegramChatHydrationResult(input) {
+  if (input.hydration.notFound || !input.hydration.order) {
+    return {
+      order: null,
+      accepted: false,
+      blocked: true,
+      notFound: true,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.ORDER_NOT_FOUND,
+      incomingTelegramChatId: input.incomingTelegramChatId,
+      persistedTelegramChatId: null,
+    };
+  }
+
+  const persistedTelegramChatId = normalizeTelegramChatId(input.hydration.order.telegramChatId);
+
+  if (input.hydration.didUpdate) {
+    return {
+      order: input.hydration.order,
+      accepted: true,
+      blocked: false,
+      notFound: false,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.HYDRATED_LEGACY,
+      incomingTelegramChatId: input.incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  if (persistedTelegramChatId === input.incomingTelegramChatId) {
+    return {
+      order: input.hydration.order,
+      accepted: true,
+      blocked: false,
+      notFound: false,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.HYDRATED_BY_CONCURRENT_REQUEST,
+      incomingTelegramChatId: input.incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  if (persistedTelegramChatId) {
+    return {
+      order: input.hydration.order,
+      accepted: false,
+      blocked: true,
+      notFound: false,
+      result: TELEGRAM_CHAT_BINDING_RESULTS.MISMATCH,
+      incomingTelegramChatId: input.incomingTelegramChatId,
+      persistedTelegramChatId,
+    };
+  }
+
+  return {
+    order: input.hydration.order,
+    accepted: false,
+    blocked: true,
+    notFound: false,
+    result: TELEGRAM_CHAT_BINDING_RESULTS.HYDRATION_CONFLICT,
+    incomingTelegramChatId: input.incomingTelegramChatId,
+    persistedTelegramChatId: null,
+  };
+}
+
+/**
  * Gera um `orderId` interno estavel o bastante para rastreabilidade.
  *
  * O prefixo explicita o agregado no banco e facilita leitura operacional em
@@ -97,12 +299,14 @@ function buildInternalOrderId() {
  *   db: import("@cloudflare/workers-types").D1Database,
  *   tenant: { tenantId: string },
  *   telegramUserId: string | number,
+ *   telegramChatId?: string | number | null,
  *   channel?: string,
  *   productType?: string
  * }} input Dependencias e contexto da chamada atual.
  * @returns {Promise<{
  *   order: Record<string, unknown>,
- *   created: boolean
+ *   created: boolean,
+ *   chatBinding: Awaited<ReturnType<typeof bindTelegramChatToOrder>>
  * }>} Pedido ativo pronto para continuidade do fluxo.
  */
 export async function ensureTelegramOrderRegistration(input) {
@@ -115,14 +319,24 @@ export async function ensureTelegramOrderRegistration(input) {
   }
 
   const userId = normalizeTelegramUserId(input.telegramUserId);
+  const telegramChatId = normalizeTelegramChatId(input.telegramChatId);
   const channel = input.channel ?? DEFAULT_ORDER_CHANNEL;
   const productType = input.productType ?? DEFAULT_PRODUCT_TYPE;
   const existingOrder = await getLatestOpenOrderByUser(input.db, input.tenant.tenantId, userId, channel);
 
   if (existingOrder) {
-    return {
+    const chatBinding = await bindTelegramChatToOrder({
+      db: input.db,
+      tenant: input.tenant,
       order: existingOrder,
+      channel,
+      telegramChatId,
+    });
+
+    return {
+      order: chatBinding.order,
       created: false,
+      chatBinding,
     };
   }
 
@@ -137,6 +351,7 @@ export async function ensureTelegramOrderRegistration(input) {
     userId,
     channel,
     productType,
+    telegramChatId,
     currentStep: initialProgression.orderPatch.currentStep,
     status: initialProgression.orderPatch.status,
   });
@@ -144,6 +359,16 @@ export async function ensureTelegramOrderRegistration(input) {
   return {
     order: createdOrder,
     created: true,
+    chatBinding: {
+      order: createdOrder,
+      accepted: true,
+      blocked: false,
+      result: telegramChatId
+        ? TELEGRAM_CHAT_BINDING_RESULTS.CREATED_WITH_CHAT
+        : TELEGRAM_CHAT_BINDING_RESULTS.MISSING_INCOMING_CHAT,
+      incomingTelegramChatId: telegramChatId,
+      persistedTelegramChatId: normalizeTelegramChatId(createdOrder.telegramChatId),
+    },
   };
 }
 
@@ -162,7 +387,8 @@ export async function ensureTelegramOrderRegistration(input) {
  *   order: Record<string, unknown>,
  *   created: boolean,
  *   started: boolean,
- *   conflict: boolean
+ *   conflict: boolean,
+ *   chatBinding: Awaited<ReturnType<typeof bindTelegramChatToOrder>>
  * }>} Pedido aberto apos a tentativa idempotente de inicio.
  */
 export async function startTelegramOrderConversation(input) {
@@ -170,12 +396,23 @@ export async function startTelegramOrderConversation(input) {
   const tenantId = input.tenant.tenantId;
   const currentStep = normalizePersistedOrderProgressStep(registration.order.currentStep);
 
+  if (registration.chatBinding.blocked) {
+    return {
+      order: registration.order,
+      created: registration.created,
+      started: false,
+      conflict: false,
+      chatBinding: registration.chatBinding,
+    };
+  }
+
   if (currentStep !== ORDER_PROGRESS_STATES.DRAFT) {
     return {
       order: registration.order,
       created: registration.created,
       started: false,
       conflict: false,
+      chatBinding: registration.chatBinding,
     };
   }
 
@@ -210,6 +447,7 @@ export async function startTelegramOrderConversation(input) {
     created: registration.created,
     started: write.didUpdate,
     conflict: write.conflict,
+    chatBinding: registration.chatBinding,
   };
 }
 

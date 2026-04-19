@@ -16,6 +16,7 @@ import {
   createOrder,
   getOrderById,
   getLatestOpenOrderByUser,
+  hydrateOrderTelegramChatIdIfMissing,
   updateOrderById,
   updateOrderByIdWithStepGuard,
 } from "../src/db/repositories/orders-repository.js";
@@ -28,6 +29,7 @@ const LEGACY_SCHEMA_STATEMENTS = [
     user_id TEXT NOT NULL,
     channel TEXT NOT NULL DEFAULT 'telegram',
     product_type TEXT NOT NULL,
+    telegram_chat_id TEXT,
     amount_in_cents INTEGER,
     wallet_address TEXT,
     current_step TEXT NOT NULL DEFAULT 'draft',
@@ -40,6 +42,7 @@ const LEGACY_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
   "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
   `CREATE TABLE IF NOT EXISTS deposits (
     tenant_id TEXT NOT NULL,
     deposit_id TEXT PRIMARY KEY NOT NULL,
@@ -95,6 +98,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
     user_id TEXT NOT NULL,
     channel TEXT NOT NULL DEFAULT 'telegram',
     product_type TEXT NOT NULL,
+    telegram_chat_id TEXT,
     amount_in_cents INTEGER,
     wallet_address TEXT,
     current_step TEXT NOT NULL DEFAULT 'draft',
@@ -107,6 +111,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
   "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
   `CREATE TABLE IF NOT EXISTS deposits (
     tenant_id TEXT NOT NULL,
     deposit_entry_id TEXT PRIMARY KEY NOT NULL,
@@ -320,6 +325,7 @@ export async function assertPersistenceFlow() {
     userId: "telegram_user_001",
     channel: "telegram",
     productType: "depix",
+    telegramChatId: "telegram_chat_001",
     amountInCents: 15000,
     walletAddress: "depix_wallet_abc",
     currentStep: "wallet",
@@ -371,6 +377,7 @@ export async function assertPersistenceFlow() {
   expect(updatedDeposit?.externalStatus).toBe("depix_sent");
   expect(savedOrder?.tenantId).toBe("alpha");
   expect(savedOrder?.orderId).toBe("order_test_001");
+  expect(savedOrder?.telegramChatId).toBe("telegram_chat_001");
   expect(savedOrder?.status).toBe("paid");
   expect(savedDeposit?.tenantId).toBe("alpha");
   expect(savedDeposit?.depositEntryId).toBe("deposit_entry_test_001");
@@ -550,9 +557,70 @@ async function assertLatestOpenOrderLookup() {
   expect(missingTenantOrder).toBeNull();
 }
 
+async function assertTelegramChatHydrationContract() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_chat_legacy",
+    userId: "telegram_user_chat_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "amount",
+    status: "draft",
+  });
+
+  const hydrated = await hydrateOrderTelegramChatIdIfMissing(db, {
+    tenantId: "alpha",
+    orderId: "order_chat_legacy",
+    userId: "telegram_user_chat_001",
+    channel: "telegram",
+    telegramChatId: "chat-001",
+  });
+  const replay = await hydrateOrderTelegramChatIdIfMissing(db, {
+    tenantId: "alpha",
+    orderId: "order_chat_legacy",
+    userId: "telegram_user_chat_001",
+    channel: "telegram",
+    telegramChatId: "chat-001",
+  });
+  const wrongTenant = await hydrateOrderTelegramChatIdIfMissing(db, {
+    tenantId: "beta",
+    orderId: "order_chat_legacy",
+    userId: "telegram_user_chat_001",
+    channel: "telegram",
+    telegramChatId: "chat-beta",
+  });
+  const wrongUser = await hydrateOrderTelegramChatIdIfMissing(db, {
+    tenantId: "alpha",
+    orderId: "order_chat_legacy",
+    userId: "other_user",
+    channel: "telegram",
+    telegramChatId: "chat-other",
+  });
+  const savedOrder = await getOrderById(db, "alpha", "order_chat_legacy");
+
+  expect(hydrated.didUpdate).toBe(true);
+  expect(hydrated.notFound).toBe(false);
+  expect(hydrated.reason).toBe("updated");
+  expect(hydrated.order?.telegramChatId).toBe("chat-001");
+  expect(replay.didUpdate).toBe(false);
+  expect(replay.notFound).toBe(false);
+  expect(replay.reason).toBe("already_bound_or_identity_mismatch");
+  expect(replay.order?.telegramChatId).toBe("chat-001");
+  expect(wrongTenant.notFound).toBe(true);
+  expect(wrongTenant.order).toBeNull();
+  expect(wrongUser.didUpdate).toBe(false);
+  expect(wrongUser.order?.telegramChatId).toBe("chat-001");
+  expect(savedOrder?.telegramChatId).toBe("chat-001");
+}
+
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
   it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
   it("finds the latest open order for a tenant user without reviving terminal orders", assertLatestOpenOrderLookup);
+  it("hydrates telegram chat only through the selected tenant-scoped order", assertTelegramChatHydrationContract);
 });
