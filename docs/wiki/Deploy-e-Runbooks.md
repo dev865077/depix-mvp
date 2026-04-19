@@ -102,29 +102,11 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 
 ## Acao do operador por resposta
 
-- `200 deposit_recheck_processed`: registrar `requestId`, `tenantId`, `depositEntryId`, `eventId` e seguir com a conciliacao concluida
-- `200 deposit_recheck_duplicate`: registrar `requestId` e tratar como replay idempotente; nao repetir indefinidamente
-- `401 ops_authorization_required` ou `403 ops_authorization_invalid`: validar token, escopo do tenant e rotacao recente do segredo antes de qualquer nova tentativa
-- `404 deposit_not_found`: confirmar se o `depositEntryId` pertence ao tenant do path; nao insistir com outro tenant no mesmo request
-- `409 order_not_found`: confirmar se o pedido local ainda existe antes de repetir
-- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: revisar correlacao de `qrId` e a fonte remota antes de reexecutar
-- `409 deposit_status_regression`: nao forcar retry cego; comparar com o agregado local concluido
-- `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: confirmar disponibilidade da Eulen e do binding do tenant antes de repetir a operacao
-- `503 telegram_webhook_dependency_unavailable`: conferir se `telegramBotToken` e `telegramWebhookSecret` foram materializados para o tenant antes de tentar registrar ou consultar o webhook
-
-## Evidencia controlada para QR no Telegram
-
-- antes da execucao manual, alinhar o ambiente com `npm run deploy:test` ou `npm run deploy:production`
-- depois do deploy, registrar `GET /health` e `wrangler deployments status` do ambiente
-- para issue de smoke ate QR, preferir a ferramenta versionada:
-
-```bash
-node scripts/collect-qr-flow-evidence.mjs --env production --tenant beta --since 2026-04-19T02:00:00Z
-```
-
-- a saida Markdown ja vem pronta para issue ou PR, com:
-  - `health`
-  - versao atual do Worker
-  - estado das migrations
-  - ultimas `orders` Telegram
-  - ultimas `deposits` correlacionadas ao canal Telegram
+- `200 deposit_recheck_processed`: registrar `requestId`, `tenantId`, `depositEntryId` e `eventId` e seguir com a conciliacao concluida
+- `400 telegram_order_registration_failed`: verificar se o update veio da superficie correta e se o payload possui `chat.id`
+- `401 ops_authorization_required`: reenviar com Bearer valido
+- `403 ops_authorization_invalid`: revisar token operacional informado
+- `404 deposit_not_found`: conferir `tenantId` e `depositEntryId`
+- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: investigar ownership e divergencia antes de repetir
+- `502 deposit_status_unavailable` ou `502 deposit_status_invalid_response`: retry manual depois de checar a Eulen
+- `503 ops_route_disabled` ou `503 telegram_webhook_dependency_unavailable`: revisar flags e secrets do ambiente antes de novo deploy
