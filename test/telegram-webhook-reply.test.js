@@ -19,6 +19,7 @@ import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/or
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
+  buildTelegramHelpReply,
   buildTelegramStartReply,
   buildTelegramInvalidAmountReply,
   buildTelegramUnsupportedCallbackReply,
@@ -333,6 +334,186 @@ describe("telegram webhook reply flow", () => {
     expect(savedOrder?.status).toBe("draft");
     expect(typeof savedOrder?.orderId).toBe("string");
     expect(savedOrder?.orderId.length).toBeGreaterThan(6);
+  });
+
+  it("answers /help without creating a Telegram order", async function assertHelpDoesNotCreateOrder() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.chat_id).toBe(13201);
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 132,
+          date: 1713434460,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/help",
+          chatId: 13201,
+          fromId: 13201,
+          updateId: 13201,
+        }),
+      },
+      workerEnv,
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "13201");
+    const count = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ? AND channel = ?")
+      .bind("alpha", "13201", "telegram")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(replies[0]).toBe(buildTelegramHelpReply({ displayName: "Alpha" }, null));
+    expect(replies[0]).toContain("lq1 ou ex1");
+    expect(replies[0]).toContain("/cancel");
+    expect(currentOrder).toBeNull();
+    expect(count?.count).toBe(0);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      orderId: "order_help_amount",
+      userId: "13211",
+      currentStep: "amount",
+      amountInCents: null,
+      walletAddress: null,
+      expectedGuidance: "aguardando o valor",
+    },
+    {
+      orderId: "order_help_wallet",
+      userId: "13212",
+      currentStep: "wallet",
+      amountInCents: 1050,
+      walletAddress: null,
+      expectedGuidance: "aguardando o endereço DePix/Liquid",
+    },
+    {
+      orderId: "order_help_confirmation",
+      userId: "13213",
+      currentStep: "confirmation",
+      amountInCents: 1050,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      expectedGuidance: "aguardando confirmação",
+    },
+  ])("answers /help from $currentStep without mutating the open order", async function assertHelpDoesNotMutateOrder(entry) {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    await createOrder(getDatabase(env), {
+      tenantId: "beta",
+      orderId: entry.orderId,
+      userId: entry.userId,
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: entry.amountInCents,
+      walletAddress: entry.walletAddress,
+      currentStep: entry.currentStep,
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 133,
+          date: 1713434461,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/help",
+          chatId: Number(entry.userId),
+          fromId: Number(entry.userId),
+          updateId: Number(entry.userId),
+        }),
+      },
+      workerEnv,
+    );
+    const persistedOrder = await getDatabase(env)
+      .prepare(`
+        SELECT
+          order_id AS orderId,
+          current_step AS currentStep,
+          status,
+          amount_in_cents AS amountInCents,
+          wallet_address AS walletAddress
+        FROM orders
+        WHERE tenant_id = ? AND order_id = ?
+        LIMIT 1
+      `)
+      .bind("beta", entry.orderId)
+      .first();
+    const count = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ? AND channel = ?")
+      .bind("beta", entry.userId, "telegram")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("");
+    expect(replies[0]).toContain(entry.expectedGuidance);
+    expect(replies[0]).toContain("lq1 ou ex1");
+    expect(replies[0]).toContain("recomecar");
+    expect(persistedOrder?.orderId).toBe(entry.orderId);
+    expect(persistedOrder?.currentStep).toBe(entry.currentStep);
+    expect(persistedOrder?.status).toBe("draft");
+    expect(persistedOrder?.amountInCents).toBe(entry.amountInCents);
+    expect(persistedOrder?.walletAddress).toBe(entry.walletAddress);
+    expect(count?.count).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("routes plain text replies by tenant", async function assertTenantAwareTextReply() {

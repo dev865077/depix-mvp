@@ -74,6 +74,14 @@ export function installTelegramReplyFlow(bot, input) {
     },
   ));
 
+  bot.command("help", createLoggedTelegramHandler(
+    input,
+    "help_command",
+    async function replyToHelpCommand(ctx) {
+      await handleTelegramHelpRequest(ctx, input, "command");
+    },
+  ));
+
   bot.command("cancel", createLoggedTelegramHandler(
     input,
     "cancel_command",
@@ -254,6 +262,42 @@ export function buildTelegramTextReply(tenant) {
 }
 
 /**
+ * Mensagem de ajuda do bot Telegram.
+ *
+ * `/help` e deliberadamente um comando somente informativo: ele pode ler o
+ * pedido aberto para contextualizar a resposta, mas nunca deve criar pedido,
+ * chamar Eulen, confirmar deposito, cancelar, reiniciar ou alterar qualquer
+ * coluna persistida. Isso preserva o contrato operacional de que ajuda nao e
+ * uma acao de negocio.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ currentStep?: unknown, amountInCents?: unknown, walletAddress?: unknown } | null} order Pedido aberto, quando existir.
+ * @returns {string} Texto final para o usuario.
+ */
+export function buildTelegramHelpReply(tenant, order) {
+  const header = `Ajuda do bot ${tenant.displayName} da DePix.`;
+  const generalGuidance = [
+    "Envie /start para começar uma compra de DePix com Pix.",
+    "Depois informe o valor em BRL, por exemplo: 100,00.",
+    "Quando o bot pedir, cole seu endereço DePix/Liquid. Aceito endereços começando com lq1 ou ex1.",
+    "Para cancelar um pedido aberto, envie /cancel. Para recomeçar, envie recomecar.",
+  ];
+
+  if (!order) {
+    return [
+      header,
+      ...generalGuidance,
+    ].join("\n\n");
+  }
+
+  return [
+    header,
+    buildTelegramCurrentStepHelp(order),
+    ...generalGuidance,
+  ].join("\n\n");
+}
+
+/**
  * Seleciona a resposta conversacional a partir do passo persistido.
  *
  * O bot nunca deve criar um novo pedido so para explicar o proximo passo. Se
@@ -371,6 +415,52 @@ function buildTelegramConfirmationPrompt(order) {
     "Se estiver tudo certo, envie: sim, confirmar ou ok.",
     "Se quiser encerrar este pedido, envie: cancelar.",
   ].join("\n");
+}
+
+/**
+ * Explica o passo atual sem reaproveitar prompts que possam parecer uma nova
+ * instrucao de negocio.
+ *
+ * A copy de ajuda deve ser diagnostica: ela orienta o usuario, mas deixa claro
+ * que o pedido continua exatamente no mesmo estado em que estava antes do
+ * comando `/help`.
+ *
+ * @param {{ currentStep?: unknown, amountInCents?: unknown, walletAddress?: unknown }} order Pedido aberto.
+ * @returns {string} Orientacao contextual do passo atual.
+ */
+function buildTelegramCurrentStepHelp(order) {
+  switch (order?.currentStep) {
+    case ORDER_PROGRESS_STATES.AMOUNT:
+      return [
+        "Seu pedido aberto está aguardando o valor.",
+        "Envie somente o valor em BRL, como 10,50 ou R$ 10,50.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.WALLET:
+      return [
+        "Seu pedido aberto está aguardando o endereço DePix/Liquid.",
+        "Cole o endereço da SideSwap começando com lq1 ou use um endereço ex1.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.CONFIRMATION:
+      return [
+        "Seu pedido aberto está aguardando confirmação.",
+        "Envie sim, confirmar ou ok para criar o Pix. Envie cancelar para encerrar.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
+      return [
+        "Seu pedido já está criando o depósito Pix.",
+        "Aguarde um instante e evite reenviar a confirmação.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.AWAITING_PAYMENT:
+      return [
+        "Seu pedido já está aguardando pagamento.",
+        "Use o QR code Pix ou o copia-e-cola mais recente enviado nesta conversa.",
+      ].join("\n");
+    default:
+      return [
+        "Encontrei um pedido aberto, mas ele está em um estado que não pede ação sua agora.",
+        "Se precisar abandonar esse pedido, envie /cancel.",
+      ].join("\n");
+  }
 }
 
 /**
@@ -553,6 +643,7 @@ function buildTelegramAmountPrompt(tenant) {
     `Olá! Este é o bot ${tenant.displayName} da DePix.`,
     "Para começar, envie o valor em BRL que você quer comprar.",
     "Exemplo: 100,00",
+    "Se precisar de ajuda, envie /help.",
   ].join("\n\n");
 }
 
@@ -565,7 +656,7 @@ function buildTelegramAmountPrompt(tenant) {
 export function buildTelegramUnsupportedMessageReply(tenant) {
   return [
     `Recebi sua interação em ${tenant.displayName}.`,
-    "Nesta fase eu respondo a mensagens de texto e ao comando /start.",
+    "Nesta fase eu respondo a mensagens de texto e aos comandos /start, /help e /cancel.",
   ].join("\n\n");
 }
 
@@ -726,6 +817,43 @@ async function getExistingTelegramConversationOrder(ctx, input) {
     tenant: input.tenant,
     telegramUserId,
   });
+}
+
+/**
+ * Processa `/help` lendo apenas o pedido aberto atual.
+ *
+ * Este handler usa a mesma leitura segura dos comandos de controle, mas nao
+ * chama nenhum service de transicao. Assim, o usuario pode pedir ajuda em
+ * qualquer etapa sem risco de criar pedido novo, avançar estado, cancelar algo
+ * por engano ou disparar integracao externa.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   db?: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {"command"} source Origem da intencao.
+ * @returns {Promise<void>} Promessa resolvida apos a resposta ao usuario.
+ */
+async function handleTelegramHelpRequest(ctx, input, source) {
+  const openOrder = await getExistingTelegramConversationOrder(ctx, input);
+
+  logTelegramEvent(input, "info", "telegram.help.rendered", {
+    handlerName: ctx.state?.telegramHandler,
+    source,
+    hasOpenOrder: Boolean(openOrder),
+    orderId: openOrder?.orderId,
+    currentStep: openOrder?.currentStep,
+    status: openOrder?.status,
+  });
+
+  await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder));
 }
 
 /**
