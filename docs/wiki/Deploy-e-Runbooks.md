@@ -96,9 +96,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `200 deposit_recheck_duplicate`: registrar `requestId` e tratar como replay idempotente; nao repetir indefinidamente
 - `401 ops_authorization_required` ou `403 ops_authorization_invalid`: validar token, escopo do tenant e rotacao recente do segredo antes de qualquer nova tentativa
 - `404 deposit_not_found`: confirmar se o `depositEntryId` pertence ao tenant do path; nao insistir com outro tenant no mesmo request
-- `409 order_not_found`: tratar como agregado local quebrado e abrir correcao de dados antes de novo recheck
-- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: parar retries cegos, anexar `requestId` e investigar correlacao local versus resposta remota
-- `409 deposit_status_regression`: preservar o agregado concluido local, registrar a divergencia e comparar webhook/eventos antes de qualquer acao manual
+- `409 order_not_found`: confirmar se o pedido local ainda existe antes de repetir
+- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: revisar correlacao de `qrId` e a fonte remota antes de reexecutar
+- `409 deposit_status_regression`: nao forcar retry cego; comparar com o agregado local concluido
 - `502 deposit_status_invalid_response` ou `502 deposit_status_unavailable`: confirmar disponibilidade da Eulen e do binding do tenant antes de repetir a operacao
 - `503 telegram_webhook_dependency_unavailable`: conferir se `telegramBotToken` e `telegramWebhookSecret` foram materializados para o tenant antes de tentar registrar ou consultar o webhook
 
