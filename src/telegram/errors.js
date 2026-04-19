@@ -68,6 +68,10 @@ export function normalizeTelegramBotError(error) {
     ? error.ctx.state.telegramHandler
     : undefined;
 
+  if (cause instanceof TelegramWebhookError) {
+    return cause;
+  }
+
   if (cause instanceof GrammyError) {
     return new TelegramWebhookError(
       502,

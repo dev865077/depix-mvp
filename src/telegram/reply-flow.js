@@ -749,6 +749,7 @@ async function startTelegramConversationOrder(ctx, input) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -762,11 +763,23 @@ async function startTelegramConversationOrder(ctx, input) {
     );
   }
 
+  if (telegramChatId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a chat identifier for order registration.",
+      {
+        handlerName: ctx.state.telegramHandler,
+        reason: "missing_telegram_chat_id",
+      },
+    );
+  }
+
   const orderSession = await startTelegramOrderConversation({
     db: input.db,
     tenant: input.tenant,
     telegramUserId,
-    telegramChatId: resolveTelegramChatId(ctx),
+    telegramChatId,
   });
 
   ctx.state.telegramOrderSession = orderSession;
@@ -972,6 +985,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -985,10 +999,23 @@ async function handleTelegramRestartRequest(ctx, input, source) {
     );
   }
 
+  if (telegramChatId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a chat identifier for order restart.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_telegram_chat_id",
+      },
+    );
+  }
+
   const restartedSession = await restartTelegramOpenOrderConversation({
     db: input.db,
     tenant: input.tenant,
     telegramUserId,
+    telegramChatId,
   });
 
   if (!restartedSession.previousOrder) {
@@ -1400,6 +1427,7 @@ function resolveTelegramChatId(ctx) {
   return ctx.chat?.id
     ?? ctx.message?.chat?.id
     ?? ctx.update?.message?.chat?.id
+    ?? ctx.update?.callback_query?.message?.chat?.id
     ?? undefined;
 }
 

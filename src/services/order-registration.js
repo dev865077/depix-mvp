@@ -65,13 +65,17 @@ function normalizeTelegramUserId(telegramUserId) {
  *
  * O Telegram pode enviar `chat.id` como numero ou string. Persistimos texto
  * para manter o contrato igual ao `user_id` e evitar comparacoes numericas
- * implicitas entre runtimes, testes e D1.
+ * implicitas entre runtimes, testes e D1. Strings sao preservadas exatamente;
+ * numeros inteiros finitos sao aceitos mesmo quando ultrapassam o limite
+ * "safe" do JavaScript, porque rejeita-los seria pior que manter o melhor
+ * texto disponivel recebido do parser JSON. Quando uma borda tiver acesso ao
+ * valor bruto, ela deve preferir passar string para evitar perda de precisao.
  *
  * @param {string | number | undefined | null} telegramChatId Chat bruto do update.
  * @returns {string | null} Chat normalizado ou `null` quando ausente.
  */
 function normalizeTelegramChatId(telegramChatId) {
-  if (Number.isSafeInteger(telegramChatId)) {
+  if (typeof telegramChatId === "number" && Number.isFinite(telegramChatId) && Number.isInteger(telegramChatId)) {
     return String(telegramChatId);
   }
 

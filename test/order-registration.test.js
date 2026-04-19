@@ -147,6 +147,32 @@ describe("telegram order registration controls", () => {
     expect(newOrder?.telegramChatId).toBe("chat-selected");
   });
 
+  it("preserves large Telegram chat identifiers as text", async function assertLargeChatIdentifierPersistence() {
+    const db = getDatabase(env);
+    const largeStringChatId = "9007199254740993123";
+    await ensureOrderSchema(db);
+
+    const stringSession = await startTelegramOrderConversation({
+      db,
+      tenant: {
+        tenantId: "alpha",
+      },
+      telegramUserId: "large-chat-user-string",
+      telegramChatId: largeStringChatId,
+    });
+    const numericSession = await startTelegramOrderConversation({
+      db,
+      tenant: {
+        tenantId: "alpha",
+      },
+      telegramUserId: "large-chat-user-number",
+      telegramChatId: 9007199254740992,
+    });
+
+    expect(stringSession.order.telegramChatId).toBe(largeStringChatId);
+    expect(numericSession.order.telegramChatId).toBe("9007199254740992");
+  });
+
   it("returns a clear recovery shape when restart cancels the old order but the new one cannot be created", async function assertRestartFailureRecoveryShape() {
     const db = getDatabase(env);
     await ensureOrderSchema(db);

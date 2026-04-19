@@ -90,6 +90,15 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se o ambiente nao materializar `telegramBotToken` ou `telegramWebhookSecret`, a rota falha fechada com `503 telegram_webhook_dependency_unavailable`
 - se o bearer estiver ausente ou invalido, responde `401 ops_authorization_required` ou `403 ops_authorization_invalid`
 
+## Rollout de `orders.telegram_chat_id`
+
+- a migracao adiciona `orders.telegram_chat_id` como coluna nullable e nao exige backfill destrutivo
+- pedidos novos ou retomados pelo Telegram passam a gravar o `chat.id` real da conversa
+- pedidos abertos legados com `telegram_chat_id = NULL` so ganham destino seguro quando receberem novo update Telegram do mesmo tenant, usuario e canal
+- pedidos legados que nao receberem novo update permanecem sem destino assincrono seguro; a futura notificacao pos-pagamento deve registrar skip controlado e nunca usar `user_id` como fallback
+- se um update conversacional chegar sem `chat.id`, o Worker falha fechado com `400 telegram_order_registration_failed` e `reason=missing_telegram_chat_id`, sem criar pedido parcial
+- se um update chegar de chat diferente do persistido, o Worker nao sobrescreve `telegram_chat_id`, responde orientando usar a conversa original e registra `telegram.order.chat_divergence_detected`
+
 ## Acao do operador por resposta
 
 - `200 deposit_recheck_processed`: registrar `requestId`, `tenantId`, `depositEntryId`, `eventId` e seguir com a conciliacao concluida

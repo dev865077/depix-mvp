@@ -339,6 +339,53 @@ describe("telegram webhook reply flow", () => {
     expect(savedOrder?.orderId.length).toBeGreaterThan(6);
   });
 
+  it("rejects order-bearing Telegram updates without a chat id before creating an order", async function assertMissingChatRejected() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function unexpectedTelegramFetch() {
+      throw new Error("Telegram outbound should not be called for malformed order updates.");
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: JSON.stringify({
+          update_id: 501001,
+          message: {
+            message_id: 501001,
+            date: 1713434400,
+            text: "/start",
+            entities: [
+              {
+                type: "bot_command",
+                offset: 0,
+                length: 6,
+              },
+            ],
+            from: {
+              id: 501001,
+              is_bot: false,
+              first_name: "Pedro",
+            },
+          },
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501001");
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("telegram_order_registration_failed");
+    expect(body.error.details.reason).toBe("missing_telegram_chat_id");
+    expect(currentOrder).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("answers /help without creating a Telegram order", async function assertHelpDoesNotCreateOrder() {
     const app = createApp();
     const workerEnv = createWorkerEnv();

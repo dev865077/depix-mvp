@@ -52,10 +52,13 @@
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
 - `orders.telegram_chat_id` guarda o destino real do chat Telegram para notificacoes assincronas futuras; ele nao deve ser inferido a partir de `user_id`
+- esta versao define o contrato de persistencia do destino; o envio assincrono pos-pagamento continua fora deste incremento e deve ser implementado pela issue de notificacao correspondente
 - pedidos legados com `telegram_chat_id = NULL` continuam legiveis, mas nao possuem destino assincrono seguro ate serem hidratados por um novo update Telegram do mesmo tenant, usuario e canal
+- pedidos legados que nunca receberem novo update Telegram permanecem com `telegram_chat_id = NULL`; qualquer emissor assincrono futuro deve tratar isso como skip controlado e evidencia operacional, nunca como fallback para `user_id`
 - a hidratacao de `telegram_chat_id` deve usar o pedido aberto mais recente selecionado por `tenant_id`, `user_id`, `channel`, `updated_at DESC` e `created_at DESC`
 - a escrita de `telegram_chat_id` deve ser atomica e usar `tenant_id`, `order_id`, `user_id`, `channel` e `telegram_chat_id IS NULL` no `WHERE`
 - se um update chegar com chat diferente do `telegram_chat_id` persistido, o sistema nao deve sobrescrever o destino e deve registrar `telegram.order.chat_divergence_detected`
+- updates conversacionais sem `chat.id` nao podem criar, retomar ou reiniciar pedido, porque isso produziria um agregado sem destino seguro para notificacao futura
 - `telegram_chat_id = NULL` significa "sem destino assincrono seguro"; a etapa futura de notificacao nao pode usar `user_id` como fallback implicito
 - quando o pedido aberto estiver em `draft`, o comando `/start` avanca o agregado para `amount` sem criar uma nova linha
 - quando o pedido estiver em `amount`, o valor BRL recebido no Telegram deve atualizar `amount_in_cents` e avancar o `current_step` para `wallet`
