@@ -19,6 +19,7 @@ Estado atual:
 - o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
 - o endereco informado pelo usuario na etapa `wallet` e validado de forma conservadora como DePix/Liquid antes de avancar para `confirmation`
 - em `confirmation`, `sim`, `confirmar` e `ok` disparam a criacao do deposito real na Eulen
+- na criacao do deposito, o payload enviado para `POST /deposit` inclui o `depixAddress` informado pelo usuario, junto do split do tenant
 - em `confirmation`, `cancelar` encerra o pedido sem criar deposito
 - mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
