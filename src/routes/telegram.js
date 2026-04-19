@@ -10,6 +10,7 @@ import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
 import { log } from "../lib/logger.js";
 import { normalizeTelegramWebhookError } from "../telegram/errors.js";
+import { extractTelegramRawUpdateMetadata } from "../telegram/raw-update.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
 
 export const telegramRouter = new Hono();
@@ -46,6 +47,12 @@ export async function handleTelegramWebhook(c) {
   }
 
   const telegramRuntime = getTelegramRuntime(tenant);
+  // Lemos um clone do corpo para preservar `chat.id` sem perda numerica antes
+  // do parser interno do grammY. O request original segue intacto para o
+  // webhookCallback; `extractTelegramRawUpdateMetadata()` faz um guard textual
+  // barato e so aciona o parser lossless quando existe superficie `chat.id`.
+  const rawTelegramUpdateBody = await c.req.raw.clone().text();
+  const rawTelegramUpdateMetadata = extractTelegramRawUpdateMetadata(rawTelegramUpdateBody);
   const [telegramBotToken, telegramWebhookSecret] = await Promise.all([
     readTenantSecret(c.env, tenant, "telegramBotToken"),
     readTenantSecret(c.env, tenant, "telegramWebhookSecret"),
@@ -56,6 +63,7 @@ export async function handleTelegramWebhook(c) {
     env: c.env,
     runtimeConfig,
     db,
+    rawTelegramUpdate: rawTelegramUpdateMetadata,
     requestContext: {
       requestId: c.get("requestId"),
       method: c.req.method,

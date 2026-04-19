@@ -33,12 +33,18 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
  * inicial. Isso evita que callback queries, edicoes de mensagem e outros tipos
  * de update fiquem "soltos" no runtime sem rastreabilidade.
  *
+ * Importante para o contrato de `telegram_chat_id`: nesta fase, apenas
+ * `message`/`message:text` e order-bearing. Callback query, edited message,
+ * channel post e outras superficies sao explicitamente unsupported e nao
+ * criam nem retomam pedido.
+ *
  * @param {import("grammy").Bot} bot Instancia do bot atual.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   env?: Record<string, unknown>,
  *   runtimeConfig?: Record<string, unknown>,
  *   db?: import("@cloudflare/workers-types").D1Database,
+ *   rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *   requestContext?: {
  *     requestId?: string,
  *     method?: string,
@@ -70,6 +76,11 @@ export function installTelegramReplyFlow(bot, input) {
     "start_command",
     async function replyToStart(ctx) {
       const orderSession = await startTelegramConversationOrder(ctx, input);
+      if (orderSession.chatBinding?.blocked) {
+        await ctx.reply(buildTelegramChatBindingBlockedReply());
+        return;
+      }
+
       await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
     },
   ));
@@ -111,6 +122,11 @@ export function installTelegramReplyFlow(bot, input) {
         }
 
         const orderSession = await startTelegramConversationOrder(ctx, input);
+
+        if (orderSession.chatBinding?.blocked) {
+          await ctx.reply(buildTelegramChatBindingBlockedReply());
+          return;
+        }
 
         if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.AMOUNT) {
           const amountSession = await receiveTelegramOrderAmount({
@@ -522,6 +538,24 @@ function buildTelegramNoOpenOrderControlReply(action) {
 }
 
 /**
+ * Mensagem segura para updates vindos de um chat diferente daquele que ficou
+ * associado ao pedido.
+ *
+ * O bot nao tenta "corrigir" o destino automaticamente porque esse chat sera
+ * usado por notificacoes assincronas de pagamento. Qualquer overwrite
+ * silencioso poderia enviar uma confirmacao financeira para a superficie
+ * errada.
+ *
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramChatBindingBlockedReply() {
+  return [
+    "Não consigo continuar este pedido por este chat.",
+    "Use a conversa original do pedido ou cancele o pedido aberto antes de tentar de novo.",
+  ].join("\n\n");
+}
+
+/**
  * Mensagem principal enviada quando o Pix foi criado com sucesso.
  *
  * @param {{ displayName: string }} tenant Tenant atual.
@@ -721,6 +755,7 @@ async function startTelegramConversationOrder(ctx, input) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx, input.rawTelegramUpdate);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -734,10 +769,23 @@ async function startTelegramConversationOrder(ctx, input) {
     );
   }
 
+  if (telegramChatId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a chat identifier for order registration.",
+      {
+        handlerName: ctx.state.telegramHandler,
+        reason: "missing_telegram_chat_id",
+      },
+    );
+  }
+
   const orderSession = await startTelegramOrderConversation({
     db: input.db,
     tenant: input.tenant,
     telegramUserId,
+    telegramChatId,
   });
 
   ctx.state.telegramOrderSession = orderSession;
@@ -769,6 +817,8 @@ async function startTelegramConversationOrder(ctx, input) {
       status: orderSession.order.status,
     });
   }
+
+  logTelegramChatBindingResult(ctx, input, orderSession);
 
   return orderSession;
 }
@@ -941,6 +991,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   }
 
   const telegramUserId = resolveTelegramActorId(ctx);
+  const telegramChatId = resolveTelegramChatId(ctx, input.rawTelegramUpdate);
 
   if (telegramUserId === undefined) {
     throw new TelegramWebhookError(
@@ -954,10 +1005,23 @@ async function handleTelegramRestartRequest(ctx, input, source) {
     );
   }
 
+  if (telegramChatId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a chat identifier for order restart.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_telegram_chat_id",
+      },
+    );
+  }
+
   const restartedSession = await restartTelegramOpenOrderConversation({
     db: input.db,
     tenant: input.tenant,
     telegramUserId,
+    telegramChatId,
   });
 
   if (!restartedSession.previousOrder) {
@@ -1147,6 +1211,50 @@ function logTelegramConfirmationFailure(ctx, input, order, error) {
 }
 
 /**
+ * Registra apenas os resultados de binding de chat que precisam de observacao
+ * operacional.
+ *
+ * Replays idempotentes e criacoes felizes nao geram ruido. Divergencia e
+ * conflito transitorio, por outro lado, precisam aparecer nos logs porque
+ * protegem o destino futuro das notificacoes assincronas de pagamento.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {{ order: Record<string, unknown>, chatBinding?: Record<string, unknown> }} orderSession Sessao materializada.
+ */
+function logTelegramChatBindingResult(ctx, input, orderSession) {
+  const chatBinding = orderSession.chatBinding;
+
+  if (!chatBinding?.blocked) {
+    return;
+  }
+
+  const isMismatch = chatBinding.result === "telegram_chat_id_mismatch";
+  const message = isMismatch
+    ? "telegram.order.chat_divergence_detected"
+    : "telegram.order.chat_hydration_conflict";
+
+  logTelegramEvent(input, "warn", message, {
+    handlerName: ctx.state.telegramHandler,
+    orderId: orderSession.order.orderId,
+    userId: orderSession.order.userId,
+    currentStep: orderSession.order.currentStep,
+    status: orderSession.order.status,
+    persistedTelegramChatId: chatBinding.persistedTelegramChatId,
+    incomingTelegramChatId: chatBinding.incomingTelegramChatId,
+    reason: chatBinding.result,
+  });
+}
+
+/**
  * Instala telemetria para chamadas outbound da Bot API.
  *
  * @param {import("grammy").Bot} bot Bot atual.
@@ -1307,6 +1415,27 @@ function resolveTelegramReplyChatId(update) {
     ?? update?.edited_channel_post?.chat?.id
     ?? update?.business_message?.chat?.id
     ?? update?.edited_business_message?.chat?.id
+    ?? undefined;
+}
+
+/**
+ * Resolve o chat do update conversacional atual.
+ *
+ * Esse valor e diferente do `from.id`: `from.id` identifica o usuario, enquanto
+ * `chat.id` identifica a superficie onde respostas assincronas futuras devem
+ * ser entregues. Persistir essa distincao evita assumir que chat privado sera
+ * sempre o unico modo operacional do Telegram.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{ chatId?: string, parseFailed: boolean } | undefined} rawTelegramUpdate Metadados extraidos do corpo bruto.
+ * @returns {string | number | undefined} Identificador do chat, quando existir.
+ */
+function resolveTelegramChatId(ctx, rawTelegramUpdate) {
+  return rawTelegramUpdate?.chatId
+    ?? ctx.chat?.id
+    ?? ctx.message?.chat?.id
+    ?? ctx.update?.message?.chat?.id
+    ?? ctx.update?.callback_query?.message?.chat?.id
     ?? undefined;
 }
 

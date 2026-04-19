@@ -206,6 +206,7 @@ async function clearTelegramPersistence() {
       user_id TEXT NOT NULL,
       channel TEXT NOT NULL DEFAULT 'telegram',
       product_type TEXT NOT NULL,
+      telegram_chat_id TEXT,
       amount_in_cents INTEGER,
       wallet_address TEXT,
       current_step TEXT NOT NULL DEFAULT 'draft',
@@ -218,6 +219,7 @@ async function clearTelegramPersistence() {
     "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
     "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
     "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+    "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
     `CREATE TABLE IF NOT EXISTS deposits (
       tenant_id TEXT NOT NULL,
       deposit_entry_id TEXT PRIMARY KEY NOT NULL,
@@ -328,12 +330,133 @@ describe("telegram webhook reply flow", () => {
 
     expect(savedOrder?.tenantId).toBe("alpha");
     expect(savedOrder?.userId).toBe("501");
+    expect(savedOrder?.telegramChatId).toBe("1001");
     expect(savedOrder?.channel).toBe("telegram");
     expect(savedOrder?.productType).toBe("depix");
     expect(savedOrder?.currentStep).toBe("amount");
     expect(savedOrder?.status).toBe("draft");
     expect(typeof savedOrder?.orderId).toBe("string");
     expect(savedOrder?.orderId.length).toBeGreaterThan(6);
+  });
+
+  it("rejects order-bearing Telegram updates without a chat id before creating an order", async function assertMissingChatRejected() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function unexpectedTelegramFetch() {
+      throw new Error("Telegram outbound should not be called for malformed order updates.");
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: JSON.stringify({
+          update_id: 501001,
+          message: {
+            message_id: 501001,
+            date: 1713434400,
+            text: "/start",
+            entities: [
+              {
+                type: "bot_command",
+                offset: 0,
+                length: 6,
+              },
+            ],
+            from: {
+              id: 501001,
+              is_bot: false,
+              first_name: "Pedro",
+            },
+          },
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501001");
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("telegram_order_registration_failed");
+    expect(body.error.details.reason).toBe("missing_telegram_chat_id");
+    expect(currentOrder).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("persists a large numeric Telegram chat id from the raw webhook payload without precision loss", async function assertLargeRawChatIdPersistence() {
+    const app = createApp();
+    const largeChatId = "9007199254740993123";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.text).toBe(buildTelegramStartReply({
+        displayName: "Alpha",
+      }));
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 501002,
+          date: 1713434402,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: `{
+          "update_id": 501002,
+          "message": {
+            "message_id": 501002,
+            "date": 1713434402,
+            "text": "/start",
+            "entities": [
+              {
+                "type": "bot_command",
+                "offset": 0,
+                "length": 6
+              }
+            ],
+            "chat": {
+              "id": ${largeChatId},
+              "type": "private"
+            },
+            "from": {
+              "id": 501002,
+              "is_bot": false,
+              "first_name": "Pedro"
+            }
+          }
+        }`,
+      },
+      createWorkerEnv(),
+    );
+    const savedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "501002");
+
+    expect(response.status).toBe(200);
+    expect(savedOrder?.telegramChatId).toBe(largeChatId);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("answers /help without creating a Telegram order", async function assertHelpDoesNotCreateOrder() {
@@ -1817,6 +1940,7 @@ describe("telegram webhook reply flow", () => {
 
     expect(firstOrder?.orderId).toBeTruthy();
     expect(replayedOrder?.orderId).toBe(firstOrder?.orderId);
+    expect(replayedOrder?.telegramChatId).toBe("8008");
     expect(replayedOrder?.currentStep).toBe("amount");
     expect(count?.count).toBe(1);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -1894,6 +2018,142 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("hydrates a legacy open order with the current Telegram chat id", async function assertLegacyChatHydration() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_legacy_chat_hydration",
+      userId: "912",
+      channel: "telegram",
+      productType: "depix",
+      currentStep: "amount",
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.text).toContain("Valor recebido: R$ 10,00.");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 17,
+          date: 1713434418,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "10,00",
+          chatId: 9912,
+          fromId: 912,
+          updateId: 912,
+        }),
+      },
+      workerEnv,
+    );
+    const hydratedOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "912");
+
+    expect(response.status).toBe(200);
+    expect(hydratedOrder?.orderId).toBe("order_legacy_chat_hydration");
+    expect(hydratedOrder?.telegramChatId).toBe("9912");
+    expect(hydratedOrder?.currentStep).toBe("wallet");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a divergent Telegram chat without mutating the existing order", async function assertDivergentChatBlocked() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await createOrder(getDatabase(env), {
+      tenantId: "beta",
+      orderId: "order_divergent_chat",
+      userId: "913",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "original-chat",
+      currentStep: "amount",
+      status: "draft",
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot654321:beta-test-token/sendMessage");
+      expect(payload.text).toContain("Não consigo continuar este pedido por este chat.");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 18,
+          date: 1713434419,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/beta/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "beta-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "10,00",
+          chatId: 9913,
+          fromId: 913,
+          updateId: 913,
+        }),
+      },
+      workerEnv,
+    );
+    const unchangedOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "913");
+    const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
+    const divergenceLog = logRecords.find((record) => record.message === "telegram.order.chat_divergence_detected");
+
+    expect(response.status).toBe(200);
+    expect(unchangedOrder?.telegramChatId).toBe("original-chat");
+    expect(unchangedOrder?.currentStep).toBe("amount");
+    expect(unchangedOrder?.amountInCents).toBeNull();
+    expect(divergenceLog?.details?.orderId).toBe("order_divergent_chat");
+    expect(divergenceLog?.details?.persistedTelegramChatId).toBe("original-chat");
+    expect(divergenceLog?.details?.incomingTelegramChatId).toBe("9913");
+    expect(divergenceLog?.details?.reason).toBe("telegram_chat_id_mismatch");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("handles callback queries through answerCallbackQuery", async function assertCallbackQueryFallback() {
     const app = createApp();
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1935,10 +2195,12 @@ describe("telegram webhook reply flow", () => {
       createWorkerEnv(),
     );
     const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "503");
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(currentOrder).toBeNull();
     expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
   });
 

@@ -16,6 +16,7 @@ const ORDER_COLUMNS_SQL = `
     user_id AS userId,
     channel AS channel,
     product_type AS productType,
+    telegram_chat_id AS telegramChatId,
     amount_in_cents AS amountInCents,
     wallet_address AS walletAddress,
     current_step AS currentStep,
@@ -45,13 +46,14 @@ const INSERT_ORDER_SQL = `
     user_id,
     channel,
     product_type,
+    telegram_chat_id,
     amount_in_cents,
     wallet_address,
     current_step,
     status,
     split_address,
     split_fee
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const ORDER_UPDATE_COLUMNS = {
@@ -59,6 +61,7 @@ const ORDER_UPDATE_COLUMNS = {
   userId: "user_id",
   channel: "channel",
   productType: "product_type",
+  telegramChatId: "telegram_chat_id",
   amountInCents: "amount_in_cents",
   walletAddress: "wallet_address",
   currentStep: "current_step",
@@ -84,6 +87,7 @@ function normalizeOrderInput(input) {
     userId: input.userId,
     channel: input.channel ?? "telegram",
     productType: input.productType,
+    telegramChatId: input.telegramChatId ?? null,
     amountInCents: input.amountInCents ?? null,
     walletAddress: input.walletAddress ?? null,
     currentStep: input.currentStep ?? "draft",
@@ -111,6 +115,7 @@ export async function createOrder(db, input) {
     order.userId,
     order.channel,
     order.productType,
+    order.telegramChatId,
     order.amountInCents,
     order.walletAddress,
     order.currentStep,
@@ -187,6 +192,73 @@ export async function getLatestOpenOrderByUser(db, tenantId, userId, channel = "
     channel,
     ...TERMINAL_ORDER_STEPS,
   ).first();
+}
+
+/**
+ * Hidrata o destino de chat Telegram de um pedido legado apenas se ele ainda
+ * nao tiver destino persistido.
+ *
+ * A funcao recebe um `orderId` ja selecionado pela camada de servico. Ela nao
+ * procura outro pedido aberto nem tenta inferir chat por `user_id`, porque a
+ * decisao de qual agregado esta em foco pertence a
+ * `getLatestOpenOrderByUser()`. O `WHERE` inclui `tenant_id`, `order_id`,
+ * `user_id`, `channel` e `telegram_chat_id IS NULL` para transformar a escrita
+ * em um compare-and-set simples e tenant-scoped.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {{
+ *   tenantId: string,
+ *   orderId: string,
+ *   userId: string,
+ *   channel: string,
+ *   telegramChatId: string
+ * }} input Identidade do pedido selecionado e chat recebido.
+ * @returns {Promise<{
+ *   order: Record<string, unknown> | null,
+ *   didUpdate: boolean,
+ *   notFound: boolean,
+ *   reason: "updated" | "not_found" | "already_bound_or_identity_mismatch"
+ * }>} Resultado atomico da tentativa de hidratacao.
+ */
+export async function hydrateOrderTelegramChatIdIfMissing(db, input) {
+  const updatedOrder = await db
+    .prepare(
+      `UPDATE orders
+       SET telegram_chat_id = ?, updated_at = ?
+       WHERE tenant_id = ?
+         AND order_id = ?
+         AND user_id = ?
+         AND channel = ?
+         AND telegram_chat_id IS NULL
+       RETURNING ${ORDER_COLUMNS_SQL}`,
+    )
+    .bind(
+      input.telegramChatId,
+      new Date().toISOString(),
+      input.tenantId,
+      input.orderId,
+      input.userId,
+      input.channel,
+    )
+    .first();
+
+  if (updatedOrder) {
+    return {
+      order: updatedOrder,
+      didUpdate: true,
+      notFound: false,
+      reason: "updated",
+    };
+  }
+
+  const currentOrder = await getOrderById(db, input.tenantId, input.orderId);
+
+  return {
+    order: currentOrder,
+    didUpdate: false,
+    notFound: currentOrder === null,
+    reason: currentOrder === null ? "not_found" : "already_bound_or_identity_mismatch",
+  };
 }
 
 /**

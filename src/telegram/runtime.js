@@ -61,6 +61,7 @@ function buildBootstrapBotInfo(tenantConfig) {
  *   env?: Record<string, unknown>,
  *   runtimeConfig?: Record<string, unknown>,
  *   db?: import("@cloudflare/workers-types").D1Database,
+ *   rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *   requestContext?: {
  *     requestId?: string,
  *     method?: string,
@@ -79,6 +80,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
     env: options.env,
     runtimeConfig: options.runtimeConfig,
     db: options.db,
+    rawTelegramUpdate: options.rawTelegramUpdate,
     requestContext: options.requestContext,
   });
 
@@ -98,6 +100,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
  *     options?: {
  *       runtimeConfig?: Record<string, unknown>,
  *       db?: import("@cloudflare/workers-types").D1Database,
+ *       rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *       requestContext?: {
  *         requestId?: string,
  *         method?: string,
@@ -114,6 +117,7 @@ export function createTelegramBot(tenantConfig, telegramBotToken, options = {}) 
  *           env?: Record<string, unknown>,
  *           runtimeConfig?: Record<string, unknown>,
  *           db?: import("@cloudflare/workers-types").D1Database,
+ *           rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *           requestContext?: {
  *             requestId?: string,
  *             method?: string,
@@ -141,6 +145,7 @@ export function createTelegramRuntime(tenantConfig) {
         env: options.env,
         runtimeConfig: options.runtimeConfig,
         db: options.db,
+        rawTelegramUpdate: options.rawTelegramUpdate,
         requestContext: options.requestContext,
       });
 
@@ -165,6 +170,7 @@ export function createTelegramRuntime(tenantConfig) {
  *     options?: {
  *       runtimeConfig?: Record<string, unknown>,
  *       db?: import("@cloudflare/workers-types").D1Database,
+ *       rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *       requestContext?: {
  *         requestId?: string,
  *         method?: string,
@@ -180,6 +186,7 @@ export function createTelegramRuntime(tenantConfig) {
  *           telegramWebhookSecret?: string,
  *           runtimeConfig?: Record<string, unknown>,
  *           db?: import("@cloudflare/workers-types").D1Database,
+ *           rawTelegramUpdate?: { chatId?: string, parseFailed: boolean },
  *           requestContext?: {
  *             requestId?: string,
  *             method?: string,
