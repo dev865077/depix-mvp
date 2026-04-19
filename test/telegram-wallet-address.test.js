@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as blech32Runtime from "blech32/dist/blech32.cjs.development.js";
 
 import { parseTelegramWalletAddress } from "../src/telegram/wallet-address.js";
 
@@ -6,6 +7,12 @@ const SIDESWAP_LQ_ADDRESS = "lq1qqt6tf80s4c8k5n5v88smk40d5cqh6wp63025cwypeemlh3r
 const EX_ADDRESS = "ex1qhuq5u7udzwskhaz45fy80kdaxjytqd99ju5yfn";
 
 describe("telegram wallet address parser", () => {
+  it("keeps the internal blech32 adapter contract explicit", function assertBlech32ImportShape() {
+    expect(typeof blech32Runtime.decode).toBe("function");
+    expect(blech32Runtime.BLECH32).toBe("blech32");
+    expect(blech32Runtime.BLECH32M).toBe("blech32m");
+  });
+
   it("accepts SideSwap lq1 addresses pasted as one string", function assertLqAddress() {
     expect(parseTelegramWalletAddress(SIDESWAP_LQ_ADDRESS)).toEqual({
       ok: true,

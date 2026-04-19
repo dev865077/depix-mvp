@@ -794,7 +794,7 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("confirms the order, creates exactly one deposit, and reuses the awaiting-payment state on replay", async function assertConfirmationCreatesSingleDeposit() {
+  it("does not create a second Eulen deposit when confirmar is replayed after awaiting_payment", async function assertConfirmationReplayIdempotency() {
     const app = createApp();
     const workerEnv = createWorkerEnv();
     const requestHeaders = {
