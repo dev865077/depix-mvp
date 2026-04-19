@@ -12,6 +12,7 @@ import {
   parseD1ExecuteJsonOutput,
   readEvidenceCliOptions,
   resolveWranglerInvocation,
+  runQrFlowEvidenceCli,
 } from "../scripts/lib/qr-flow-evidence.js";
 
 describe("qr flow evidence helpers", () => {
@@ -151,6 +152,100 @@ describe("qr flow evidence helpers", () => {
     expect(() => parseD1ExecuteJsonOutput("wrangler warning\n[]")).toThrow("not valid JSON");
     expect(() => parseD1ExecuteJsonOutput(JSON.stringify([]))).toThrow("did not include a results array");
     expect(() => parseD1ExecuteJsonOutput(JSON.stringify([{ results: null }]))).toThrow("non-array results");
+  });
+
+  it("runs the executable CLI path with injected Wrangler, git, and health boundaries", async function assertRunnableCliPath() {
+    /** @type {Array<{ file: string, args: string[], options: Record<string, unknown> }>} */
+    const calls = [];
+    const output = {
+      stdout: "",
+      stderr: "",
+    };
+    const writableStdout = {
+      write(chunk) {
+        output.stdout += chunk;
+        return true;
+      },
+    };
+    const writableStderr = {
+      write(chunk) {
+        output.stderr += chunk;
+        return true;
+      },
+    };
+    const execFileSync = (file, args, options) => {
+      calls.push({ file, args, options });
+
+      if (file === "git") {
+        return "commit_cli\n";
+      }
+
+      if (args[0] === "deployments") {
+        return "Current Version ID: version_cli";
+      }
+
+      if (args[0] === "d1" && args[1] === "migrations") {
+        return "No migrations to apply!";
+      }
+
+      if (args[0] === "d1" && args[1] === "execute") {
+        return JSON.stringify([
+          {
+            results: [
+              {
+                order_id: "order_cli",
+              },
+            ],
+          },
+        ]);
+      }
+
+      throw new Error(`Unexpected command ${file} ${args.join(" ")}`);
+    };
+    const fetchImplementation = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status: "ok",
+        url,
+      }),
+    });
+
+    const exitCode = await runQrFlowEvidenceCli({
+      argv: ["--env", "production", "--tenant", "beta", "--limit", "1"],
+      cwd: "/repo",
+      platform: "linux",
+      nodeBinary: "node-test",
+      env: {
+        WRANGLER_BIN: "wrangler-test",
+      },
+      fileExists: () => false,
+      execFileSync,
+      fetch: fetchImplementation,
+      now: () => new Date("2026-04-19T13:00:00.000Z"),
+      stdout: writableStdout,
+      stderr: writableStderr,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("## Evidencia controlada - issue #90");
+    expect(output.stdout).toContain("commit_cli");
+    expect(output.stdout).toContain("\"order_id\": \"order_cli\"");
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: "wrangler-test",
+          args: ["deployments", "status", "--env", "production"],
+        }),
+        expect.objectContaining({
+          file: "git",
+          args: ["rev-parse", "HEAD"],
+        }),
+      ]),
+    );
+    expect(calls.filter((call) => call.file === "wrangler-test" && call.args[1] === "execute")).toHaveLength(2);
+    expect(calls.every((call) => call.options.timeout === DEFAULT_OPERATION_TIMEOUT_MS)).toBe(true);
   });
 
   it("renders a markdown report ready for issue evidence", function assertMarkdownRendering() {

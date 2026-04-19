@@ -228,6 +228,189 @@ export function buildD1ExecuteArgs(environment, sql) {
 }
 
 /**
+ * @typedef {{
+ *   argv?: string[],
+ *   cwd: string,
+ *   platform: NodeJS.Platform,
+ *   nodeBinary: string,
+ *   env: Record<string, string | undefined>,
+ *   fileExists: (path: string) => boolean,
+ *   execFileSync: (file: string, args: string[], options: Record<string, unknown>) => string | Uint8Array,
+ *   fetch: typeof fetch,
+ *   now?: () => Date,
+ *   stdout?: { write: (chunk: string) => unknown },
+ *   stderr?: { write: (chunk: string) => unknown }
+ * }} QrFlowEvidenceRuntimeDependencies
+ */
+
+/**
+ * Cria o runtime do coletor com dependencias injetaveis.
+ *
+ * O arquivo executavel injeta Node, Wrangler, `fetch` e filesystem reais. Os
+ * testes injetam dublês determinísticos, cobrindo o caminho inteiro sem tocar
+ * rede, D1 remoto ou binarios locais.
+ *
+ * @param {QrFlowEvidenceRuntimeDependencies} dependencies Dependencias do runtime.
+ * @returns {{
+ *   collect: (argv: string[]) => Promise<string>,
+ *   runCommand: (file: string, args: string[]) => string,
+ *   runWrangler: (args: string[]) => string,
+ *   runD1Query: (environment: "test" | "production", sql: string) => Array<Record<string, unknown>>,
+ *   fetchHealth: (environment: "test" | "production") => Promise<Record<string, unknown>>
+ * }} Funcoes do runtime.
+ */
+export function createQrFlowEvidenceCollector(dependencies) {
+  const now = dependencies.now ?? (() => new Date());
+  const wranglerInvocation = resolveWranglerInvocation({
+    cwd: dependencies.cwd,
+    platform: dependencies.platform,
+    nodeBinary: dependencies.nodeBinary,
+    env: dependencies.env,
+    fileExists: dependencies.fileExists,
+  });
+
+  /**
+   * Executa um comando e devolve stdout UTF-8.
+   *
+   * @param {string} file Binario alvo.
+   * @param {string[]} args Argumentos do processo.
+   * @returns {string} Saida padrao.
+   */
+  function runCommand(file, args) {
+    try {
+      const output = dependencies.execFileSync(file, args, {
+        cwd: dependencies.cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: DEFAULT_OPERATION_TIMEOUT_MS,
+        windowsHide: true,
+      });
+
+      return typeof output === "string" ? output : new TextDecoder().decode(output);
+    } catch (error) {
+      throw new Error(buildCommandFailureMessage(file, args, error), { cause: error });
+    }
+  }
+
+  /**
+   * Executa um comando do Wrangler usando resolucao robusta.
+   *
+   * @param {string[]} args Argumentos apos `wrangler`.
+   * @returns {string} Stdout bruto.
+   */
+  function runWrangler(args) {
+    return runCommand(wranglerInvocation.file, [...wranglerInvocation.argsPrefix, ...args]);
+  }
+
+  /**
+   * Executa uma query remota no D1 e devolve apenas as linhas.
+   *
+   * @param {"test" | "production"} environment Ambiente remoto.
+   * @param {string} sql SQL a executar.
+   * @returns {Array<Record<string, unknown>>} Linhas retornadas.
+   */
+  function runD1Query(environment, sql) {
+    const rawOutput = runWrangler(buildD1ExecuteArgs(environment, sql));
+    return parseD1ExecuteJsonOutput(rawOutput);
+  }
+
+  /**
+   * Busca o `GET /health` no host publico canonico do ambiente.
+   *
+   * @param {"test" | "production"} environment Ambiente remoto.
+   * @returns {Promise<Record<string, unknown>>} JSON de health.
+   */
+  async function fetchHealth(environment) {
+    const healthUrl = buildHealthUrl(environment);
+    let response;
+
+    try {
+      response = await dependencies.fetch(healthUrl, {
+        signal: AbortSignal.timeout(DEFAULT_OPERATION_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw new Error(`Health request failed before HTTP response for ${healthUrl}: ${formatUnknownError(error)}`, {
+        cause: error,
+      });
+    }
+
+    if (!response.ok) {
+      throw new Error(`Health request failed for ${healthUrl} with HTTP ${response.status}.`);
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Health response from ${healthUrl} was not valid JSON: ${formatUnknownError(error)}`, {
+        cause: error,
+      });
+    }
+  }
+
+  /**
+   * Coleta todos os artefatos e renderiza o Markdown final.
+   *
+   * @param {string[]} argv Argumentos crus da CLI.
+   * @returns {Promise<string>} Relatorio Markdown.
+   */
+  async function collect(argv) {
+    const options = readEvidenceCliOptions(argv);
+    const deploymentStatus = runWrangler(buildDeploymentStatusArgs(options.environment));
+    const migrationsStatus = runWrangler(buildMigrationsListArgs(options.environment));
+    const orders = runD1Query(options.environment, buildLatestOrdersQuery(options));
+    const deposits = runD1Query(options.environment, buildLatestDepositsQuery(options));
+    const health = await fetchHealth(options.environment);
+    const gitCommit = runCommand("git", ["rev-parse", "HEAD"]).trim();
+
+    return formatEvidenceMarkdown({
+      issueNumber: options.issueNumber,
+      environment: options.environment,
+      generatedAt: now().toISOString(),
+      tenantId: options.tenantId,
+      sinceIso: options.sinceIso,
+      workerUrl: ENVIRONMENT_WORKER_HOSTS[options.environment],
+      gitCommit,
+      deploymentStatus,
+      migrationsStatus,
+      health,
+      orders,
+      deposits,
+    });
+  }
+
+  return {
+    collect,
+    runCommand,
+    runWrangler,
+    runD1Query,
+    fetchHealth,
+  };
+}
+
+/**
+ * Executa a CLI do coletor e converte excecoes em exit code.
+ *
+ * @param {QrFlowEvidenceRuntimeDependencies} dependencies Dependencias do runtime.
+ * @returns {Promise<number>} Exit code sugerido.
+ */
+export async function runQrFlowEvidenceCli(dependencies) {
+  const collector = createQrFlowEvidenceCollector(dependencies);
+  const argv = dependencies.argv ?? [];
+  const stdout = dependencies.stdout;
+  const stderr = dependencies.stderr;
+
+  try {
+    const markdown = await collector.collect(argv);
+
+    stdout?.write(`${markdown}\n`);
+    return 0;
+  } catch (error) {
+    stderr?.write(`[collect-qr-flow-evidence] ${formatUnknownError(error)}\n`);
+    return 1;
+  }
+}
+
+/**
  * Interpreta a saida JSON do `wrangler d1 execute --json`.
  *
  * Wrangler retorna uma lista de resultados por statement. O coletor executa
@@ -265,6 +448,59 @@ export function parseD1ExecuteJsonOutput(rawOutput) {
   }
 
   return results.filter((row) => row && typeof row === "object");
+}
+
+/**
+ * Cria uma mensagem curta, mas suficiente, para falhas de processo.
+ *
+ * @param {string} file Binario executado.
+ * @param {string[]} args Argumentos usados.
+ * @param {unknown} error Erro lancado pelo Node.
+ * @returns {string} Diagnostico pronto para operador.
+ */
+function buildCommandFailureMessage(file, args, error) {
+  const commandLine = [file, ...args].join(" ");
+  const status = typeof error === "object" && error && "status" in error ? ` status=${error.status}` : "";
+  const signal = typeof error === "object" && error && "signal" in error ? ` signal=${error.signal}` : "";
+  const stderr = typeof error === "object" && error && "stderr" in error ? formatProcessOutput(error.stderr) : "";
+  const stdout = typeof error === "object" && error && "stdout" in error ? formatProcessOutput(error.stdout) : "";
+
+  return [
+    `Command failed: ${commandLine}`,
+    `timeoutMs=${DEFAULT_OPERATION_TIMEOUT_MS}${status}${signal}`,
+    stderr ? `stderr=${stderr}` : "",
+    stdout ? `stdout=${stdout}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+/**
+ * Normaliza stdout/stderr de erros de processo para uma linha auditavel.
+ *
+ * @param {unknown} output Valor bruto retornado por `execFileSync`.
+ * @returns {string} Texto compacto.
+ */
+function formatProcessOutput(output) {
+  if (typeof output === "string") {
+    return output.trim().slice(0, 1_000);
+  }
+
+  if (output instanceof Uint8Array) {
+    return new TextDecoder().decode(output).trim().slice(0, 1_000);
+  }
+
+  return "";
+}
+
+/**
+ * Normaliza erros desconhecidos sem perder a mensagem principal.
+ *
+ * @param {unknown} error Erro bruto.
+ * @returns {string} Mensagem segura.
+ */
+function formatUnknownError(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
