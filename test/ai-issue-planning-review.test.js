@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildDiscussionHistoryContext,
+  buildIssueCommentContext,
   buildIssuePlanningCompletionComment,
   buildIssuePlanningReviewComments,
   buildIssuePlanningUserPrompt,
@@ -13,6 +14,8 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  isAutomatedIssueMetaComment,
+  isAutomatedIssueMetaCommentBody,
   isAutomatedPlanningComment,
   isAutomatedPlanningCommentBody,
   isAutomationDiscussionCommentEvent,
@@ -103,6 +106,43 @@ describe("ai issue planning review", () => {
     expect(history).not.toContain("Request changes");
     expect(history).toContain("stop conditions");
     expect(history).toContain("citando o marcador");
+    expect(history).toContain("PR docs-only");
+  });
+
+  it("drops automated issue triage metadata while keeping human issue context", () => {
+    const history = buildIssueCommentContext([
+      {
+        user: { login: "github-actions" },
+        created_at: "2026-04-19T00:00:00Z",
+        body: [
+          "<!-- ai-issue-triage:openai -->",
+          "## AI Issue Triage",
+          "A issue so deve ser tratada como pronta depois da rodada unanime.",
+        ].join("\n"),
+      },
+      {
+        user: { login: "dev865077" },
+        created_at: "2026-04-19T00:01:00Z",
+        body: [
+          "<!-- ai-issue-triage:openai -->",
+          "Citando o marcador em um diagnostico humano.",
+        ].join("\n"),
+      },
+      {
+        user: { login: "dev865077" },
+        created_at: "2026-04-19T00:02:00Z",
+        body: "Decisao operacional: #132 e #135 sao blockers da epic, nao desta PR docs-only.",
+      },
+    ]);
+
+    expect(isAutomatedIssueMetaCommentBody("<!-- ai-issue-triage:openai -->")).toBe(true);
+    expect(isAutomatedIssueMetaComment({
+      user: { login: "dev865077" },
+      body: "<!-- ai-issue-triage:openai --> citado por humano",
+    })).toBe(false);
+    expect(history).not.toContain("AI Issue Triage");
+    expect(history).not.toContain("rodada unanime");
+    expect(history).toContain("diagnostico humano");
     expect(history).toContain("PR docs-only");
   });
 

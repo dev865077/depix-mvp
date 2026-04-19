@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
  */
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-issue-planning-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-issue-planning-final:openai -->";
+const ISSUE_TRIAGE_COMMENT_MARKER = "<!-- ai-issue-triage:openai -->";
 const ISSUE_TITLE_PREFIX = "[Issue #";
 
 /**
@@ -611,11 +612,18 @@ export function parseReferencedIssueNumbers(body, rootIssueNumber) {
 /**
  * Build a compact issue comment history for the planning prompt.
  *
+ * Automated triage comments are intentionally excluded. They describe the
+ * workflow contract that created the planning Discussion, not backlog scope.
+ * Feeding that boilerplate back into the planning model makes the model treat
+ * the existence of the gate itself as unresolved work, which can deadlock the
+ * issue before a human or PR author has anything actionable to change.
+ *
  * @param {any[]} comments Issue comments.
  * @returns {string} Bounded comment history.
  */
-function buildIssueCommentContext(comments) {
+export function buildIssueCommentContext(comments) {
   const selectedComments = comments
+    .filter((comment) => !isAutomatedIssueMetaComment(comment))
     .slice(-8)
     .map((comment) => [
       `### ${comment.user?.login ?? "unknown"} @ ${comment.created_at ?? "unknown"}`,
@@ -692,6 +700,46 @@ export function isAutomatedPlanningComment(comment) {
 
   return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
     && isAutomatedPlanningCommentBody(comment?.body);
+}
+
+/**
+ * Detecta comentarios automatizados de issue que sao metadados do fluxo.
+ *
+ * A triagem automatica cria a Discussion e explica que a rodada precisa de
+ * unanimidade. Esse texto nao e criterio de aceite da issue; e instrucao do
+ * proprio workflow. Se ele entrar no prompt, revisores podem reprovar porque
+ * "a discussao ainda nao aprovou", mesmo quando a rodada atual esta decidindo
+ * justamente essa aprovacao.
+ *
+ * @param {string | null | undefined} body Corpo bruto do comentario.
+ * @returns {boolean} Verdadeiro quando o comentario e metadado automatizado.
+ */
+export function isAutomatedIssueMetaCommentBody(body) {
+  if (typeof body !== "string") {
+    return false;
+  }
+
+  const trimmedBody = body.trimStart();
+
+  return trimmedBody.startsWith(ISSUE_TRIAGE_COMMENT_MARKER)
+    || trimmedBody.startsWith(DISCUSSION_COMMENT_MARKER)
+    || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+/**
+ * Detecta comentarios REST de issue escritos pelo bot e marcados como meta.
+ *
+ * A checagem exige autor automatizado e marcador canonico para preservar
+ * explicacoes humanas que citem esses marcadores ao descrever uma correcao.
+ *
+ * @param {{ user?: { login?: string | null } | null, body?: string | null }} comment Comentario REST de issue.
+ * @returns {boolean} Verdadeiro apenas para metadados automatizados.
+ */
+export function isAutomatedIssueMetaComment(comment) {
+  const authorLogin = comment?.user?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedIssueMetaCommentBody(comment?.body);
 }
 
 /**
