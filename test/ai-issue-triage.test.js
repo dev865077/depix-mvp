@@ -112,6 +112,8 @@ describe("ai issue triage validation", () => {
 
     expect(body).toContain("## Discussion");
     expect(body).toContain("## Resposta operacional requerida");
+    expect(body).toContain("quatro papeis: produto, tecnica, scrum e risco");
+    expect(body).toContain("aprovacao unanime");
     expect(body).toContain("Antes de abrir branch ou PR");
     expect(body).toContain("https://github.com/dev865077/depix-mvp/discussions/97");
   });
@@ -135,6 +137,7 @@ describe("ai issue triage validation", () => {
     expect(body).toContain("## Debate");
     expect(body).toContain("## Sintese final");
     expect(body).toContain("## Resposta operacional requerida");
+    expect(body).toContain("quatro papeis: produto, tecnica, scrum e risco");
     expect(body).toContain("Antes de abrir branch ou PR");
     expect(body).toContain("Issue origem: #51");
   });

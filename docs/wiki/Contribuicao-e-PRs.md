@@ -18,6 +18,10 @@
 - issue pequena, clara e de baixo impacto pode seguir direto para branch e PR
 - issue com impacto `medio` ou `alto` deve passar por Discussion curta antes da PR
 - a triagem automatica registra justificativa, debate resumido e proximo passo na propria issue
+- quando a triagem abrir uma Discussion, a issue entra na lane de planning review antes da implementacao
+- a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
+- a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
+- o comentario final mais recente da planning Discussion e o estado canonico da prontidao da issue
 - quando a issue cair em Discussion, o implementador deve responder ali com a decisao operacional, a ordem de execucao, o escopo da primeira PR e os riscos ou pendencias que ficam fora dela antes de abrir branch ou PR
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 

@@ -41,10 +41,10 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 
 - fundacao do Worker e multi-tenancy: avancadas
 - persistencia base: avancada
-- fluxo funcional completo do bot: pendente
+- primeiro fluxo real ate QR code no Telegram: concluido
 - webhook principal real: avancado
 - recheck real: avancado, com `deposit-status` por deposito e `deposits` por janela
-- CI automatizado estavel: em backlog proprio
+- backlog agora passa por gate de planning review em Discussions antes da implementacao de itens de maior impacto
 
 ## Fonte de verdade
 

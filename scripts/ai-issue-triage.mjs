@@ -19,6 +19,9 @@ const MAX_OUTPUT_TOKENS = 25000;
 const REASONING_EFFORT = "low";
 const DISCUSSION_ACKNOWLEDGEMENT_TITLE = "## Resposta operacional requerida";
 const DISCUSSION_ACKNOWLEDGEMENT_BODY = [
+  "Esta Discussion tambem recebera uma rodada automatica de planning review com quatro papeis: produto, tecnica, scrum e risco.",
+  "A issue so deve ser tratada como pronta para execucao quando essa rodada terminar com aprovacao unanime.",
+  "",
   "Antes de abrir branch ou PR para esta issue, o implementador deve responder nesta Discussion com:",
   "- decisao operacional adotada",
   "- ordem de execucao",
