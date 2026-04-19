@@ -23,6 +23,8 @@
 - o fluxo Telegram agora coleta o valor do pedido em `amount` antes de avancar para `wallet`
 - o fluxo Telegram agora coleta o endereco DePix/Liquid em `wallet` antes de avancar para `confirmation`
 - em `confirmation`, `sim`, `confirmar` e `ok` criam o deposito real; `cancelar` encerra o pedido
+- o fluxo Telegram tambem aceita `/cancel`, `cancelar` e `recomecar` como controles de conversa para pedidos abertos em `amount`, `wallet` e `confirmation`
+- `recomecar` reinicia com seguranca sem criar pedido novo quando nao houver contexto aberto
 - valores BRL simples aceitos no chat devem ser conservadores e nao ambíguos
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `wallet`
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `confirmation`
@@ -44,6 +46,7 @@
 - `/start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
 - a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
 - a etapa de `wallet` agora valida endereco DePix/Liquid enviado no Telegram, persiste `walletAddress` e avanca o pedido para `confirmation`
+- o fluxo Telegram agora responde a controles de cancelamento e reinicio sem abrir pedido novo indevidamente quando nao existe contexto
 - mensagens invalidas mantem o pedido no passo atual e orientam o usuario a reenviar a informacao correta
 - a confirmacao de pedido ainda depende da integracao completa com a Eulen para criar o deposito final
 - o processamento real do fluxo ainda esta incompleto

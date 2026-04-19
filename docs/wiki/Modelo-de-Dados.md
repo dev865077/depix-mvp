@@ -55,6 +55,8 @@
 - quando o pedido estiver em `wallet`, o endereco DePix/Liquid recebido no Telegram deve atualizar `wallet_address` e avancar o `current_step` para `confirmation`
 - quando o pedido estiver em `confirmation`, a confirmacao do usuario cria o deposito real e grava `deposit_entry_id`
 - `cancelar` em `confirmation` encerra o pedido sem criar deposito
+- `cancel`, `cancelar` e `recomecar` podem cancelar um pedido aberto em `amount`, `wallet` ou `confirmation`
+- `recomecar` deve reaproveitar o contexto aberto quando existir e nao deve criar pedido novo quando nao houver contexto aberto
 - replays de mensagens antigas nao devem sobrescrever `amount_in_cents` quando o pedido ja saiu de `amount`
 - replays de mensagens antigas nao devem sobrescrever `wallet_address` quando o pedido ja saiu de `wallet`
 

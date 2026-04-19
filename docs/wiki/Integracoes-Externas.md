@@ -21,6 +21,8 @@ Estado atual:
 - em `confirmation`, `sim`, `confirmar` e `ok` disparam a criacao do deposito real na Eulen
 - na criacao do deposito, o payload enviado para `POST /deposit` inclui o `depixAddress` informado pelo usuario, junto do split do tenant
 - em `confirmation`, `cancelar` encerra o pedido sem criar deposito
+- o fluxo tambem aceita `/cancel`, `cancelar` e `recomecar` para cancelar ou reiniciar pedidos abertos em `amount`, `wallet` e `confirmation`
+- `recomecar` so reinicia quando existe contexto aberto; caso contrario, apenas orienta o usuario a usar `/start`
 - mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`
