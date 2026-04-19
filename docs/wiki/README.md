@@ -49,6 +49,7 @@ Esta proposta se apoia em quatro referencias principais:
 - [Testes-e-Qualidade.md](./Testes-e-Qualidade.md)
 - [Ambientes-e-Segredos.md](./Ambientes-e-Segredos.md)
 - [Deploy-e-Runbooks.md](./Deploy-e-Runbooks.md)
+- [Teste-Humano-MVP.md](./Teste-Humano-MVP.md)
 - [Governanca-Tecnica.md](./Governanca-Tecnica.md)
 - [ADRs.md](./ADRs.md)
 - [Wiki-Inicial.md](./Wiki-Inicial.md)
