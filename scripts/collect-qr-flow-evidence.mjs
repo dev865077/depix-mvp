@@ -15,15 +15,19 @@
  * `node scripts/collect-qr-flow-evidence.mjs --env production --tenant beta --since 2026-04-19T02:00:00Z`
  */
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 import {
+  buildD1ExecuteArgs,
+  buildDeploymentStatusArgs,
   buildHealthUrl,
   buildLatestDepositsQuery,
   buildLatestOrdersQuery,
+  buildMigrationsListArgs,
   ENVIRONMENT_WORKER_HOSTS,
   formatEvidenceMarkdown,
   readEvidenceCliOptions,
+  resolveWranglerInvocation,
 } from "./lib/qr-flow-evidence.js";
 
 /**
@@ -41,24 +45,22 @@ function runCommand(file, args) {
   });
 }
 
-/**
- * Caminho absoluto do Wrangler versionado no proprio repositorio.
- *
- * Executar o binario local deixa a ferramenta estavel em CI, PowerShell e
- * maquinas onde `npx` tenha comportamento diferente.
- *
- * @type {string}
- */
-const WRANGLER_ENTRYPOINT = resolve(process.cwd(), "node_modules", "wrangler", "bin", "wrangler.js");
+const WRANGLER_INVOCATION = resolveWranglerInvocation({
+  cwd: process.cwd(),
+  platform: process.platform,
+  nodeBinary: process.execPath,
+  env: process.env,
+  fileExists: existsSync,
+});
 
 /**
- * Executa um comando do Wrangler via `npx`.
+ * Executa um comando do Wrangler usando resolucao robusta.
  *
  * @param {string[]} args Argumentos apos `wrangler`.
  * @returns {string} Stdout bruto.
  */
 function runWrangler(args) {
-  return runCommand(process.execPath, [WRANGLER_ENTRYPOINT, ...args]);
+  return runCommand(WRANGLER_INVOCATION.file, [...WRANGLER_INVOCATION.argsPrefix, ...args]);
 }
 
 /**
@@ -69,17 +71,7 @@ function runWrangler(args) {
  * @returns {Array<Record<string, unknown>>} Linhas retornadas.
  */
 function runD1Query(environment, sql) {
-  const rawOutput = runWrangler([
-    "d1",
-    "execute",
-    "DB",
-    "--remote",
-    "--env",
-    environment,
-    "--json",
-    "--command",
-    sql,
-  ]);
+  const rawOutput = runWrangler(buildD1ExecuteArgs(environment, sql));
   const parsed = JSON.parse(rawOutput);
 
   return Array.isArray(parsed) && parsed[0]?.results ? parsed[0].results : [];
@@ -108,8 +100,8 @@ async function fetchHealth(environment) {
  */
 async function main() {
   const options = readEvidenceCliOptions(process.argv.slice(2));
-  const deploymentStatus = runWrangler(["deployments", "status", "--env", options.environment]);
-  const migrationsStatus = runWrangler(["d1", "migrations", "list", "DB", "--remote", "--env", options.environment]);
+  const deploymentStatus = runWrangler(buildDeploymentStatusArgs(options.environment));
+  const migrationsStatus = runWrangler(buildMigrationsListArgs(options.environment));
   const orders = runD1Query(options.environment, buildLatestOrdersQuery(options));
   const deposits = runD1Query(options.environment, buildLatestDepositsQuery(options));
   const health = await fetchHealth(options.environment);

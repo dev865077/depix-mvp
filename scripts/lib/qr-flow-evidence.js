@@ -10,6 +10,7 @@
  *
  * O script que fala com Wrangler e HTTP usa estas funcoes como borda pura.
  */
+import { resolve } from "node:path";
 
 /**
  * Mapeia cada ambiente remoto para o host publico canonico do Worker.
@@ -31,6 +32,14 @@ export const ENVIRONMENT_WORKER_HOSTS = Object.freeze({
  * @type {ReadonlySet<string>}
  */
 const SUPPORTED_OPTION_KEYS = new Set(["env", "tenant", "since", "limit", "issue"]);
+
+/**
+ * Nome da variavel de ambiente que permite ao operador apontar um Wrangler
+ * especifico sem depender de layout de `node_modules`.
+ *
+ * @type {string}
+ */
+export const WRANGLER_BINARY_ENV_KEY = "WRANGLER_BIN";
 
 /**
  * Resolve o host publico canonico do ambiente remoto.
@@ -127,6 +136,84 @@ export function readEvidenceCliOptions(argv) {
     limit,
     issueNumber,
   };
+}
+
+/**
+ * Resolve como o script deve chamar o Wrangler.
+ *
+ * Ordem de preferencia:
+ * 1. `WRANGLER_BIN`, quando o operador quer fixar um binario especifico
+ * 2. Wrangler versionado do repositorio, quando `node_modules` esta instalado
+ * 3. `wrangler.cmd` no Windows ou `wrangler` em outros sistemas
+ *
+ * O retorno separa `file` e `argsPrefix` para manter `execFileSync` sem shell.
+ *
+ * @param {{
+ *   cwd: string,
+ *   platform: NodeJS.Platform,
+ *   nodeBinary: string,
+ *   env?: Record<string, string | undefined>,
+ *   fileExists: (path: string) => boolean
+ * }} input Contexto de execucao.
+ * @returns {{ file: string, argsPrefix: string[], source: "env" | "local-package" | "path" }} Plano de execucao.
+ */
+export function resolveWranglerInvocation(input) {
+  const configuredBinary = input.env?.[WRANGLER_BINARY_ENV_KEY]?.trim();
+
+  if (configuredBinary) {
+    return {
+      file: configuredBinary,
+      argsPrefix: [],
+      source: "env",
+    };
+  }
+
+  const localEntrypoint = resolve(input.cwd, "node_modules", "wrangler", "bin", "wrangler.js");
+
+  if (input.fileExists(localEntrypoint)) {
+    return {
+      file: input.nodeBinary,
+      argsPrefix: [localEntrypoint],
+      source: "local-package",
+    };
+  }
+
+  return {
+    file: input.platform === "win32" ? "wrangler.cmd" : "wrangler",
+    argsPrefix: [],
+    source: "path",
+  };
+}
+
+/**
+ * Monta os argumentos do Wrangler para consultar o deployment atual.
+ *
+ * @param {"test" | "production"} environment Ambiente remoto.
+ * @returns {string[]} Argumentos de CLI.
+ */
+export function buildDeploymentStatusArgs(environment) {
+  return ["deployments", "status", "--env", environment];
+}
+
+/**
+ * Monta os argumentos do Wrangler para listar migrations remotas do D1.
+ *
+ * @param {"test" | "production"} environment Ambiente remoto.
+ * @returns {string[]} Argumentos de CLI.
+ */
+export function buildMigrationsListArgs(environment) {
+  return ["d1", "migrations", "list", "DB", "--remote", "--env", environment];
+}
+
+/**
+ * Monta os argumentos do Wrangler para executar SQL remoto no D1.
+ *
+ * @param {"test" | "production"} environment Ambiente remoto.
+ * @param {string} sql SQL ja montado.
+ * @returns {string[]} Argumentos de CLI.
+ */
+export function buildD1ExecuteArgs(environment, sql) {
+  return ["d1", "execute", "DB", "--remote", "--env", environment, "--json", "--command", sql];
 }
 
 /**

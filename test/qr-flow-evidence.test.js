@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildD1ExecuteArgs,
+  buildDeploymentStatusArgs,
   buildHealthUrl,
   buildLatestDepositsQuery,
   buildLatestOrdersQuery,
+  buildMigrationsListArgs,
   formatEvidenceMarkdown,
   readEvidenceCliOptions,
+  resolveWranglerInvocation,
 } from "../scripts/lib/qr-flow-evidence.js";
 
 describe("qr flow evidence helpers", () => {
@@ -57,6 +61,72 @@ describe("qr flow evidence helpers", () => {
     expect(depositsQuery).toContain("d.tenant_id = 'beta'");
     expect(depositsQuery).toContain("julianday(d.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(depositsQuery).toContain("LIMIT 2;");
+  });
+
+  it("builds the Wrangler command shapes used by the executable script", function assertWranglerCommandShapes() {
+    const sql = "SELECT 1;";
+
+    expect(buildDeploymentStatusArgs("production")).toEqual(["deployments", "status", "--env", "production"]);
+    expect(buildMigrationsListArgs("production")).toEqual([
+      "d1",
+      "migrations",
+      "list",
+      "DB",
+      "--remote",
+      "--env",
+      "production",
+    ]);
+    expect(buildD1ExecuteArgs("production", sql)).toEqual([
+      "d1",
+      "execute",
+      "DB",
+      "--remote",
+      "--env",
+      "production",
+      "--json",
+      "--command",
+      sql,
+    ]);
+  });
+
+  it("resolves Wrangler from env, local package, or PATH without assuming one install layout", function assertWranglerInvocationResolution() {
+    const envInvocation = resolveWranglerInvocation({
+      cwd: "/repo",
+      platform: "linux",
+      nodeBinary: "/node",
+      env: {
+        WRANGLER_BIN: "/custom/wrangler",
+      },
+      fileExists: () => false,
+    });
+    const localInvocation = resolveWranglerInvocation({
+      cwd: "/repo",
+      platform: "linux",
+      nodeBinary: "/node",
+      env: {},
+      fileExists: (path) => path.endsWith("node_modules/wrangler/bin/wrangler.js"),
+    });
+    const windowsPathInvocation = resolveWranglerInvocation({
+      cwd: "C:/repo",
+      platform: "win32",
+      nodeBinary: "node.exe",
+      env: {},
+      fileExists: () => false,
+    });
+
+    expect(envInvocation).toEqual({
+      file: "/custom/wrangler",
+      argsPrefix: [],
+      source: "env",
+    });
+    expect(localInvocation.file).toBe("/node");
+    expect(localInvocation.argsPrefix[0]).toContain("node_modules");
+    expect(localInvocation.source).toBe("local-package");
+    expect(windowsPathInvocation).toEqual({
+      file: "wrangler.cmd",
+      argsPrefix: [],
+      source: "path",
+    });
   });
 
   it("renders a markdown report ready for issue evidence", function assertMarkdownRendering() {
