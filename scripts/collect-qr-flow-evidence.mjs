@@ -24,8 +24,10 @@ import {
   buildLatestDepositsQuery,
   buildLatestOrdersQuery,
   buildMigrationsListArgs,
+  DEFAULT_OPERATION_TIMEOUT_MS,
   ENVIRONMENT_WORKER_HOSTS,
   formatEvidenceMarkdown,
+  parseD1ExecuteJsonOutput,
   readEvidenceCliOptions,
   resolveWranglerInvocation,
 } from "./lib/qr-flow-evidence.js";
@@ -38,11 +40,17 @@ import {
  * @returns {string} Saida padrao.
  */
 function runCommand(file, args) {
-  return execFileSync(file, args, {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  try {
+    return execFileSync(file, args, {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: DEFAULT_OPERATION_TIMEOUT_MS,
+      windowsHide: true,
+    });
+  } catch (error) {
+    throw new Error(buildCommandFailureMessage(file, args, error), { cause: error });
+  }
 }
 
 const WRANGLER_INVOCATION = resolveWranglerInvocation({
@@ -72,9 +80,7 @@ function runWrangler(args) {
  */
 function runD1Query(environment, sql) {
   const rawOutput = runWrangler(buildD1ExecuteArgs(environment, sql));
-  const parsed = JSON.parse(rawOutput);
-
-  return Array.isArray(parsed) && parsed[0]?.results ? parsed[0].results : [];
+  return parseD1ExecuteJsonOutput(rawOutput);
 }
 
 /**
@@ -84,13 +90,31 @@ function runD1Query(environment, sql) {
  * @returns {Promise<Record<string, unknown>>} JSON de health.
  */
 async function fetchHealth(environment) {
-  const response = await fetch(buildHealthUrl(environment));
+  const healthUrl = buildHealthUrl(environment);
+  /** @type {Response} */
+  let response;
 
-  if (!response.ok) {
-    throw new Error(`Health request failed with HTTP ${response.status}.`);
+  try {
+    response = await fetch(healthUrl, {
+      signal: AbortSignal.timeout(DEFAULT_OPERATION_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(`Health request failed before HTTP response for ${healthUrl}: ${formatUnknownError(error)}`, {
+      cause: error,
+    });
   }
 
-  return response.json();
+  if (!response.ok) {
+    throw new Error(`Health request failed for ${healthUrl} with HTTP ${response.status}.`);
+  }
+
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error(`Health response from ${healthUrl} was not valid JSON: ${formatUnknownError(error)}`, {
+      cause: error,
+    });
+  }
 }
 
 /**
@@ -124,4 +148,62 @@ async function main() {
   process.stdout.write(`${markdown}\n`);
 }
 
-await main();
+/**
+ * Cria uma mensagem curta, mas suficiente, para falhas de processo.
+ *
+ * @param {string} file Binario executado.
+ * @param {string[]} args Argumentos usados.
+ * @param {unknown} error Erro lancado pelo Node.
+ * @returns {string} Diagnostico pronto para operador.
+ */
+function buildCommandFailureMessage(file, args, error) {
+  const commandLine = [file, ...args].join(" ");
+  const status = typeof error === "object" && error && "status" in error ? ` status=${error.status}` : "";
+  const signal = typeof error === "object" && error && "signal" in error ? ` signal=${error.signal}` : "";
+  const stderr = typeof error === "object" && error && "stderr" in error ? formatProcessOutput(error.stderr) : "";
+  const stdout = typeof error === "object" && error && "stdout" in error ? formatProcessOutput(error.stdout) : "";
+
+  return [
+    `Command failed: ${commandLine}`,
+    `timeoutMs=${DEFAULT_OPERATION_TIMEOUT_MS}${status}${signal}`,
+    stderr ? `stderr=${stderr}` : "",
+    stdout ? `stdout=${stdout}` : "",
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+/**
+ * Normaliza stdout/stderr de erros de processo para uma linha auditavel.
+ *
+ * @param {unknown} output Valor bruto retornado por `execFileSync`.
+ * @returns {string} Texto compacto.
+ */
+function formatProcessOutput(output) {
+  if (typeof output === "string") {
+    return output.trim().slice(0, 1_000);
+  }
+
+  if (Buffer.isBuffer(output)) {
+    return output.toString("utf8").trim().slice(0, 1_000);
+  }
+
+  return "";
+}
+
+/**
+ * Normaliza erros desconhecidos sem perder a mensagem principal.
+ *
+ * @param {unknown} error Erro bruto.
+ * @returns {string} Mensagem segura.
+ */
+function formatUnknownError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+try {
+  await main();
+} catch (error) {
+  process.stderr.write(`[collect-qr-flow-evidence] ${formatUnknownError(error)}\n`);
+  process.exitCode = 1;
+}

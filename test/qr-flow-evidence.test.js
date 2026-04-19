@@ -7,7 +7,9 @@ import {
   buildLatestDepositsQuery,
   buildLatestOrdersQuery,
   buildMigrationsListArgs,
+  DEFAULT_OPERATION_TIMEOUT_MS,
   formatEvidenceMarkdown,
+  parseD1ExecuteJsonOutput,
   readEvidenceCliOptions,
   resolveWranglerInvocation,
 } from "../scripts/lib/qr-flow-evidence.js";
@@ -66,6 +68,7 @@ describe("qr flow evidence helpers", () => {
   it("builds the Wrangler command shapes used by the executable script", function assertWranglerCommandShapes() {
     const sql = "SELECT 1;";
 
+    expect(DEFAULT_OPERATION_TIMEOUT_MS).toBe(30000);
     expect(buildDeploymentStatusArgs("production")).toEqual(["deployments", "status", "--env", "production"]);
     expect(buildMigrationsListArgs("production")).toEqual([
       "d1",
@@ -127,6 +130,27 @@ describe("qr flow evidence helpers", () => {
       argsPrefix: [],
       source: "path",
     });
+  });
+
+  it("parses Wrangler D1 JSON output without masking malformed responses", function assertD1JsonParsing() {
+    const validOutput = JSON.stringify([
+      {
+        results: [
+          {
+            order_id: "order_1",
+          },
+        ],
+      },
+    ]);
+
+    expect(parseD1ExecuteJsonOutput(validOutput)).toEqual([
+      {
+        order_id: "order_1",
+      },
+    ]);
+    expect(() => parseD1ExecuteJsonOutput("wrangler warning\n[]")).toThrow("not valid JSON");
+    expect(() => parseD1ExecuteJsonOutput(JSON.stringify([]))).toThrow("did not include a results array");
+    expect(() => parseD1ExecuteJsonOutput(JSON.stringify([{ results: null }]))).toThrow("non-array results");
   });
 
   it("renders a markdown report ready for issue evidence", function assertMarkdownRendering() {

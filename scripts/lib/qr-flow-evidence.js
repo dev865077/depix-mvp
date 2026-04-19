@@ -42,6 +42,17 @@ const SUPPORTED_OPTION_KEYS = new Set(["env", "tenant", "since", "limit", "issue
 export const WRANGLER_BINARY_ENV_KEY = "WRANGLER_BIN";
 
 /**
+ * Timeout unico para chamadas operacionais do coletor.
+ *
+ * A ferramenta existe para ser usada durante investigacao de producao. Por
+ * isso, uma dependencia lenta deve falhar com diagnostico claro em vez de
+ * deixar o operador aguardando indefinidamente.
+ *
+ * @type {number}
+ */
+export const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
+
+/**
  * Resolve o host publico canonico do ambiente remoto.
  *
  * @param {string} environment Ambiente alvo informado pelo operador.
@@ -214,6 +225,46 @@ export function buildMigrationsListArgs(environment) {
  */
 export function buildD1ExecuteArgs(environment, sql) {
   return ["d1", "execute", "DB", "--remote", "--env", environment, "--json", "--command", sql];
+}
+
+/**
+ * Interpreta a saida JSON do `wrangler d1 execute --json`.
+ *
+ * Wrangler retorna uma lista de resultados por statement. O coletor executa
+ * sempre um unico `SELECT`, entao exigimos explicitamente `parsed[0].results`
+ * como array. Qualquer outro formato indica falha operacional ou mudanca de
+ * contrato da CLI e deve interromper a evidencia, nunca virar lista vazia.
+ *
+ * @param {string} rawOutput Stdout bruto do Wrangler.
+ * @returns {Array<Record<string, unknown>>} Linhas retornadas pelo D1.
+ */
+export function parseD1ExecuteJsonOutput(rawOutput) {
+  /** @type {unknown} */
+  let parsed;
+
+  try {
+    parsed = JSON.parse(rawOutput);
+  } catch (error) {
+    throw new Error("Wrangler D1 output was not valid JSON. Check Wrangler stdout/stderr before trusting this evidence.");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Wrangler D1 output did not use the expected array envelope.");
+  }
+
+  const [firstStatement] = parsed;
+
+  if (!firstStatement || typeof firstStatement !== "object" || !("results" in firstStatement)) {
+    throw new Error("Wrangler D1 output did not include a results array for the executed SELECT.");
+  }
+
+  const results = firstStatement.results;
+
+  if (!Array.isArray(results)) {
+    throw new Error("Wrangler D1 output included a non-array results field.");
+  }
+
+  return results.filter((row) => row && typeof row === "object");
 }
 
 /**
