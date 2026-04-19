@@ -383,7 +383,9 @@ export async function handleTelegramWebhookInfo(c) {
       env: c.env,
       tenant,
       environment: runtimeConfig.environment,
-      publicBaseUrl: normalizeTelegramWebhookPublicBaseUrl(c.req.query("baseUrl") ?? undefined),
+      publicBaseUrl: normalizeTelegramWebhookPublicBaseUrl(
+        c.req.query("publicBaseUrl") ?? c.req.query("baseUrl") ?? undefined,
+      ),
     }));
   } catch (error) {
     return handleTelegramWebhookOpsRouteError(c, error, {
@@ -437,6 +439,14 @@ export async function handleTelegramWebhookRegistration(c) {
     const publicBaseUrl = normalizeTelegramWebhookPublicBaseUrl(
       typeof body.publicBaseUrl === "string" ? body.publicBaseUrl : undefined,
     );
+
+    if (!publicBaseUrl) {
+      throw new TelegramWebhookOpsError(
+        400,
+        "public_base_url_required",
+        "A valid publicBaseUrl is required to register the Telegram webhook.",
+      );
+    }
 
     return c.json(await registerTelegramWebhookOps({
       env: c.env,

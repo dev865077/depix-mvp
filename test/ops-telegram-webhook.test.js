@@ -119,7 +119,7 @@ describe("ops telegram webhook routes", () => {
 
     const { response, body } = await requestJson(
       app,
-      "https://example.com/ops/alpha/telegram/webhook-info?baseUrl=https://depix-mvp-test.dev865077.workers.dev",
+      "https://example.com/ops/alpha/telegram/webhook-info?publicBaseUrl=https://depix-mvp-test.dev865077.workers.dev",
       {
         method: "GET",
         headers: {
@@ -238,6 +238,31 @@ describe("ops telegram webhook routes", () => {
 
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("ops_authorization_invalid");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("requires bearer auth on webhook registration even when local diagnostics are enabled", async function assertRegisterRouteAuthBoundary() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { response, body } = await requestJson(
+      app,
+      "https://example.com/ops/alpha/telegram/register-webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          publicBaseUrl: "https://depix-mvp-test.dev865077.workers.dev",
+        }),
+      },
+      createWorkerEnv({
+        ENABLE_LOCAL_DIAGNOSTICS: "true",
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe("ops_authorization_required");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
