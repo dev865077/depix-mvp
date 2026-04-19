@@ -116,6 +116,35 @@ function normalizeTelegramSplitConfig(splitConfig) {
 }
 
 /**
+ * Monta o payload final do `POST /deposit` usado pelo fluxo Telegram.
+ *
+ * O endereco coletado do usuario no passo `wallet` nao pode ficar apenas no
+ * pedido local. A criacao do Pix precisa carregar tambem o `depixAddress`
+ * final para que a intencao financeira criada na Eulen permaneça vinculada ao
+ * destino informado pelo proprio usuario.
+ *
+ * @param {{
+ *   amountInCents: number,
+ *   walletAddress: string
+ * }} order Pedido confirmado e pronto para criacao do deposito.
+ * @param {{ depixSplitAddress: string, splitFee: string }} splitConfig Split materializado do tenant.
+ * @returns {{
+ *   amountInCents: number,
+ *   depixAddress: string,
+ *   depixSplitAddress: string,
+ *   splitFee: string
+ * }} Payload externo canonico.
+ */
+function createTelegramEulenDepositPayload(order, splitConfig) {
+  return {
+    amountInCents: order.amountInCents,
+    depixAddress: order.walletAddress,
+    depixSplitAddress: splitConfig.depixSplitAddress,
+    splitFee: splitConfig.splitFee,
+  };
+}
+
+/**
  * Valida se o split do tenant esta pronto para uma chamada real na Eulen.
  *
  * A confirmacao do pedido nao aceita fallback local nem placeholder. Se o
@@ -239,7 +268,7 @@ async function markTelegramOrderConfirmationFailure(input) {
  *
  * O fluxo e deliberadamente sequencial:
  * 1. `confirmation` -> `creating_deposit`
- * 2. chamada real na Eulen com secrets do tenant
+ * 2. chamada real na Eulen com secrets do tenant e o endereco final do usuario
  * 3. persistencia em `deposits`
  * 4. `creating_deposit` -> `awaiting_payment`
  *
@@ -359,11 +388,7 @@ export async function confirmTelegramOrder(input) {
         partnerId: input.tenant.eulenPartnerId,
       }, {
         asyncMode: "auto",
-        body: {
-          amountInCents: creatingDepositOrder.amountInCents,
-          depixSplitAddress: splitConfig.depixSplitAddress,
-          splitFee: splitConfig.splitFee,
-        },
+        body: createTelegramEulenDepositPayload(creatingDepositOrder, splitConfig),
       }),
       {
         pollDelayMs: 0,

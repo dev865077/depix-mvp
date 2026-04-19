@@ -962,6 +962,7 @@ describe("telegram webhook reply flow", () => {
     expect(eulenCalls).toHaveLength(1);
     expect(eulenCalls[0]).toEqual({
       amountInCents: 1050,
+      depixAddress: SIDESWAP_LQ_ADDRESS,
       depixSplitAddress: SIDESWAP_LQ_ADDRESS,
       splitFee: "1.00%",
     });
