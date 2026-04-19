@@ -27,6 +27,7 @@
 
 - [Ambientes e Segredos](Ambientes-e-Segredos)
 - [Deploy e Runbooks](Deploy-e-Runbooks)
+- [Teste Humano MVP](Teste-Humano-MVP)
 
 ## Governanca
 
