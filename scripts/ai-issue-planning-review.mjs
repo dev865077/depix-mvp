@@ -635,10 +635,12 @@ export function buildDiscussionHistoryContext(discussion) {
   const entries = [];
 
   for (const comment of discussion.comments?.nodes ?? []) {
-    entries.push([
-      `### ${comment.author?.login ?? "unknown"} @ ${comment.createdAt ?? "unknown"}`,
-      truncateText(comment.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
-    ].join("\n"));
+    if (!isAutomatedPlanningComment(comment)) {
+      entries.push([
+        `### ${comment.author?.login ?? "unknown"} @ ${comment.createdAt ?? "unknown"}`,
+        truncateText(comment.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+      ].join("\n"));
+    }
 
     for (const reply of comment.replies?.nodes ?? []) {
       entries.push([
@@ -649,6 +651,47 @@ export function buildDiscussionHistoryContext(discussion) {
   }
 
   return truncateText(entries.slice(-MAX_DISCUSSION_CONTEXT_COMMENTS).join("\n\n"), MAX_DISCUSSION_CONTEXT_CHARS);
+}
+
+/**
+ * Detecta comentarios automatizados do proprio planning review.
+ *
+ * A Discussion e append-only por desenho, entao rodadas antigas podem conter
+ * `Request changes` que ja foram resolvidos por edicao da issue e replies
+ * humanas. Esses blocos nao devem entrar como "estado atual" no prompt de uma
+ * nova rodada; caso contrario, o modelo tende a reprovar lendo um status velho
+ * como se fosse o resultado vigente. As replies humanas continuam preservadas
+ * em `buildDiscussionHistoryContext()` porque carregam a decisao operacional
+ * que resolveu cada ponto.
+ *
+ * @param {string | null | undefined} body Corpo bruto do comentario.
+ * @returns {boolean} Verdadeiro quando o comentario e output automatizado antigo.
+ */
+export function isAutomatedPlanningCommentBody(body) {
+  if (typeof body !== "string") {
+    return false;
+  }
+
+  const trimmedBody = body.trimStart();
+
+  return trimmedBody.startsWith(DISCUSSION_COMMENT_MARKER)
+    || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+/**
+ * Detecta se um comentario da Discussion e output automatizado antigo.
+ *
+ * A decisao usa corpo e autor. Isso evita remover contexto humano quando uma
+ * pessoa cola o marcador dentro de uma explicacao operacional ou bug report.
+ *
+ * @param {{ author?: { login?: string | null } | null, body?: string | null }} comment Comentario GraphQL.
+ * @returns {boolean} Verdadeiro apenas para comentarios do bot com marcador canonico.
+ */
+export function isAutomatedPlanningComment(comment) {
+  const authorLogin = comment?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedPlanningCommentBody(comment?.body);
 }
 
 /**

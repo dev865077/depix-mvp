@@ -13,6 +13,8 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  isAutomatedPlanningComment,
+  isAutomatedPlanningCommentBody,
   isAutomationDiscussionCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
@@ -39,6 +41,69 @@ describe("ai issue planning review", () => {
         comment: { author: { login: "dev865077" } },
       }),
     ).toBe(false);
+  });
+
+  it("drops stale automated planning comments while keeping human replies", () => {
+    const history = buildDiscussionHistoryContext({
+      comments: {
+        nodes: [
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:01Z",
+            body: [
+              "<!-- ai-issue-planning-review:openai -->",
+              "## Product and scope review",
+              "## Recommendation",
+              "Request changes",
+            ].join("\n"),
+            replies: {
+              nodes: [
+                {
+                  author: { login: "dev865077" },
+                  createdAt: "2026-04-19T00:01:00Z",
+                  body: "Resolvido: a issue agora tem stop conditions e links canonicos.",
+                },
+              ],
+            },
+          },
+          {
+            author: { login: "dev865077" },
+            createdAt: "2026-04-19T00:01:30Z",
+            body: [
+              "<!-- ai-issue-planning-review:openai -->",
+              "Estou citando o marcador para explicar o bug.",
+            ].join("\n"),
+            replies: { nodes: [] },
+          },
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:02Z",
+            body: [
+              "<!-- ai-issue-planning-final:openai -->",
+              "Final recommendation: `Request changes`",
+            ].join("\n"),
+            replies: { nodes: [] },
+          },
+          {
+            author: { login: "dev865077" },
+            createdAt: "2026-04-19T00:02:00Z",
+            body: "Decisao operacional: seguir com PR docs-only.",
+            replies: { nodes: [] },
+          },
+        ],
+      },
+    });
+
+    expect(isAutomatedPlanningCommentBody("<!-- ai-issue-planning-final:openai -->")).toBe(true);
+    expect(isAutomatedPlanningComment({
+      author: { login: "dev865077" },
+      body: "<!-- ai-issue-planning-final:openai --> citado por humano",
+    })).toBe(false);
+    expect(history).not.toContain("Final recommendation");
+    expect(history).not.toContain("Request changes");
+    expect(history).toContain("stop conditions");
+    expect(history).toContain("citando o marcador");
+    expect(history).toContain("PR docs-only");
   });
 
   it("parses manual workflow rerun targets", () => {
