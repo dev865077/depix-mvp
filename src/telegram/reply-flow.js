@@ -401,6 +401,20 @@ function buildTelegramRestartedReply(tenant) {
 }
 
 /**
+ * Mensagem para reinicio parcial: o cancelamento ocorreu, mas o novo pedido
+ * nao conseguiu ser aberto na mesma rodada.
+ *
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramRestartFailedReply() {
+  return [
+    "Seu pedido anterior foi cancelado.",
+    "Nao consegui abrir o novo pedido agora.",
+    "Envie /start para recomecar com seguranca.",
+  ].join("\n\n");
+}
+
+/**
  * Mensagem para tentativas de controle sem pedido aberto.
  *
  * @param {"cancel" | "restart"} action Acao pedida pelo usuario.
@@ -835,7 +849,14 @@ async function handleTelegramRestartRequest(ctx, input, source) {
     nextOrderId: restartedSession.order?.orderId,
     currentStep: restartedSession.order?.currentStep ?? restartedSession.previousOrder.currentStep,
     status: restartedSession.order?.status ?? restartedSession.previousOrder.status,
+    restartFailed: restartedSession.restartFailed,
+    restartFailureReason: restartedSession.restartFailureReason,
   });
+
+  if (restartedSession.restartFailed) {
+    await ctx.reply(buildTelegramRestartFailedReply());
+    return;
+  }
 
   if (!restartedSession.restarted || !restartedSession.order) {
     await ctx.reply(buildTelegramOrderStepReply(input.tenant, restartedSession.previousOrder));

@@ -447,16 +447,21 @@ export async function cancelTelegramOpenOrder(input) {
  * por cima de um estado financeiro que ainda esta em curso.
  *
  * @param {Parameters<typeof ensureTelegramOrderRegistration>[0]} input Dependencias e contexto do usuario atual.
+ * @param {{
+ *   startConversation?: typeof startTelegramOrderConversation
+ * }=} options Dependencias opcionais para isolar falhas do segundo passo.
  * @returns {Promise<{
  *   previousOrder: Record<string, unknown> | null,
  *   order: Record<string, unknown> | null,
  *   restarted: boolean,
  *   created: boolean,
  *   started: boolean,
- *   conflict: boolean
+ *   conflict: boolean,
+ *   restartFailed: boolean,
+ *   restartFailureReason?: string
  * }>} Resultado do reinicio e o novo pedido, quando houver.
  */
-export async function restartTelegramOpenOrderConversation(input) {
+export async function restartTelegramOpenOrderConversation(input, options = {}) {
   const openOrder = await getTelegramOpenOrderForUser(input);
 
   if (!openOrder) {
@@ -467,6 +472,7 @@ export async function restartTelegramOpenOrderConversation(input) {
       created: false,
       started: false,
       conflict: false,
+      restartFailed: false,
     };
   }
 
@@ -484,10 +490,27 @@ export async function restartTelegramOpenOrderConversation(input) {
       created: false,
       started: false,
       conflict: cancellation.conflict,
+      restartFailed: false,
     };
   }
 
-  const restartedOrder = await startTelegramOrderConversation(input);
+  const startConversation = options.startConversation ?? startTelegramOrderConversation;
+  let restartedOrder;
+
+  try {
+    restartedOrder = await startConversation(input);
+  } catch (error) {
+    return {
+      previousOrder: cancellation.order,
+      order: null,
+      restarted: false,
+      created: false,
+      started: false,
+      conflict: false,
+      restartFailed: true,
+      restartFailureReason: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   return {
     previousOrder: cancellation.order,
@@ -496,5 +519,6 @@ export async function restartTelegramOpenOrderConversation(input) {
     created: restartedOrder.created,
     started: restartedOrder.started,
     conflict: restartedOrder.conflict,
+    restartFailed: false,
   };
 }
