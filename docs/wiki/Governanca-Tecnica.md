@@ -27,6 +27,7 @@
 - `baixo` segue para PR direta
 - `medio` e `alto` geram Discussion com debate curto entre perspectivas de produto, tecnica e risco
 - quando a triagem abrir Discussion, a issue entra na lane de planning review com quatro papeis especializados: produto, technical, scrum e risk
+- a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
 - a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis
 
