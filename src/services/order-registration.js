@@ -50,6 +50,32 @@ function normalizeTelegramUserId(telegramUserId) {
 }
 
 /**
+ * Resolve apenas o pedido aberto atual do usuario sem criar um novo agregado.
+ *
+ * Esta leitura existe para comandos de controle, como `cancelar` e
+ * `recomecar`. Nesses casos, a borda do Telegram precisa observar o estado
+ * atual antes de decidir se deve cancelar, reiniciar ou apenas orientar o
+ * usuario, sem materializar um pedido novo por acidente.
+ *
+ * @param {Parameters<typeof ensureTelegramOrderRegistration>[0]} input Dependencias e contexto da chamada atual.
+ * @returns {Promise<Record<string, unknown> | null>} Pedido aberto mais recente do usuario, se existir.
+ */
+export async function getTelegramOpenOrderForUser(input) {
+  if (!input?.db) {
+    throw new Error("Telegram open order lookup requires a configured D1 database.");
+  }
+
+  if (typeof input?.tenant?.tenantId !== "string" || input.tenant.tenantId.trim().length === 0) {
+    throw new Error("Telegram open order lookup requires a resolved tenant.");
+  }
+
+  const userId = normalizeTelegramUserId(input.telegramUserId);
+  const channel = input.channel ?? DEFAULT_ORDER_CHANNEL;
+
+  return getLatestOpenOrderByUser(input.db, input.tenant.tenantId, userId, channel);
+}
+
+/**
  * Gera um `orderId` interno estavel o bastante para rastreabilidade.
  *
  * O prefixo explicita o agregado no banco e facilita leitura operacional em
@@ -410,5 +436,89 @@ export async function cancelTelegramOpenOrder(input) {
     order: write.order,
     accepted: write.didUpdate,
     conflict: write.conflict,
+  };
+}
+
+/**
+ * Reinicia a conversa do Telegram cancelando o pedido aberto e abrindo outro.
+ *
+ * O fluxo deliberadamente falha fechado quando o pedido atual nao e
+ * cancelavel. Assim, um usuario com Pix ja emitido nao recebe um pedido novo
+ * por cima de um estado financeiro que ainda esta em curso.
+ *
+ * @param {Parameters<typeof ensureTelegramOrderRegistration>[0]} input Dependencias e contexto do usuario atual.
+ * @param {{
+ *   startConversation?: typeof startTelegramOrderConversation
+ * }=} options Dependencias opcionais para isolar falhas do segundo passo.
+ * @returns {Promise<{
+ *   previousOrder: Record<string, unknown> | null,
+ *   order: Record<string, unknown> | null,
+ *   restarted: boolean,
+ *   created: boolean,
+ *   started: boolean,
+ *   conflict: boolean,
+ *   restartFailed: boolean,
+ *   restartFailureReason?: string
+ * }>} Resultado do reinicio e o novo pedido, quando houver.
+ */
+export async function restartTelegramOpenOrderConversation(input, options = {}) {
+  const openOrder = await getTelegramOpenOrderForUser(input);
+
+  if (!openOrder) {
+    return {
+      previousOrder: null,
+      order: null,
+      restarted: false,
+      created: false,
+      started: false,
+      conflict: false,
+      restartFailed: false,
+    };
+  }
+
+  const cancellation = await cancelTelegramOpenOrder({
+    db: input.db,
+    tenant: input.tenant,
+    order: openOrder,
+  });
+
+  if (!cancellation.accepted) {
+    return {
+      previousOrder: cancellation.order,
+      order: cancellation.order,
+      restarted: false,
+      created: false,
+      started: false,
+      conflict: cancellation.conflict,
+      restartFailed: false,
+    };
+  }
+
+  const startConversation = options.startConversation ?? startTelegramOrderConversation;
+  let restartedOrder;
+
+  try {
+    restartedOrder = await startConversation(input);
+  } catch (error) {
+    return {
+      previousOrder: cancellation.order,
+      order: null,
+      restarted: false,
+      created: false,
+      started: false,
+      conflict: false,
+      restartFailed: true,
+      restartFailureReason: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  return {
+    previousOrder: cancellation.order,
+    order: restartedOrder.order,
+    restarted: true,
+    created: restartedOrder.created,
+    started: restartedOrder.started,
+    conflict: restartedOrder.conflict,
+    restartFailed: false,
   };
 }

@@ -11,8 +11,10 @@ import { log } from "../lib/logger.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
 import {
   cancelTelegramOpenOrder,
+  getTelegramOpenOrderForUser,
   receiveTelegramOrderAmount,
   receiveTelegramOrderWallet,
+  restartTelegramOpenOrderConversation,
   startTelegramOrderConversation,
 } from "../services/order-registration.js";
 import {
@@ -72,6 +74,14 @@ export function installTelegramReplyFlow(bot, input) {
     },
   ));
 
+  bot.command("cancel", createLoggedTelegramHandler(
+    input,
+    "cancel_command",
+    async function replyToCancelCommand(ctx) {
+      await handleTelegramCancelRequest(ctx, input, "command");
+    },
+  ));
+
   bot.on("message:text").filter(
     function skipCommandsInGenericTextFlow(ctx) {
       return !ctx.msg?.text?.startsWith("/");
@@ -80,8 +90,19 @@ export function installTelegramReplyFlow(bot, input) {
       input,
       "text_message_reply",
       async function replyToTextMessage(ctx) {
-        const orderSession = await startTelegramConversationOrder(ctx, input);
         const normalizedText = normalizeTelegramDecisionText(ctx.msg.text);
+
+        if (isTelegramRestartDecision(normalizedText)) {
+          await handleTelegramRestartRequest(ctx, input, "text");
+          return;
+        }
+
+        if (isTelegramCancellationDecision(normalizedText)) {
+          await handleTelegramCancelRequest(ctx, input, "text");
+          return;
+        }
+
+        const orderSession = await startTelegramConversationOrder(ctx, input);
 
         if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.AMOUNT) {
           const amountSession = await receiveTelegramOrderAmount({
@@ -122,22 +143,6 @@ export function installTelegramReplyFlow(bot, input) {
         }
 
         if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.CONFIRMATION) {
-          if (isTelegramCancellationDecision(normalizedText)) {
-            const canceledSession = await cancelTelegramOpenOrder({
-              db: input.db,
-              tenant: input.tenant,
-              order: orderSession.order,
-            });
-
-            logTelegramConfirmationDecision(ctx, input, "cancel", canceledSession.order, {
-              accepted: canceledSession.accepted,
-              conflict: canceledSession.conflict,
-            });
-
-            await ctx.reply(buildTelegramCanceledReply());
-            return;
-          }
-
           if (isTelegramConfirmationDecision(normalizedText)) {
             try {
               const confirmationSession = await confirmTelegramOrder({
@@ -381,6 +386,52 @@ function buildTelegramCanceledReply() {
 }
 
 /**
+ * Mensagem curta para reinicio bem sucedido da conversa.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramRestartedReply(tenant) {
+  return [
+    "Pedido anterior cancelado.",
+    "Vamos recomecar do inicio.",
+    "",
+    buildTelegramAmountPrompt(tenant),
+  ].join("\n");
+}
+
+/**
+ * Mensagem para reinicio parcial: o cancelamento ocorreu, mas o novo pedido
+ * nao conseguiu ser aberto na mesma rodada.
+ *
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramRestartFailedReply() {
+  return [
+    "Seu pedido anterior foi cancelado.",
+    "Nao consegui abrir o novo pedido agora.",
+    "Envie /start para recomecar com seguranca.",
+  ].join("\n\n");
+}
+
+/**
+ * Mensagem para tentativas de controle sem pedido aberto.
+ *
+ * @param {"cancel" | "restart"} action Acao pedida pelo usuario.
+ * @returns {string} Texto final para o usuario.
+ */
+function buildTelegramNoOpenOrderControlReply(action) {
+  const actionLine = action === "restart"
+    ? "Nao existe pedido aberto para recomecar."
+    : "Nao existe pedido aberto para cancelar.";
+
+  return [
+    actionLine,
+    "Envie /start para comecar um novo pedido.",
+  ].join("\n\n");
+}
+
+/**
  * Mensagem principal enviada quando o Pix foi criado com sucesso.
  *
  * @param {{ displayName: string }} tenant Tenant atual.
@@ -479,6 +530,16 @@ function isTelegramConfirmationDecision(normalizedText) {
  */
 function isTelegramCancellationDecision(normalizedText) {
   return normalizedText === "cancelar";
+}
+
+/**
+ * Detecta pedidos simples de reinicio da conversa.
+ *
+ * @param {string} normalizedText Texto ja normalizado.
+ * @returns {boolean} Verdadeiro quando a mensagem pede recomeco.
+ */
+function isTelegramRestartDecision(normalizedText) {
+  return normalizedText === "recomecar";
 }
 
 /**
@@ -618,6 +679,191 @@ async function startTelegramConversationOrder(ctx, input) {
   }
 
   return orderSession;
+}
+
+/**
+ * Resolve um pedido aberto existente sem criar um agregado novo.
+ *
+ * Isso e usado por comandos de controle. Sem essa leitura dedicada, um texto
+ * como `cancelar` poderia acidentalmente criar um pedido novo em `amount`.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   db?: import("@cloudflare/workers-types").D1Database
+ * }} input Contexto operacional do runtime.
+ * @returns {Promise<Record<string, unknown> | null>} Pedido aberto atual, se existir.
+ */
+async function getExistingTelegramConversationOrder(ctx, input) {
+  if (!input.db) {
+    throw new TelegramWebhookError(
+      500,
+      "telegram_order_registration_failed",
+      "Telegram order registration requires a configured database.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_database_context",
+      },
+    );
+  }
+
+  const telegramUserId = resolveTelegramActorId(ctx);
+
+  if (telegramUserId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a user identifier for order registration.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_telegram_user_id",
+      },
+    );
+  }
+
+  return getTelegramOpenOrderForUser({
+    db: input.db,
+    tenant: input.tenant,
+    telegramUserId,
+  });
+}
+
+/**
+ * Processa um cancelamento explicito do usuario.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   db?: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {"command" | "text"} source Origem da intencao.
+ * @returns {Promise<void>} Promessa resolvida apos a resposta ao usuario.
+ */
+async function handleTelegramCancelRequest(ctx, input, source) {
+  const openOrder = await getExistingTelegramConversationOrder(ctx, input);
+
+  if (!openOrder) {
+    logTelegramEvent(input, "info", "telegram.order.cancel_ignored", {
+      handlerName: ctx.state?.telegramHandler,
+      source,
+      reason: "no_open_order",
+    });
+    await ctx.reply(buildTelegramNoOpenOrderControlReply("cancel"));
+    return;
+  }
+
+  const canceledSession = await cancelTelegramOpenOrder({
+    db: input.db,
+    tenant: input.tenant,
+    order: openOrder,
+  });
+
+  logTelegramConfirmationDecision(ctx, input, "cancel", canceledSession.order, {
+    accepted: canceledSession.accepted,
+    conflict: canceledSession.conflict,
+    source,
+  });
+
+  if (canceledSession.accepted) {
+    await ctx.reply(buildTelegramCanceledReply());
+    return;
+  }
+
+  await ctx.reply(buildTelegramOrderStepReply(input.tenant, canceledSession.order));
+}
+
+/**
+ * Processa um reinicio explicito da conversa atual.
+ *
+ * O reinicio so avanca quando o pedido aberto pode ser cancelado primeiro.
+ * Em qualquer outro estado, a resposta cai de volta para o estado atual.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   db?: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {"text"} source Origem da intencao.
+ * @returns {Promise<void>} Promessa resolvida apos a resposta ao usuario.
+ */
+async function handleTelegramRestartRequest(ctx, input, source) {
+  if (!input.db) {
+    throw new TelegramWebhookError(
+      500,
+      "telegram_order_registration_failed",
+      "Telegram order registration requires a configured database.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_database_context",
+      },
+    );
+  }
+
+  const telegramUserId = resolveTelegramActorId(ctx);
+
+  if (telegramUserId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a user identifier for order registration.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_telegram_user_id",
+      },
+    );
+  }
+
+  const restartedSession = await restartTelegramOpenOrderConversation({
+    db: input.db,
+    tenant: input.tenant,
+    telegramUserId,
+  });
+
+  if (!restartedSession.previousOrder) {
+    logTelegramEvent(input, "info", "telegram.order.restart_ignored", {
+      handlerName: ctx.state?.telegramHandler,
+      source,
+      reason: "no_open_order",
+    });
+    await ctx.reply(buildTelegramNoOpenOrderControlReply("restart"));
+    return;
+  }
+
+  logTelegramEvent(input, "info", "telegram.order.restart_handled", {
+    handlerName: ctx.state?.telegramHandler,
+    source,
+    accepted: restartedSession.restarted,
+    previousOrderId: restartedSession.previousOrder.orderId,
+    nextOrderId: restartedSession.order?.orderId,
+    currentStep: restartedSession.order?.currentStep ?? restartedSession.previousOrder.currentStep,
+    status: restartedSession.order?.status ?? restartedSession.previousOrder.status,
+    restartFailed: restartedSession.restartFailed,
+    restartFailureReason: restartedSession.restartFailureReason,
+  });
+
+  if (restartedSession.restartFailed) {
+    await ctx.reply(buildTelegramRestartFailedReply());
+    return;
+  }
+
+  if (!restartedSession.restarted || !restartedSession.order) {
+    await ctx.reply(buildTelegramOrderStepReply(input.tenant, restartedSession.previousOrder));
+    return;
+  }
+
+  await ctx.reply(buildTelegramRestartedReply(input.tenant));
 }
 
 /**
