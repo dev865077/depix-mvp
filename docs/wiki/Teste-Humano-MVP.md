@@ -123,6 +123,7 @@ No bot correto do tenant:
 5. aguarde QR/copia-e-cola
 6. pague o QR
 7. acompanhe estado final pelo webhook ou por recheck operacional
+8. use `/help` se precisar de orientacao contextual sem alterar o pedido
 
 Registre screenshot ou transcricao do Telegram com horario absoluto.
 
@@ -197,121 +198,9 @@ Pare, registre evidencia e abra bug pequena se ocorrer:
 - QR nao entregue ate 2 minutos depois da confirmacao
 - D1 sem `order` e `deposit` correlacionados apos QR
 - pagamento sem evento ou estado final ate 10 minutos
-- pagamento ainda sem estado final ate 30 minutos depois do recheck
-- logs com erro nao tratado
-- conflito de `qrId`, `depositEntryId` ou tenant
+- pedido aberto sem orientacao contextual quando o operador usa `/help`
+- payload ou logs sem `orderId` ou `depositEntryId`
 
-Se qualquer item acima acontecer em `test`, nao avance para production.
+## Criterios de aceite
 
-## Gate test para production
-
-So inicie #125 quando #124 tiver comentario final com:
-
-- `orders.status=paid`
-- `orders.current_step=completed`
-- `deposits.external_status=depix_sent` ou status final equivalente explicitamente documentado
-- evidencia Telegram, D1 e logs
-- nenhum erro critico aberto
-- risco residual explicito
-
-Se a evidencia de #124 for parcial, production fica bloqueada ate a lacuna virar issue pequena ou ate o comentario final justificar o status final equivalente.
-
-## Preflight em production
-
-Troque as variaveis:
-
-```bash
-BASE_URL="https://depix-mvp-production.dev865077.workers.dev"
-TENANT_ID="alpha"
-PUBLIC_BASE_URL="$BASE_URL"
-SINCE_ISO="2026-04-19T14:00:00Z"
-```
-
-Repita:
-
-```bash
-curl --fail-with-body -sS -w "\nHTTP_STATUS=%{http_code}\n" "$BASE_URL/health"
-```
-
-```bash
-curl --fail-with-body -sS -w "\nHTTP_STATUS=%{http_code}\n" \
-  -H "Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>" \
-  "$BASE_URL/ops/$TENANT_ID/telegram/webhook-info?publicBaseUrl=$PUBLIC_BASE_URL"
-```
-
-```bash
-npx wrangler d1 migrations list DB --remote --env production
-```
-
-```bash
-node scripts/collect-qr-flow-evidence.mjs --env production --tenant "$TENANT_ID" --since "$SINCE_ISO"
-```
-
-Em production, confirme verbalmente o tenant, bot e host antes de qualquer `register-webhook`.
-
-## Fluxo production controlado
-
-Execute o mesmo fluxo do Telegram com menor valor possivel para a validacao. Registre a evidencia em #125 e nao misture com pedidos de test.
-
-Depois do QR:
-
-```bash
-node scripts/collect-qr-flow-evidence.mjs --env production --tenant "$TENANT_ID" --since "$SINCE_ISO" --issue 125
-```
-
-## Rollback e recuperacao
-
-Em `test`:
-
-- pare a etapa
-- preserve requestIds, order/deposit e screenshot
-- abra bug pequena
-- repita apenas depois da correcao
-
-Em `production`:
-
-- pare novos testes imediatamente
-- preserve `orders`, `deposits` e eventos
-- consulte `webhook-info`
-- rode recheck/fallback somente para o deposito afetado quando habilitado
-- registre requestIds e logs
-- abra bug
-
-Se a falha vier de deploy recente, registre versao atual e anterior e siga [Deploy e Runbooks](Deploy-e-Runbooks) para rollback Cloudflare antes de nova tentativa.
-
-## Template de comentario final
-
-```markdown
-## Resultado
-
-Ambiente:
-Tenant:
-Bot/endpoint:
-Horario:
-Decisao: aprovado|bloqueado
-
-## Evidencia
-
-Health requestId:
-Webhook/ops requestIds:
-HTTP statuses:
-Order: <orderId> / status=<status> / current_step=<step>
-Deposit: <depositEntryId> / external_status=<status>
-QR: <qrId ou N/A>
-Telegram: <screenshot/transcricao>
-Logs relevantes:
-
-## Risco residual
-
-<risco e proxima acao>
-```
-
-## Checklist de encerramento
-
-- [ ] health registrado
-- [ ] webhook conferido
-- [ ] D1/migrations conferidos ou prerequisito bloqueado registrado
-- [ ] QR recebido ou bug aberto
-- [ ] pagamento observado ou recheck/fallback registrado
-- [ ] comentario final publicado na issue correta
-- [ ] production bloqueada quando test nao cumprir o gate
+A validacao so fecha quando a issue publica evidencia suficiente para reconstruir o fluxo inteiro sem depender de contexto oral.

@@ -21,7 +21,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `Hono` ja e a borda HTTP real do Worker
 - a fundacao multi-tenant ja existe no `main`
 - o webhook do Telegram ja faz despacho real para `grammY`
-- o bot Telegram ja tem fluxo inicial para `/start`, texto comum e updates nao suportados
+- o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - o webhook principal da Eulen ja existe com validacao, idempotencia base e persistencia
 - o recheck operacional de deposito ja existe via `POST /ops/:tenantId/recheck/deposit`
@@ -35,6 +35,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza espacos visuais e avanca o pedido para `confirmation`
 - em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
 - o fluxo Telegram agora aceita `/cancel` e comandos equivalentes para cancelar pedidos abertos em `amount`, `wallet` e `confirmation`
+- `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
 - `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 

@@ -13,8 +13,9 @@ Estado atual:
 - runtime `grammY` bootstrapado existe
 - rota canonica existe
 - o webhook ja despacha o update real para o runtime do tenant
-- o bot ja tem um fluxo inicial de resposta para `/start` e mensagens de texto
+- o bot ja tem um fluxo inicial de resposta para `/start`, `/help` e mensagens de texto
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
+- ao receber `/help`, o runtime pode ler o pedido aberto para contextualizar a resposta, mas nao cria nem muta pedidos
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
 - o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
 - o endereco informado pelo usuario na etapa `wallet` e validado de forma conservadora como DePix/Liquid antes de avancar para `confirmation`
