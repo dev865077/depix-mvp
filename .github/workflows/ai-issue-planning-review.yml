@@ -1,0 +1,62 @@
+name: AI Issue Planning Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Open issue number to re-evaluate in the planning lane
+        required: false
+        type: string
+      discussion_number:
+        description: Existing Discussion number to re-evaluate in the planning lane
+        required: false
+        type: string
+  issues:
+    types:
+      - opened
+      - edited
+      - reopened
+  discussion:
+    types:
+      - created
+      - edited
+      - reopened
+  discussion_comment:
+    types:
+      - created
+      - edited
+
+permissions:
+  contents: read
+  discussions: write
+  issues: read
+
+concurrency:
+  group: ai-issue-planning-review-${{ github.event.issue.number || github.event.discussion.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run AI issue planning review
+        env:
+          AI_ISSUE_PLANNING_DOCTRINE_PATH: .github/prompts/ai-issue-planning-doctrine.md
+          AI_ISSUE_PLANNING_PRODUCT_PROMPT_PATH: .github/prompts/ai-issue-planning-product.md
+          AI_ISSUE_PLANNING_TECHNICAL_PROMPT_PATH: .github/prompts/ai-issue-planning-technical.md
+          AI_ISSUE_PLANNING_SCRUM_PROMPT_PATH: .github/prompts/ai-issue-planning-scrum.md
+          AI_ISSUE_PLANNING_RISK_PROMPT_PATH: .github/prompts/ai-issue-planning-risk.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ISSUE_PLANNING_REVIEW_MODEL: ${{ vars.OPENAI_ISSUE_PLANNING_REVIEW_MODEL || 'gpt-5.4-mini' }}
+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}
+        run: node scripts/ai-issue-planning-review.mjs
