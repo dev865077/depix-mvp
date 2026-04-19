@@ -47,6 +47,10 @@ export async function handleTelegramWebhook(c) {
   }
 
   const telegramRuntime = getTelegramRuntime(tenant);
+  // Lemos um clone do corpo para preservar `chat.id` sem perda numerica antes
+  // do parser interno do grammY. O request original segue intacto para o
+  // webhookCallback; `extractTelegramRawUpdateMetadata()` faz um guard textual
+  // barato e so aciona o parser lossless quando existe superficie `chat.id`.
   const rawTelegramUpdateBody = await c.req.raw.clone().text();
   const rawTelegramUpdateMetadata = extractTelegramRawUpdateMetadata(rawTelegramUpdateBody);
   const [telegramBotToken, telegramWebhookSecret] = await Promise.all([

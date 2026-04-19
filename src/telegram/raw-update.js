@@ -48,6 +48,13 @@ function normalizeRawTelegramIdentifier(value) {
 export function extractTelegramRawUpdateMetadata(rawBody) {
   let update;
 
+  if (!rawBody.includes("\"chat\"") || !rawBody.includes("\"id\"")) {
+    return {
+      chatId: undefined,
+      parseFailed: false,
+    };
+  }
+
   try {
     update = parse(rawBody);
   } catch {

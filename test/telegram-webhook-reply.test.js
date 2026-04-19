@@ -2195,10 +2195,12 @@ describe("telegram webhook reply flow", () => {
       createWorkerEnv(),
     );
     const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "503");
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(currentOrder).toBeNull();
     expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
   });
 

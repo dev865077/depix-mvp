@@ -33,6 +33,11 @@ import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnost
  * inicial. Isso evita que callback queries, edicoes de mensagem e outros tipos
  * de update fiquem "soltos" no runtime sem rastreabilidade.
  *
+ * Importante para o contrato de `telegram_chat_id`: nesta fase, apenas
+ * `message`/`message:text` e order-bearing. Callback query, edited message,
+ * channel post e outras superficies sao explicitamente unsupported e nao
+ * criam nem retomam pedido.
+ *
  * @param {import("grammy").Bot} bot Instancia do bot atual.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
