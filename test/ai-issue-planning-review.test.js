@@ -13,6 +13,8 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  isAutomationDiscussionCommentEvent,
+  parseManualPlanningTarget,
   parseReferencedIssueNumbers,
 } from "../scripts/ai-issue-planning-review.mjs";
 
@@ -22,6 +24,32 @@ describe("ai issue planning review", () => {
     expect(extractIssueNumberFromText("Issue origem: #91 - epic")).toBe(91);
     expect(extractIssueNumberFromText("nothing here")).toBeNull();
     expect(extractIssueNumberFromDiscussion({ title: "[Issue #77] Planejar MVP", body: "" })).toBe(77);
+  });
+
+  it("detects bot-authored discussion comment events to prevent loops", () => {
+    expect(
+      isAutomationDiscussionCommentEvent({
+        discussion: { number: 12 },
+        comment: { user: { login: "github-actions[bot]" } },
+      }),
+    ).toBe(true);
+    expect(
+      isAutomationDiscussionCommentEvent({
+        discussion: { number: 12 },
+        comment: { author: { login: "dev865077" } },
+      }),
+    ).toBe(false);
+  });
+
+  it("parses manual workflow rerun targets", () => {
+    expect(parseManualPlanningTarget({ inputs: { issue_number: "91", discussion_number: "97" } })).toEqual({
+      issueNumber: 91,
+      discussionNumber: 97,
+    });
+    expect(parseManualPlanningTarget({ inputs: { issue_number: "abc", discussion_number: "" } })).toEqual({
+      issueNumber: null,
+      discussionNumber: null,
+    });
   });
 
   it("parses referenced child issues from the root issue body", () => {

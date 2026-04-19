@@ -1,6 +1,16 @@
 name: AI Issue Planning Review
 
 on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Open issue number to re-evaluate in the planning lane
+        required: false
+        type: string
+      discussion_number:
+        description: Existing Discussion number to re-evaluate in the planning lane
+        required: false
+        type: string
   issues:
     types:
       - opened

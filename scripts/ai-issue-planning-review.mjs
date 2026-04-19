@@ -868,6 +868,47 @@ function extractDiscussionNumberFromUrl(url) {
 }
 
 /**
+ * Detect whether the current event comment came from the automation bot.
+ *
+ * This guard prevents append-only comments published by the workflow from
+ * recursively triggering another planning round.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {boolean} True when the triggering comment belongs to the bot.
+ */
+export function isAutomationDiscussionCommentEvent(event) {
+  if (!event?.comment || !event?.discussion) {
+    return false;
+  }
+
+  const commentAuthor = event.comment.user?.login || event.comment.author?.login;
+  return commentAuthor === "github-actions[bot]";
+}
+
+/**
+ * Read manual rerun inputs from a `workflow_dispatch` event.
+ *
+ * Maintainers can use this path to backfill older issues/discussions or to
+ * rerun the planning gate when the Discussion thread already exists but no new
+ * discussion activity would naturally trigger the workflow.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {{ issueNumber: number | null, discussionNumber: number | null }} Parsed manual target.
+ */
+export function parseManualPlanningTarget(event) {
+  const issueCandidate = event?.inputs?.issue_number;
+  const discussionCandidate = event?.inputs?.discussion_number;
+  const issueNumber = typeof issueCandidate === "string" && /^\d+$/.test(issueCandidate)
+    ? Number.parseInt(issueCandidate, 10)
+    : null;
+  const discussionNumber = typeof discussionCandidate === "string" && /^\d+$/.test(discussionCandidate)
+    ? Number.parseInt(discussionCandidate, 10)
+    : null;
+
+  return { issueNumber, discussionNumber };
+}
+
+/**
  * Resolve the linked triage Discussion number for one issue.
  *
  * @param {string} owner Repository owner.
@@ -900,6 +941,52 @@ async function findIssueDiscussionNumber(owner, name, issueNumber, comments) {
  * @returns {Promise<{ issue: any, discussion: any } | null>} Planning context or null when irrelevant.
  */
 async function resolvePlanningContext(event, owner, name, repository) {
+  const manualTarget = parseManualPlanningTarget(event);
+
+  if (manualTarget.discussionNumber) {
+    const discussion = await fetchDiscussionByNumber(owner, name, manualTarget.discussionNumber);
+    const issueNumber = extractIssueNumberFromDiscussion(discussion);
+
+    if (!issueNumber) {
+      throw new Error(`Manual planning rerun for Discussion #${manualTarget.discussionNumber} could not resolve a linked issue.`);
+    }
+
+    const issue = await fetchIssue(repository, issueNumber);
+
+    if (issue.state !== "open") {
+      logOperationalEvent("ai_issue_planning_review.skip", {
+        reason: "manual_discussion_linked_issue_not_open",
+        issueNumber: issue.number,
+        discussionNumber: discussion.number,
+      });
+      return null;
+    }
+
+    return { issue, discussion };
+  }
+
+  if (manualTarget.issueNumber) {
+    const issue = await fetchIssue(repository, manualTarget.issueNumber);
+
+    if (issue.state !== "open") {
+      logOperationalEvent("ai_issue_planning_review.skip", {
+        reason: "manual_issue_not_open",
+        issueNumber: issue.number,
+      });
+      return null;
+    }
+
+    const issueComments = await fetchIssueComments(repository, issue.number);
+    const discussionNumber = await findIssueDiscussionNumber(owner, name, issue.number, issueComments);
+
+    if (!discussionNumber) {
+      throw new Error(`Manual planning rerun for issue #${issue.number} could not find a linked Discussion.`);
+    }
+
+    const discussion = await fetchDiscussionByNumber(owner, name, discussionNumber);
+    return { issue, discussion };
+  }
+
   // Issue-triggered runs first try to locate the triage Discussion that owns
   // planning for this issue. If triage has not opened it yet, the workflow
   // exits quietly and waits for the Discussion-side trigger.
@@ -928,11 +1015,9 @@ async function resolvePlanningContext(event, owner, name, repository) {
   }
 
   if (event.comment && event.discussion) {
-    const commentAuthor = event.comment.user?.login || event.comment.author?.login;
-
     // Ignore our own append-only comments so one automation write does not
     // recursively trigger another planning round.
-    if (commentAuthor === "github-actions[bot]") {
+    if (isAutomationDiscussionCommentEvent(event)) {
       logOperationalEvent("ai_issue_planning_review.skip", {
         reason: "bot_comment",
         discussionNumber: event.discussion.number,

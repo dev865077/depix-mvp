@@ -41,10 +41,11 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 
 - fundacao do Worker e multi-tenancy: avancadas
 - persistencia base: avancada
-- primeiro fluxo real ate QR code no Telegram: concluido
+- marco `#91` do primeiro fluxo real ate QR code no Telegram: concluido
+- etapas posteriores ao QR, validacao operacional final e fechamento completo do ciclo ainda seguem no backlog
 - webhook principal real: avancado
 - recheck real: avancado, com `deposit-status` por deposito e `deposits` por janela
-- backlog agora passa por gate de planning review em Discussions antes da implementacao de itens de maior impacto
+- backlog novo passa por gate de planning review em Discussions antes da implementacao de itens de maior impacto; itens antigos podem ser reenfileirados por toque na Discussion ou por rerun manual do workflow
 
 ## Fonte de verdade
 
