@@ -33,11 +33,28 @@ describe("telegram wallet address parser", () => {
     });
   });
 
+  it("rejects a well-formed lq1 string with checksum corruption", function assertCorruptedLqChecksum() {
+    const corruptedAddress = `${SIDESWAP_LQ_ADDRESS.slice(0, -1)}b`;
+
+    expect(parseTelegramWalletAddress(corruptedAddress)).toEqual({
+      ok: false,
+      reason: "invalid_format",
+    });
+  });
+
+  it("rejects a well-formed ex1 string with checksum corruption", function assertCorruptedExChecksum() {
+    const corruptedAddress = `${EX_ADDRESS.slice(0, -1)}p`;
+
+    expect(parseTelegramWalletAddress(corruptedAddress)).toEqual({
+      ok: false,
+      reason: "invalid_format",
+    });
+  });
+
   it.each([
     ["", "empty"],
     ["liquidnetwork:lq1qqt6tf80s4c8k5n5v88smk40d5cqh6wp63025", "uri_not_supported"],
     ["bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", "invalid_format"],
-    [`${SIDESWAP_LQ_ADDRESS.slice(0, -1)}b`, "invalid_format"],
     ["lq1 curto", "invalid_format"],
     [`${SIDESWAP_LQ_ADDRESS} extra`, "invalid_format"],
     ["texto qualquer", "invalid_format"],
