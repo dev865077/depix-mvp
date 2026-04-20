@@ -43,6 +43,8 @@
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
 - enquanto a issue estiver em planning, a evolucao da issue e da Discussion pertence aos workflows via API; o implementador/Codex so entra depois do estado `ready_for_codex: true`
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
+- o parser de referencias do planning nao deve tratar mencoes em prosa como `PR #209` ou `pull request #209` como child issues; apenas referencias reais de issues entram na lista de contexto
+- referencias opcionais de child issue que retornem `403` ou `404` devem ser ignoradas com aviso operacional, sem abortar o planning da issue raiz
 
 ## Corpo obrigatorio da PR
 
@@ -81,5 +83,4 @@ Explicitar:
 - a lane de PR continua binaria: aqui nao existe `Blocked`; esse estado vale so para planning de issue
 - `synthesis` continua obrigatoria para visibilidade e fechamento operacional da Discussion, mas e resumo: ela nao vira um quarto voto de bloqueio por drift de redacao
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
-- se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
-- timeout do modelo publica sintese e encerra a rodada com status explicito
+- se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` e registrar o motivo na Discussion ou fallback da PR
