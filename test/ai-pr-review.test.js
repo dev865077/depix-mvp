@@ -8,6 +8,7 @@ import {
   buildAutomationEvidenceContext,
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
+  buildFailedActionsLogContext,
   buildDiscussionGateReview,
   buildDiscussionHistoryContext,
   buildDiscussionSynthesisContractAppendix,
@@ -22,6 +23,7 @@ import {
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
   applyFollowUpReconciliationToDebate,
+  classifyGitHubOperationalFailure,
   evaluateDiscussionRecommendation,
   extractConclusionThreadTestFileCitations,
   extractDiscussionUrlFromComment,
@@ -30,6 +32,7 @@ import {
   getReviewGateFailure,
   isCiTestCheckGreen,
   parseBlockingRoleContract,
+  redactActionsLogSecrets,
   reconcileFollowUpTestableBlockers,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
@@ -1146,6 +1149,15 @@ describe("ai pr review discussion rendering", () => {
     );
   });
 
+  it("classifies GitHub schema and permission failures as operational failures", () => {
+    expect(classifyGitHubOperationalFailure("Field 'workflowName' doesn't exist on type 'CheckRun'")).toBe(
+      "github_api_schema_error",
+    );
+    expect(classifyGitHubOperationalFailure("Resource not accessible by integration")).toBe(
+      "github_api_permission_error",
+    );
+  });
+
   it("builds the model payload from the GitHub pull_request shape", () => {
     const body = buildPullRequestUserPrompt(
       "dev865077/depix-mvp",
@@ -1180,6 +1192,98 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
     expect(body).toContain("## Automation contract evidence");
     expect(body).toContain("scripts/ai-pr-review.mjs");
+  });
+
+  it("includes real failed GitHub Actions logs before discussion history in the reviewer prompt", () => {
+    const failureLogContext = buildFailedActionsLogContext([
+      {
+        name: "discussion-review",
+        conclusion: "failure",
+        status: "completed",
+        details_url: "https://github.com/dev865077/depix-mvp/actions/runs/1/job/2",
+        logText: [
+          "Run node scripts/ai-pr-review.mjs",
+          "Error: GitHub GraphQL request failed: Field 'workflowName' doesn't exist on type 'CheckRun'",
+        ].join("\n"),
+      },
+    ]);
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-57-multi-bot-debate" },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          status: "modified",
+          additions: 20,
+          deletions: 5,
+          patch: "@@ -1 +1 @@",
+        },
+      ],
+      gate,
+      "## Latest conclusion thread\nPrevious review context.",
+      "",
+      failureLogContext,
+    );
+
+    expect(failureLogContext).toContain("## Failing GitHub Actions logs");
+    expect(body).toContain("Field 'workflowName' doesn't exist on type 'CheckRun'");
+    expect(body.indexOf("## Failing GitHub Actions logs")).toBeLessThan(body.indexOf("## Existing Discussion context"));
+  });
+
+  it("redacts failed GitHub Actions secrets before adding logs to the reviewer prompt", () => {
+    const secretLiteral = "secret-token-value-1234567890";
+    const failureLogContext = buildFailedActionsLogContext([
+      {
+        name: "discussion-review",
+        conclusion: "failure",
+        status: "completed",
+        details_url: "https://github.com/dev865077/depix-mvp/actions/runs/1/job/2",
+        logText: [
+          "Run node scripts/ai-pr-review.mjs",
+          `Authorization: Bearer ${secretLiteral}`,
+          "OPENAI_API_KEY=sk-live-secret-value-1234567890",
+          "Error: GitHub GraphQL request failed: Resource not accessible by integration",
+        ].join("\n"),
+      },
+    ]);
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 60,
+        title: "Automate review",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/60",
+        body: "Adds review automation.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-57-multi-bot-debate" },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          status: "modified",
+          additions: 20,
+          deletions: 5,
+          patch: "@@ -1 +1 @@",
+        },
+      ],
+      gate,
+      "## Latest conclusion thread\nPrevious review context.",
+      "",
+      failureLogContext,
+    );
+
+    expect(redactActionsLogSecrets(`Bearer ${secretLiteral}`)).toBe("Bearer [REDACTED]");
+    expect(body).toContain("discussion-review");
+    expect(body).toContain("Resource not accessible by integration");
+    expect(body).toContain("[REDACTED]");
+    expect(body).not.toContain(secretLiteral);
+    expect(body).not.toContain("sk-live-secret-value-1234567890");
   });
 
   it("includes prior append-only Discussion comments in the reviewer prompt", () => {

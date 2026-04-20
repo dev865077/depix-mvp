@@ -229,6 +229,28 @@ async function githubGraphqlRequest(query, variables = {}) {
 }
 
 /**
+ * Validate that issue planning has only one automatic issue-to-planning entry.
+ *
+ * Triage owns issue events and explicitly dispatches this workflow. Planning
+ * must not also listen to raw issue/comment events, otherwise the same issue can
+ * race into two planning runs and create abandoned duplicate Discussions.
+ *
+ * @param {string} workflowText Workflow YAML text.
+ * @returns {boolean} True when entrypoints are canonical.
+ */
+export function hasCanonicalIssuePlanningEntrypoints(workflowText) {
+  return (
+    typeof workflowText === "string"
+    && /\bworkflow_dispatch\s*:/m.test(workflowText)
+    && /\bdiscussion\s*:/m.test(workflowText)
+    && /\bdiscussion_comment\s*:/m.test(workflowText)
+    && !/^\s+issues\s*:\s*$/m.test(workflowText)
+    && !/^\s+issue_comment\s*:\s*$/m.test(workflowText)
+    && !workflowText.includes("contains(github.event.comment.body, '<!-- ai-issue-triage:openai -->')")
+  );
+}
+
+/**
  * Fetch stable issue comments through the REST API.
  *
  * @param {string} repoFullName Repository in owner/name form.

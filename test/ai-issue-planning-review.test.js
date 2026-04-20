@@ -2,6 +2,7 @@
  * Focused tests for the issue planning review workflow.
  */
 import { describe, expect, it } from "vitest";
+import issuePlanningWorkflowText from "../.github/workflows/ai-issue-planning-review.yml?raw";
 
 import {
   buildDiscussionHistoryContext,
@@ -20,6 +21,7 @@ import {
   extractPlanningRecommendation,
   fetchReferencedChildIssues,
   findMatchingIssuePlanningDiscussionNumber,
+  hasCanonicalIssuePlanningEntrypoints,
   isAutomatedIssueMetaComment,
   isAutomatedIssueMetaCommentBody,
   isAutomatedPlanningComment,
@@ -35,6 +37,36 @@ import {
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
+  it("keeps the real issue planning workflow on the canonical entrypoints", () => {
+    expect(hasCanonicalIssuePlanningEntrypoints(issuePlanningWorkflowText)).toBe(true);
+    expect(issuePlanningWorkflowText).toContain("workflow_dispatch:");
+    expect(issuePlanningWorkflowText).toContain("discussion:");
+    expect(issuePlanningWorkflowText).toContain("discussion_comment:");
+    expect(issuePlanningWorkflowText).not.toMatch(/^\s+issues\s*:\s*$/m);
+    expect(issuePlanningWorkflowText).not.toMatch(/^\s+issue_comment\s*:\s*$/m);
+  });
+
+  it("keeps issue planning entrypoints canonical to avoid duplicate Discussions", () => {
+    expect(hasCanonicalIssuePlanningEntrypoints([
+      "on:",
+      "  workflow_dispatch:",
+      "  discussion:",
+      "  discussion_comment:",
+    ].join("\n"))).toBe(true);
+
+    expect(hasCanonicalIssuePlanningEntrypoints([
+      "on:",
+      "  workflow_dispatch:",
+      "  issues:",
+      "  discussion:",
+      "  discussion_comment:",
+      "  issue_comment:",
+      "jobs:",
+      "  review:",
+      "    if: contains(github.event.comment.body, '<!-- ai-issue-triage:openai -->')",
+    ].join("\n"))).toBe(false);
+  });
+
   it("extracts issue numbers from discussion titles and bodies", () => {
     expect(extractIssueNumberFromText("[Issue #116] Debater backlog")).toBe(116);
     expect(extractIssueNumberFromText("Issue origem: #91 - epic")).toBe(91);

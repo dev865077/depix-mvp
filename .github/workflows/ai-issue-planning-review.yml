@@ -11,11 +11,6 @@ on:
         description: Existing Discussion number to re-evaluate in the planning lane
         required: false
         type: string
-  issues:
-    types:
-      - opened
-      - edited
-      - reopened
   discussion:
     types:
       - created
@@ -25,11 +20,6 @@ on:
     types:
       - created
       - edited
-  # Only brand-new bot triage sticky comments can enter the automatic handoff.
-  # Legacy issues are backfilled explicitly with workflow_dispatch.issue_number.
-  issue_comment:
-    types:
-      - created
 
 permissions:
   contents: read
@@ -42,7 +32,6 @@ concurrency:
 
 jobs:
   review:
-    if: github.event_name != 'issue_comment' || (github.event.action == 'created' && github.event.issue.pull_request == null && github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- ai-issue-triage:openai -->'))
     runs-on: ubuntu-latest
     outputs:
       planning_status: ${{ steps.review.outputs.planning_status }}
