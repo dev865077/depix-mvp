@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       issue_number:
-        description: Open issue number to re-evaluate in the planning lane
+        description: Open issue number to create/reuse planning Discussion or backfill legacy triage
         required: false
         type: string
       discussion_number:

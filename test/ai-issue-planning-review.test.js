@@ -207,7 +207,8 @@ describe("ai issue planning review", () => {
       "## AI Issue Triage",
       "Rota canonica: `discussion_before_pr`",
     ].join("\n");
-    const legacyBody = "Fluxo recomendado: `PR direta`";
+    const legacyDirectBody = "Fluxo recomendado: `PR direta`";
+    const legacyDiscussionBody = "Fluxo recomendado: `Discussion antes da PR`";
     const categories = [
       { id: "1", name: "General", isAnswerable: false },
       { id: "2", name: "Ideas", isAnswerable: false },
@@ -215,7 +216,8 @@ describe("ai issue planning review", () => {
     ];
 
     expect(extractIssueTriageRouteFromComment(triageBody)).toBe("discussion_before_pr");
-    expect(extractIssueTriageRouteFromComment(legacyBody)).toBe("direct_pr");
+    expect(extractIssueTriageRouteFromComment(legacyDirectBody)).toBe("direct_pr");
+    expect(extractIssueTriageRouteFromComment(legacyDiscussionBody)).toBe("discussion_before_pr");
     expect(extractIssueTriageRouteFromComments([
       { user: { login: "github-actions[bot]" }, body: triageBody },
     ])).toBe("discussion_before_pr");

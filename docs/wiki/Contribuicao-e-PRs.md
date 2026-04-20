@@ -23,6 +23,7 @@
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` cria ou reutiliza uma unica Discussion canonica da issue via API
 - o trigger `issue_comment` do planning so aceita comentario novo com marcador automatizado da triage; comentarios editados, comentarios humanos comuns e comentarios em PR nao podem iniciar ou rerodar planning
+- para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao e `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - o planning review tem tres estados canonicos:
   - `Approve`: issue pronta para execucao
@@ -36,7 +37,7 @@
 - quando uma nova rodada aprova, a automacao responde nessa thread explicando por que agora passou
 - comentarios automatizados antigos dos especialistas nao devem entrar como contexto bruto da nova rodada; o contexto operacional valido e a thread da conclusao e comentarios humanos soltos relevantes
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
-- itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos de forma explicita
+- itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos explicitamente pelo `workflow_dispatch` com `issue_number`
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
 - enquanto a issue estiver em planning, a evolucao da issue e da Discussion pertence aos workflows via API; o implementador/Codex so entra depois do estado `ready_for_codex: true`
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
