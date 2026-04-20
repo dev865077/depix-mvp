@@ -334,6 +334,49 @@ describe("ai pr review recommendation parser", () => {
     expect(parseBlockingRoleContract(review).status).toBe("valid");
   });
 
+  it("accepts incidental prose between canonical fields inside the blocker section", () => {
+    const review = [
+      "## Perspective",
+      "Normal memo formatting can include one stray sentence.",
+      "",
+      "## Findings",
+      "- One blocker.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Canonical blocker contracts remain valid with incidental prose inside the blocker section.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Note: this line is explanatory noise and should be ignored safely.",
+      "Minimum scenario: Parse one blocking memo with stray prose between canonical fields.",
+      "Essential assertions: parse returns valid and preserves canonical values.",
+      "Resolution rule: Accept realistic memo formatting without relaxing canonical validation.",
+      "Why this test resolves the blocker: It proves the parser tolerates normal memo noise inside the section.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "valid",
+      testability: "Testable",
+      fields: {
+        Testability: "Testable",
+        "Behavior protected": "Canonical blocker contracts remain valid with incidental prose inside the blocker section.",
+        "Suggested test file": "test/ai-pr-review.test.js",
+        "Minimum scenario": "Parse one blocking memo with stray prose between canonical fields.",
+        "Essential assertions": "parse returns valid and preserves canonical values.",
+        "Resolution rule": "Accept realistic memo formatting without relaxing canonical validation.",
+        "Why this test resolves the blocker": "It proves the parser tolerates normal memo noise inside the section.",
+      },
+    });
+  });
+
   it("builds a canonical malformed blocker memo", () => {
     const memo = buildMalformedBlockerContractMemo("Technical and architecture", "Missing required field: Testability.");
 

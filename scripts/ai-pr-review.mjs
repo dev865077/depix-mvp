@@ -253,6 +253,7 @@ function collectBlockerContractFields(sectionText) {
   const fields = Object.fromEntries(BLOCKER_CONTRACT_FIELD_LABELS.map((label) => [label, []]));
   let currentLabel = null;
   let currentLines = [];
+  const isContinuationLine = (line) => /^\s*(?:[-*]|\d+\.)\s+/.test(line) || /^\s{2,}\S/.test(line);
 
   const flushCurrentField = () => {
     if (!currentLabel) {
@@ -286,6 +287,11 @@ function collectBlockerContractFields(sectionText) {
     }
 
     if (currentLabel) {
+      if (line.trim().length > 0 && !isContinuationLine(line)) {
+        flushCurrentField();
+        continue;
+      }
+
       currentLines.push(line);
     }
   }
