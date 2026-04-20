@@ -15,6 +15,7 @@ import {
 import {
   createOrder,
   getOrderById,
+  getLatestOrderByUser,
   getLatestOpenOrderByUser,
   hydrateOrderTelegramChatIdIfMissing,
   updateOrderById,
@@ -583,6 +584,40 @@ async function assertLatestOpenOrderLookup() {
   expect(terminalLookups).toEqual(terminalCases.map(() => null));
 }
 
+async function assertLatestOrderLookupIncludesTerminalRowsForReadOnlyStatus() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_latest_terminal_001",
+    userId: "telegram_user_latest_terminal",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: ORDER_PROGRESS_STATES.MANUAL_REVIEW,
+    status: "under_review",
+  });
+  await createOrder(db, {
+    tenantId: "beta",
+    orderId: "order_latest_other_tenant",
+    userId: "telegram_user_latest_terminal",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: ORDER_PROGRESS_STATES.AMOUNT,
+    status: "draft",
+  });
+
+  const latestOrder = await getLatestOrderByUser(db, "alpha", "telegram_user_latest_terminal");
+  const openOrder = await getLatestOpenOrderByUser(db, "alpha", "telegram_user_latest_terminal");
+  const otherTenantOrder = await getLatestOrderByUser(db, "beta", "telegram_user_latest_terminal");
+
+  expect(openOrder).toBeNull();
+  expect(latestOrder?.orderId).toBe("order_latest_terminal_001");
+  expect(latestOrder?.currentStep).toBe(ORDER_PROGRESS_STATES.MANUAL_REVIEW);
+  expect(otherTenantOrder?.orderId).toBe("order_latest_other_tenant");
+}
+
 async function assertTelegramChatHydrationContract() {
   await resetDatabaseSchema();
 
@@ -648,5 +683,6 @@ describe("database repositories", () => {
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
   it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
   it("finds the latest open order for a tenant user without reviving terminal orders", assertLatestOpenOrderLookup);
+  it("finds the latest terminal order only through the read-only latest-order lookup", assertLatestOrderLookupIncludesTerminalRowsForReadOnlyStatus);
   it("hydrates telegram chat only through the selected tenant-scoped order", assertTelegramChatHydrationContract);
 });

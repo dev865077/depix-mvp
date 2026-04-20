@@ -121,10 +121,11 @@ No bot correto do tenant:
 3. informe o endereco DePix/Liquid
 4. confirme com `sim`, `confirmar` ou `ok`
 5. aguarde QR/copia-e-cola
-6. pague o QR
-7. aguarde a mensagem assincrona de confirmacao no Telegram quando o pagamento for conciliado
-8. acompanhe o estado final pelo webhook ou por recheck operacional se a confirmacao nao chegar
-9. use `/help` se precisar de orientacao contextual sem alterar o pedido
+6. envie `/status` para confirmar que o bot encontra o pedido correto sem criar outro pedido
+7. pague o QR
+8. aguarde a mensagem assincrona de confirmacao no Telegram quando o pagamento for conciliado
+9. acompanhe o estado final pelo webhook, por `/status` ou por recheck operacional se a confirmacao nao chegar
+10. use `/help` se precisar de orientacao contextual sem alterar o pedido
 
 Registre screenshot ou transcricao do Telegram com horario absoluto.
 

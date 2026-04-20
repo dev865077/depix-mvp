@@ -12,6 +12,7 @@
  */
 import {
   createOrder,
+  getLatestOrderByUser,
   getLatestOpenOrderByUser,
   hydrateOrderTelegramChatIdIfMissing,
   updateOrderByIdWithStepGuard,
@@ -109,6 +110,45 @@ export async function getTelegramOpenOrderForUser(input) {
   const channel = input.channel ?? DEFAULT_ORDER_CHANNEL;
 
   return getLatestOpenOrderByUser(input.db, input.tenant.tenantId, userId, channel);
+}
+
+/**
+ * Resolve o pedido mais relevante para consultas somente leitura no Telegram.
+ *
+ * A prioridade e: pedido aberto atual primeiro; se nao existir, ultimo pedido
+ * conhecido do mesmo `tenantId + userId + channel`. Esse contrato sustenta
+ * `/status`: o comando consegue explicar tanto fluxos em andamento quanto
+ * resultados terminais sem criar, cancelar, reiniciar ou modificar linhas.
+ *
+ * @param {Parameters<typeof ensureTelegramOrderRegistration>[0]} input Dependencias e contexto da chamada atual.
+ * @returns {Promise<{ order: Record<string, unknown> | null, source: "open" | "latest" | "none" }>} Pedido encontrado e origem da selecao.
+ */
+export async function getTelegramRelevantOrderForUser(input) {
+  if (!input?.db) {
+    throw new Error("Telegram relevant order lookup requires a configured D1 database.");
+  }
+
+  if (typeof input?.tenant?.tenantId !== "string" || input.tenant.tenantId.trim().length === 0) {
+    throw new Error("Telegram relevant order lookup requires a resolved tenant.");
+  }
+
+  const userId = normalizeTelegramUserId(input.telegramUserId);
+  const channel = input.channel ?? DEFAULT_ORDER_CHANNEL;
+  const openOrder = await getLatestOpenOrderByUser(input.db, input.tenant.tenantId, userId, channel);
+
+  if (openOrder) {
+    return {
+      order: openOrder,
+      source: "open",
+    };
+  }
+
+  const latestOrder = await getLatestOrderByUser(input.db, input.tenant.tenantId, userId, channel);
+
+  return {
+    order: latestOrder,
+    source: latestOrder ? "latest" : "none",
+  };
 }
 
 /**
