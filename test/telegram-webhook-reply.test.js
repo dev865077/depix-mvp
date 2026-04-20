@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { getDatabase } from "../src/db/client.js";
-import { getLatestDepositByOrderId } from "../src/db/repositories/deposits-repository.js";
+import { createDeposit, getLatestDepositByOrderId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
@@ -658,6 +658,166 @@ describe("telegram webhook reply flow", () => {
     expect(persistedOrder?.walletAddress).toBe(entry.walletAddress);
     expect(count?.count).toBe(1);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers /status without creating a Telegram order", async function assertStatusWithoutOrderIsReadOnly() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 18,
+          date: 1713434419,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/status",
+          chatId: 13301,
+          fromId: 13301,
+          updateId: 13301,
+        }),
+      },
+      workerEnv,
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "13301");
+    const count = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ? AND channel = ?")
+      .bind("alpha", "13301", "telegram")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(currentOrder).toBeNull();
+    expect(count?.count).toBe(0);
+    expect(replies[0]).toContain("Nao encontrei pedido recente em Alpha.");
+    expect(replies[0]).toContain("Envie /start");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers /status for open and terminal orders scoped to the current Telegram user", async function assertStatusForOrderStates() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const repliesByChatId = new Map();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      repliesByChatId.set(String(payload.chat_id), payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: repliesByChatId.size,
+          date: 1713434422,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+    const statusCases = [
+      ["13401", 13401, "order_status_amount", "amount", "draft", null, "Proximo passo: envie o valor em BRL"],
+      ["13402", 13402, "order_status_wallet", "wallet", "draft", 1500, "envie seu endereço DePix/Liquid"],
+      ["13403", 13403, "order_status_confirmation", "confirmation", "draft", 1500, "confirme com sim"],
+      ["13404", 13404, "order_status_awaiting_payment", "awaiting_payment", "pending", 1500, "Pix copia e cola:"],
+      ["13405", 13405, "order_status_completed", "completed", "paid", 1500, "Pagamento concluído"],
+      ["13406", 13406, "order_status_failed", "failed", "failed", 1500, "Este pedido falhou"],
+      ["13407", 13407, "order_status_canceled", "canceled", "canceled", 1500, "Este pedido foi cancelado"],
+      ["13408", 13408, "order_status_manual_review", "manual_review", "under_review", 1500, "análise operacional"],
+    ];
+
+    for (const [userId, chatId, orderId, currentStep, status, amountInCents] of statusCases) {
+      await createOrder(getDatabase(env), {
+        tenantId: "alpha",
+        orderId,
+        userId,
+        channel: "telegram",
+        productType: "depix",
+        telegramChatId: String(chatId),
+        amountInCents,
+        currentStep,
+        status,
+      });
+    }
+
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_status_awaiting_payment",
+      qrId: "qr_status_awaiting_payment",
+      orderId: "order_status_awaiting_payment",
+      nonce: "nonce_status_awaiting_payment",
+      qrCopyPaste: "0002010102122688pix-status-awaiting-payment",
+      qrImageUrl: "https://example.com/status-qr.png",
+      externalStatus: "pending",
+      expiration: "2026-04-20T03:00:00.000Z",
+    });
+
+    for (const [userId, chatId] of statusCases) {
+      await app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text: "/status",
+            chatId,
+            fromId: Number(userId),
+            updateId: chatId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    for (const [, chatId, orderId, currentStep, status, , expected] of statusCases) {
+      const reply = repliesByChatId.get(String(chatId));
+      const savedOrder = await getDatabase(env)
+        .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+        .bind("alpha", orderId)
+        .first();
+
+      expect(reply).toContain("Status do seu pedido em Alpha.");
+      expect(reply).toContain(expected);
+      expect(savedOrder).toEqual({
+        currentStep,
+        status,
+      });
+    }
+
+    expect(repliesByChatId.get("13404")).toContain("0002010102122688pix-status-awaiting-payment");
   });
 
   it("routes plain text replies by tenant", async function assertTenantAwareTextReply() {

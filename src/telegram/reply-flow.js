@@ -8,10 +8,12 @@
  * - logs suficientes permitem rastrear o caminho inteiro
  */
 import { log } from "../lib/logger.js";
+import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
 import {
   cancelTelegramOpenOrder,
   getTelegramOpenOrderForUser,
+  getTelegramRelevantOrderForUser,
   receiveTelegramOrderAmount,
   receiveTelegramOrderWallet,
   restartTelegramOpenOrderConversation,
@@ -90,6 +92,14 @@ export function installTelegramReplyFlow(bot, input) {
     "help_command",
     async function replyToHelpCommand(ctx) {
       await handleTelegramHelpRequest(ctx, input, "command");
+    },
+  ));
+
+  bot.command("status", createLoggedTelegramHandler(
+    input,
+    "status_command",
+    async function replyToStatusCommand(ctx) {
+      await handleTelegramStatusRequest(ctx, input, "command");
     },
   ));
 
@@ -296,6 +306,7 @@ export function buildTelegramHelpReply(tenant, order) {
     "Envie /start para começar uma compra de DePix com Pix.",
     "Depois informe o valor em BRL, por exemplo: 100,00.",
     "Quando o bot pedir, cole seu endereço DePix/Liquid. Aceito endereços começando com lq1 ou ex1.",
+    "Use /status para consultar o pedido atual ou o último pedido relevante sem alterar nada.",
     "Para cancelar um pedido aberto, envie /cancel. Para recomeçar, envie recomecar.",
   ];
 
@@ -311,6 +322,140 @@ export function buildTelegramHelpReply(tenant, order) {
     buildTelegramCurrentStepHelp(order),
     ...generalGuidance,
   ].join("\n\n");
+}
+
+/**
+ * Mensagem de status do pedido atual ou mais recente do usuario.
+ *
+ * O texto e deliberadamente diagnostico e nao transacional: `/status` nao deve
+ * parecer uma nova etapa do fluxo nem induzir o usuario a reenviar dados quando
+ * o pedido ja esta terminal. Dados de pagamento sao limitados ao pedido do
+ * mesmo tenant/usuario/canal ja selecionado pelo service de leitura.
+ *
+ * @param {{ displayName: string }} tenant Tenant atual.
+ * @param {{ currentStep?: unknown, status?: unknown, amountInCents?: unknown, orderId?: unknown } | null} order Pedido selecionado para consulta.
+ * @param {{ qrCopyPaste?: unknown, expiration?: unknown } | null} deposit Deposito associado ao pedido, quando existir.
+ * @returns {string} Texto final para o usuario.
+ */
+export function buildTelegramStatusReply(tenant, order, deposit = null) {
+  if (!order) {
+    return [
+      `Nao encontrei pedido recente em ${tenant.displayName}.`,
+      "Envie /start para começar uma compra de DePix com Pix.",
+    ].join("\n\n");
+  }
+
+  const amountLine = Number.isSafeInteger(order.amountInCents)
+    ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
+    : "Valor: ainda nao informado";
+  const statusLine = typeof order.status === "string" && order.status.length > 0
+    ? `Status interno: ${order.status}`
+    : "Status interno: nao informado";
+  const header = `Status do seu pedido em ${tenant.displayName}.`;
+
+  switch (order.currentStep) {
+    case ORDER_PROGRESS_STATES.AMOUNT:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Proximo passo: envie o valor em BRL, por exemplo 100,00.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.WALLET:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Proximo passo: envie seu endereço DePix/Liquid começando com lq1 ou ex1.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.CONFIRMATION:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Proximo passo: confirme com sim, confirmar ou ok.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Estou criando seu Pix. Aguarde um instante antes de reenviar a confirmação.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.AWAITING_PAYMENT:
+      return buildTelegramAwaitingPaymentStatusReply({
+        header,
+        amountLine,
+        statusLine,
+        deposit,
+      });
+    case ORDER_PROGRESS_STATES.COMPLETED:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        order.status === "paid"
+          ? "Pagamento concluído. Obrigado por usar a DePix."
+          : "Este pedido foi encerrado. Se precisar comprar novamente, envie /start.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.FAILED:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Este pedido falhou. Envie /start para tentar novamente.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.CANCELED:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Este pedido foi cancelado. Envie /start para começar outro.",
+      ].join("\n");
+    case ORDER_PROGRESS_STATES.MANUAL_REVIEW:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Este pedido está em análise operacional. Evite reenviar dados; o time precisa revisar o caso.",
+      ].join("\n");
+    default:
+      return [
+        header,
+        amountLine,
+        statusLine,
+        "Encontrei seu pedido, mas ele esta em um estado que nao pede acao sua agora.",
+      ].join("\n");
+  }
+}
+
+/**
+ * Monta a variante de `/status` para pedidos aguardando pagamento.
+ *
+ * O copia-e-cola so aparece quando ja existe deposito do mesmo pedido. Isso
+ * evita inventar QR ou recuperar dado de outro agregado por conveniencia.
+ *
+ * @param {{ header: string, amountLine: string, statusLine: string, deposit?: { qrCopyPaste?: unknown, expiration?: unknown } | null }} input Partes ja normalizadas do texto.
+ * @returns {string} Texto final para pedido em `awaiting_payment`.
+ */
+function buildTelegramAwaitingPaymentStatusReply(input) {
+  const lines = [
+    input.header,
+    input.amountLine,
+    input.statusLine,
+    "Seu Pix ja foi gerado. Pague o QR/copia-e-cola enviado nesta conversa e aguarde a confirmação.",
+  ];
+
+  if (typeof input.deposit?.expiration === "string" && input.deposit.expiration.length > 0) {
+    lines.push(`Expiracao informada pela cobranca: ${input.deposit.expiration}`);
+  }
+
+  if (typeof input.deposit?.qrCopyPaste === "string" && input.deposit.qrCopyPaste.length > 0) {
+    lines.push("Pix copia e cola:");
+    lines.push(input.deposit.qrCopyPaste);
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -691,7 +836,7 @@ function buildTelegramAmountPrompt(tenant) {
 export function buildTelegramUnsupportedMessageReply(tenant) {
   return [
     `Recebi sua interação em ${tenant.displayName}.`,
-    "Nesta fase eu respondo a mensagens de texto e aos comandos /start, /help e /cancel.",
+    "Nesta fase eu respondo a mensagens de texto e aos comandos /start, /help, /status e /cancel.",
   ].join("\n\n");
 }
 
@@ -905,6 +1050,79 @@ async function handleTelegramHelpRequest(ctx, input, source) {
   });
 
   await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder));
+}
+
+/**
+ * Processa `/status` sem mutar o agregado conversacional.
+ *
+ * Diferente de `/start` e texto livre, este handler nunca chama o caminho de
+ * materializacao de pedido. Ele seleciona o pedido aberto ou o ultimo pedido
+ * relevante do mesmo usuario e, quando aplicavel, le o deposito desse pedido
+ * apenas para repetir o Pix copia-e-cola ja associado ao agregado.
+ *
+ * @param {any} ctx Contexto atual do grammY.
+ * @param {{
+ *   tenant: { tenantId: string, displayName: string },
+ *   db?: import("@cloudflare/workers-types").D1Database,
+ *   runtimeConfig?: Record<string, unknown>,
+ *   requestContext?: {
+ *     requestId?: string,
+ *     method?: string,
+ *     path?: string
+ *   }
+ * }} input Contexto operacional do runtime.
+ * @param {"command"} source Origem da intencao.
+ * @returns {Promise<void>} Promessa resolvida apos a resposta ao usuario.
+ */
+async function handleTelegramStatusRequest(ctx, input, source) {
+  if (!input.db) {
+    throw new TelegramWebhookError(
+      500,
+      "telegram_order_registration_failed",
+      "Telegram order status requires a configured database.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_database_context",
+      },
+    );
+  }
+
+  const telegramUserId = resolveTelegramActorId(ctx);
+
+  if (telegramUserId === undefined) {
+    throw new TelegramWebhookError(
+      400,
+      "telegram_order_registration_failed",
+      "Telegram update does not expose a user identifier for order status.",
+      {
+        handlerName: ctx.state?.telegramHandler,
+        reason: "missing_telegram_user_id",
+      },
+    );
+  }
+
+  const selection = await getTelegramRelevantOrderForUser({
+    db: input.db,
+    tenant: input.tenant,
+    telegramUserId,
+  });
+  const deposit = selection.order
+    ? await getLatestDepositByOrderId(input.db, input.tenant.tenantId, String(selection.order.orderId))
+    : null;
+
+  logTelegramEvent(input, "info", "telegram.status.rendered", {
+    handlerName: ctx.state?.telegramHandler,
+    source,
+    selectionSource: selection.source,
+    hasOrder: Boolean(selection.order),
+    orderId: selection.order?.orderId,
+    currentStep: selection.order?.currentStep,
+    status: selection.order?.status,
+    hasDeposit: Boolean(deposit),
+    depositEntryId: deposit?.depositEntryId,
+  });
+
+  await ctx.reply(buildTelegramStatusReply(input.tenant, selection.order, deposit));
 }
 
 /**

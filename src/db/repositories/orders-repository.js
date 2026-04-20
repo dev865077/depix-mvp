@@ -196,6 +196,32 @@ export async function getLatestOpenOrderByUser(db, tenantId, userId, channel = "
 }
 
 /**
+ * Busca o pedido mais recente de um usuario em um tenant/canal, aberto ou nao.
+ *
+ * `/status` usa esta leitura depois de tentar o pedido aberto: quando o fluxo ja
+ * terminou, o usuario ainda precisa enxergar o ultimo resultado sem que o bot
+ * crie outro pedido ou reabra um agregado terminal. O filtro continua sempre
+ * tenant-scoped e user-scoped para nao vazar dados entre bots, tenants ou
+ * usuarios do Telegram.
+ *
+ * @param {import("@cloudflare/workers-types").D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} userId Usuario do canal atual.
+ * @param {string} [channel="telegram"] Canal logico do pedido.
+ * @returns {Promise<Record<string, unknown> | null>} Pedido mais recente, se existir.
+ */
+export async function getLatestOrderByUser(db, tenantId, userId, channel = "telegram") {
+  return db.prepare(
+    `${ORDER_SELECT_SQL}
+     WHERE tenant_id = ?
+       AND user_id = ?
+       AND channel = ?
+     ORDER BY julianday(updated_at) DESC, julianday(created_at) DESC
+     LIMIT 1`,
+  ).bind(tenantId, userId, channel).first();
+}
+
+/**
  * Hidrata o destino de chat Telegram de um pedido legado apenas se ele ainda
  * nao tiver destino persistido.
  *
