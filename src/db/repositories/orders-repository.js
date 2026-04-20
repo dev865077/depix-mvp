@@ -6,6 +6,7 @@
  * servico focada em regras de negocio e fluxo conversacional.
  */
 import { getAllowedPatchEntries } from "../client.js";
+import { ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS } from "../../order-flow/order-progress-constants.js";
 
 // Select base reaproveitado pelos readers do repositorio.
 // Mantemos aliases em camelCase para devolver objetos prontos para o restante
@@ -33,11 +34,7 @@ const ORDER_SELECT_SQL = `
   FROM orders
 `;
 
-const TERMINAL_ORDER_STEPS = Object.freeze([
-  "completed",
-  "failed",
-  "canceled",
-]);
+const TERMINAL_ORDER_STEPS = ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS;
 
 const INSERT_ORDER_SQL = `
   INSERT INTO orders (
@@ -165,7 +162,11 @@ export function buildSelectOrderByIdStatement(db, tenantId, orderId) {
  * Esta consulta existe para a borda conversacional do Telegram: quando o mesmo
  * usuario envia um novo update, o runtime precisa retomar o pedido ativo em vez
  * de criar uma duplicata sem contexto. Consideramos "aberto" todo pedido que
- * ainda nao entrou em um passo terminal conhecido.
+ * ainda nao entrou em um passo terminal conhecido. O contrato terminal vem da
+ * maquina de dominio: `completed`, `failed`, `canceled` e `manual_review`,
+ * alem dos aliases legados que normalizam para esses passos. Isso impede que
+ * uma revisao manual ou um pedido encerrado volte a ser tratado como conversa
+ * editavel pelo Telegram.
  *
  * `julianday()` e usado para ordenar tanto timestamps nativos do SQLite quanto
  * timestamps ISO gravados por updates posteriores, mantendo a retomada
@@ -183,7 +184,7 @@ export async function getLatestOpenOrderByUser(db, tenantId, userId, channel = "
      WHERE tenant_id = ?
        AND user_id = ?
        AND channel = ?
-       AND current_step NOT IN (?, ?, ?)
+       AND current_step NOT IN (${TERMINAL_ORDER_STEPS.map(() => "?").join(", ")})
      ORDER BY julianday(updated_at) DESC, julianday(created_at) DESC
      LIMIT 1`,
   ).bind(
