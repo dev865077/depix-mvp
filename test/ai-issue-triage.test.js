@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidIssueTriagePlan,
   buildIssuePlanningDispatchInputs,
+  buildIssuePlanningDispatchRequest,
   buildIssueCommentBody,
   parseIssueTriageResponse,
+  resolveIssuePlanningDispatchRef,
   shouldDispatchIssuePlanning,
 } from "../scripts/ai-issue-triage.mjs";
 
@@ -204,5 +206,23 @@ describe("ai issue triage validation", () => {
     expect(shouldDispatchIssuePlanning(directPlan)).toBe(false);
     expect(buildIssuePlanningDispatchInputs(217)).toEqual({ issue_number: "217" });
     expect(() => buildIssuePlanningDispatchInputs(0)).toThrow("Invalid issue number");
+    expect(resolveIssuePlanningDispatchRef({ repository: { default_branch: "trunk" } }, {})).toBe("trunk");
+    expect(resolveIssuePlanningDispatchRef({}, { GITHUB_REF: "refs/heads/main" })).toBe("main");
+  });
+
+  it("builds the exact workflow dispatch request used by the issue planning handoff", () => {
+    const request = buildIssuePlanningDispatchRequest("dev865077/depix-mvp", 217, " trunk ");
+
+    expect(request.url).toBe(
+      "https://api.github.com/repos/dev865077/depix-mvp/actions/workflows/ai-issue-planning-review.yml/dispatches",
+    );
+    expect(request.init.method).toBe("POST");
+    expect(request.init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(request.init.body)).toEqual({
+      ref: "trunk",
+      inputs: { issue_number: "217" },
+    });
+    expect(() => buildIssuePlanningDispatchRequest("invalid", 217, "main")).toThrow("Invalid repository");
+    expect(() => buildIssuePlanningDispatchRequest("dev865077/depix-mvp", 217, " ")).toThrow("Invalid ref");
   });
 });

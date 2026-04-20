@@ -138,7 +138,13 @@ async function githubRequest(url, init = {}) {
     throw new Error(`GitHub API request failed (${response.status}): ${body}`);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return null;
+  }
+
+  const body = await response.text();
+
+  return body.trim().length > 0 ? JSON.parse(body) : null;
 }
 
 /**
@@ -555,6 +561,24 @@ export function buildIssuePlanningDispatchInputs(issueNumber) {
 }
 
 /**
+ * Resolve the ref used for planning workflow dispatch.
+ *
+ * The normal Actions runtime exposes `GITHUB_REF_NAME`. Tests and unusual
+ * events may not, so the repository default branch from the event is the safe
+ * fallback before the final repository default of `main`.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @param {NodeJS.ProcessEnv} [env] Environment source.
+ * @returns {string} Branch or ref accepted by workflow_dispatch.
+ */
+export function resolveIssuePlanningDispatchRef(event, env = process.env) {
+  return env.GITHUB_REF_NAME?.trim()
+    || env.GITHUB_REF?.replace(/^refs\/heads\//, "")
+    || event?.repository?.default_branch
+    || "main";
+}
+
+/**
  * Decide whether the triage result must enqueue the planning workflow.
  *
  * @param {IssueTriagePlan} plan Safe triage plan.
@@ -562,6 +586,44 @@ export function buildIssuePlanningDispatchInputs(issueNumber) {
  */
 export function shouldDispatchIssuePlanning(plan) {
   return plan.route === ROUTE_DISCUSSION_BEFORE_PR;
+}
+
+/**
+ * Build the GitHub Actions workflow_dispatch request for issue planning.
+ *
+ * Keeping this request construction pure gives the automation a stable,
+ * testable contract: triage posts its canonical issue comment, then sends this
+ * exact API request when the issue still needs the four-role planning lane.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber GitHub issue number.
+ * @param {string} ref Git ref to run the planning workflow on.
+ * @returns {{ url: string, init: RequestInit }} Fetch request descriptor.
+ */
+export function buildIssuePlanningDispatchRequest(repoFullName, issueNumber, ref) {
+  const trimmedRef = typeof ref === "string" ? ref.trim() : "";
+
+  if (typeof repoFullName !== "string" || !/^[^/]+\/[^/]+$/.test(repoFullName)) {
+    throw new Error(`Invalid repository for planning dispatch: ${String(repoFullName)}`);
+  }
+
+  if (!trimmedRef) {
+    throw new Error("Invalid ref for planning dispatch.");
+  }
+
+  return {
+    url: `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_PLANNING_WORKFLOW_FILE}/dispatches`,
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: trimmedRef,
+        inputs: buildIssuePlanningDispatchInputs(issueNumber),
+      }),
+    },
+  };
 }
 
 /**
@@ -576,19 +638,9 @@ export function shouldDispatchIssuePlanning(plan) {
  * @returns {Promise<void>} Resolves when GitHub accepts the dispatch.
  */
 async function dispatchIssuePlanningWorkflow(repoFullName, issueNumber, ref) {
-  await githubRequest(
-    `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_PLANNING_WORKFLOW_FILE}/dispatches`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        ref,
-        inputs: buildIssuePlanningDispatchInputs(issueNumber),
-      }),
-    },
-  );
+  const request = buildIssuePlanningDispatchRequest(repoFullName, issueNumber, ref);
+
+  await githubRequest(request.url, request.init);
 }
 
 /**
@@ -628,11 +680,11 @@ async function writeStepSummary(plan) {
 async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
-  const workflowRef = process.env.GITHUB_REF_NAME?.trim() || process.env.GITHUB_REF?.replace(/^refs\/heads\//, "") || "main";
   const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
   const model = readConfiguredModel();
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const issue = event.issue;
+  const workflowRef = resolveIssuePlanningDispatchRef(event);
 
   if (!issue) {
     throw new Error("This workflow only supports issue events.");
