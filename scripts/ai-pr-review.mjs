@@ -997,7 +997,6 @@ async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber
                         name
                         status
                         conclusion
-                        workflowName
                       }
                       ... on StatusContext {
                         context
@@ -1641,7 +1640,7 @@ export function extractConclusionThreadTestFileCitations(replies) {
 export function isCiTestCheckGreen(statusCheckContexts) {
   return (Array.isArray(statusCheckContexts) ? statusCheckContexts : []).some((context) => (
     context?.__typename === "CheckRun"
-      ? context.name === "Test" && context.workflowName === "CI" && String(context.conclusion).toUpperCase() === "SUCCESS"
+      ? context.name === "Test" && String(context.conclusion).toUpperCase() === "SUCCESS"
       : context?.__typename === "StatusContext"
         && context.context === "CI / Test"
         && String(context.state).toUpperCase() === "SUCCESS"
