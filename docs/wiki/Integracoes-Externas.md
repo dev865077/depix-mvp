@@ -27,6 +27,8 @@ Estado atual:
 - mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`
+- pedidos terminais e `manual_review` nao devem ser retomados como conversa editavel pelo Telegram
+- alias legado terminal, como `paid`, tambem fica fora de lookup de pedido aberto
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 - apos conciliacao de pagamento, o sistema pode enviar uma mensagem assincrona de confirmacao ao chat original quando houver `telegram_chat_id` valido e transicao visivel relevante
 - essa notificacao assincrona e idempotente por transicao visivel: webhook, recheck e fallback nao devem repetir a mesma mensagem
