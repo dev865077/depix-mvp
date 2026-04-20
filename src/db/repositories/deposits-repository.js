@@ -24,10 +24,10 @@ export const DEPOSITS_TENANT_ORDER_UNIQUE_INDEX = "deposits_tenant_order_unique_
 /**
  * Erro estruturado para tentativa de criar mais de um deposito no mesmo pedido.
  *
- * O repositorio captura a mensagem bruta do SQLite/D1 e a transforma neste erro
- * de dominio para que services possam tratar retry/concorrencia sem depender de
- * texto especifico do banco. `existingDeposit` e anexado quando a leitura local
- * consegue encontrar a cobranca que venceu a corrida.
+ * O repositorio transforma a falha local em erro de dominio para que services
+ * possam tratar retry/concorrencia sem depender exclusivamente do texto do
+ * SQLite/D1. `existingDeposit` e anexado quando a leitura local consegue
+ * encontrar a cobranca que venceu a corrida.
  */
 export class DepositOrderUniquenessError extends Error {
   /**
@@ -53,11 +53,33 @@ export class DepositOrderUniquenessError extends Error {
 }
 
 /**
- * Reconhece apenas a violacao da barreira `tenant_id + order_id`.
+ * Reconhece a familia de falhas unicas exposta pelo D1/SQLite.
  *
- * Outros indices unicos, como `deposit_entry_id`, `qr_id` e `nonce`, continuam
- * subindo como erro bruto porque representam problemas diferentes de correlacao
- * e nao devem ser mascarados como retry seguro do pedido.
+ * O runtime de Workers nao fornece hoje um `constraintName` estruturado para
+ * todos os erros D1. Este predicado fica restrito a falhas de unicidade para
+ * impedir que problemas de transporte, sintaxe SQL ou permissao sejam tratados
+ * como idempotencia segura apenas porque o pedido ja tem deposito local.
+ *
+ * @param {unknown} error Erro vindo do D1/SQLite.
+ * @returns {boolean} Verdadeiro quando a falha pertence a uma constraint unica.
+ */
+function isUniqueConstraintViolation(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+
+  return message.includes("unique constraint")
+    || message.includes("constraint_unique")
+    || message.includes("sqlite_constraint_unique")
+    || message.includes(DEPOSITS_TENANT_ORDER_UNIQUE_INDEX);
+}
+
+/**
+ * Reconhece mensagens conhecidas da barreira `tenant_id + order_id`.
+ *
+ * Esta funcao e uma segunda linha de defesa. O caminho principal de
+ * `createDeposit()` primeiro rele o pedido: se ja existe deposito local para o
+ * par `tenant/order`, o erro vira `DepositOrderUniquenessError` mesmo que a
+ * mensagem concreta do banco mude. A heuristica abaixo so cobre o caso raro em
+ * que o banco acusa a constraint mas a releitura ainda nao encontra a linha.
  *
  * @param {unknown} error Erro vindo do D1/SQLite.
  * @returns {boolean} Verdadeiro quando a constraint atingida e a de pedido.
@@ -180,9 +202,11 @@ export async function createDeposit(db, input) {
 
     return selectResult.results[0];
   } catch (error) {
-    if (isDepositOrderUniquenessViolation(error)) {
-      const existingDeposit = await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId);
+    const existingDeposit = isUniqueConstraintViolation(error)
+      ? await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId)
+      : null;
 
+    if (existingDeposit || isDepositOrderUniquenessViolation(error)) {
       throw new DepositOrderUniquenessError({
         tenantId: deposit.tenantId,
         orderId: deposit.orderId,

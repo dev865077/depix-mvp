@@ -219,6 +219,49 @@ function extractCreatedDeposit(responseData) {
 }
 
 /**
+ * Garante que um deposito local reaproveitado ainda possui os dados minimos
+ * para entregar o QR ao usuario.
+ *
+ * O D1 protege `NOT NULL`, mas nao consegue distinguir uma string vazia de um
+ * QR valido. Como a regra nova torna o deposito local autoritativo para retries
+ * e concorrencia, a camada de produto precisa recusar explicitamente linhas
+ * malformadas em vez de reenviar uma cobranca incompleta ou criar uma segunda
+ * cobranca externa.
+ *
+ * @param {Record<string, unknown>} deposit Deposito lido do repositorio.
+ * @param {{ tenantId: string, orderId: string }} context Identidade segura para logs.
+ * @returns {Record<string, unknown>} O mesmo deposito, ja validado.
+ */
+function assertReusableTelegramDeposit(deposit, context) {
+  const requiredFields = [
+    "depositEntryId",
+    "qrCopyPaste",
+    "qrImageUrl",
+  ];
+  const missingFields = requiredFields.filter((field) => {
+    const value = deposit[field];
+
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (missingFields.length === 0) {
+    return deposit;
+  }
+
+  throw new TelegramOrderConfirmationError(
+    "telegram_order_existing_deposit_invalid",
+    "Telegram order confirmation found a local deposit that cannot be safely reused.",
+    TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+    {
+      tenantId: context.tenantId,
+      orderId: context.orderId,
+      depositEntryId: typeof deposit.depositEntryId === "string" ? deposit.depositEntryId : null,
+      missingFields,
+    },
+  );
+}
+
+/**
  * Avanca o pedido para um passo terminal de falha.
  *
  * A confirmacao nao deixa o pedido preso em `creating_deposit` quando a Eulen
@@ -282,6 +325,10 @@ async function markTelegramOrderConfirmationFailure(input) {
  * @returns {Promise<{ order: Record<string, unknown>, deposit: Record<string, unknown>, accepted: boolean, conflict: boolean, parseResult: null }>} Resultado no shape do service.
  */
 async function persistTelegramAwaitingPaymentFromDeposit(input) {
+  const reusableDeposit = assertReusableTelegramDeposit(input.deposit, {
+    tenantId: input.tenantId,
+    orderId: input.order.orderId,
+  });
   const depositCreatedProgression = advanceOrderProgression({
     currentStep: input.order.currentStep,
     context: {
@@ -294,7 +341,7 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
     event: {
       type: ORDER_PROGRESS_EVENTS.DEPOSIT_CREATED,
       tenantId: input.tenantId,
-      depositEntryId: input.deposit.depositEntryId,
+      depositEntryId: reusableDeposit.depositEntryId,
     },
   });
   const awaitingPaymentWrite = await updateOrderByIdWithStepGuard(
@@ -317,7 +364,7 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
       {
         tenantId: input.tenantId,
         orderId: input.order.orderId,
-        depositEntryId: input.deposit.depositEntryId,
+        depositEntryId: reusableDeposit.depositEntryId,
       },
     );
   }
@@ -325,7 +372,7 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
   if (awaitingPaymentWrite.conflict) {
     return {
       order: awaitingPaymentWrite.order ?? input.order,
-      deposit: input.deposit,
+      deposit: reusableDeposit,
       accepted: false,
       conflict: true,
       parseResult: null,
@@ -334,7 +381,7 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
 
   return {
     order: awaitingPaymentWrite.order,
-    deposit: input.deposit,
+    deposit: reusableDeposit,
     accepted: true,
     conflict: false,
     parseResult: null,
@@ -346,11 +393,14 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
  *
  * O fluxo e deliberadamente sequencial:
  * 1. `confirmation` -> `creating_deposit`
- * 2. chamada real na Eulen com secrets do tenant e o endereco final do usuario
+ * 2. chamada real na Eulen somente pelo request que venceu o compare-and-set
  * 3. persistencia em `deposits`
  * 4. `creating_deposit` -> `awaiting_payment`
  *
- * Se um retry chegar depois da criacao, o service reaproveita o deposito ja
+ * A primeira transicao funciona como lease local: dois `confirmar` concorrentes
+ * podem ler o mesmo pedido, mas so um consegue trocar `confirmation` por
+ * `creating_deposit`; o perdedor recebe conflito antes de chamar a Eulen. Se um
+ * retry chegar depois da criacao, o service reaproveita o deposito ja
  * persistido e nao dispara nova cobranca.
  *
  * @param {{
@@ -467,7 +517,7 @@ export async function confirmTelegramOrder(input) {
     );
 
     if (preexistingDeposit) {
-      return persistTelegramAwaitingPaymentFromDeposit({
+      return await persistTelegramAwaitingPaymentFromDeposit({
         db: input.db,
         tenantId: input.tenant.tenantId,
         order: creatingDepositOrder,
@@ -506,6 +556,17 @@ export async function confirmTelegramOrder(input) {
     } catch (error) {
       if (error instanceof DepositOrderUniquenessError && error.existingDeposit) {
         savedDeposit = error.existingDeposit;
+      } else if (error instanceof DepositOrderUniquenessError) {
+        throw new TelegramOrderConfirmationError(
+          "telegram_order_deposit_uniqueness_unresolved",
+          "Telegram order confirmation hit the tenant/order uniqueness guard but could not read the winning deposit.",
+          TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+          {
+            tenantId: input.tenant.tenantId,
+            orderId: creatingDepositOrder.orderId,
+          },
+          error,
+        );
       } else {
         throw error;
       }
@@ -526,7 +587,7 @@ export async function confirmTelegramOrder(input) {
       );
     }
 
-    return persistTelegramAwaitingPaymentFromDeposit({
+    return await persistTelegramAwaitingPaymentFromDeposit({
       db: input.db,
       tenantId: input.tenant.tenantId,
       order: creatingDepositOrder,
