@@ -5,11 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidIssueTriagePlan,
-  buildDiscussionBody,
   buildIssueCommentBody,
-  extractDiscussionUrlFromComment,
   parseIssueTriageResponse,
-  selectDiscussionCategory,
 } from "../scripts/ai-issue-triage.mjs";
 
 describe("ai issue triage validation", () => {
@@ -145,29 +142,7 @@ describe("ai issue triage validation", () => {
     expect(plan.needsDiscussion).toBe(true);
   });
 
-  it("selects category with configured preference and safe fallback", () => {
-    const categories = [
-      { id: "1", name: "General", isAnswerable: false },
-      { id: "2", name: "Ideas", isAnswerable: false },
-      { id: "3", name: "Q&A", isAnswerable: true },
-    ];
-
-    expect(selectDiscussionCategory(categories, "Ideas").id).toBe("2");
-    expect(selectDiscussionCategory(categories, "Missing").id).toBe("2");
-  });
-
-  it("extracts an existing discussion URL from the sticky comment", () => {
-    const comment = [
-      "<!-- ai-issue-triage:openai -->",
-      "## AI Issue Triage",
-      "",
-      "[Discussion](https://github.com/dev865077/depix-mvp/discussions/12)",
-    ].join("\n");
-
-    expect(extractDiscussionUrlFromComment(comment)).toBe("https://github.com/dev865077/depix-mvp/discussions/12");
-  });
-
-  it("marks discussion-routed issue comments as requiring an operational reply before PR work", () => {
+  it("marks discussion-routed issue comments as an API-only planning handoff", () => {
     const body = buildIssueCommentBody({
       impact: "alto",
       route: "discussion_before_pr",
@@ -180,42 +155,38 @@ describe("ai issue triage validation", () => {
       riskView: "Pode misturar riscos.",
       decision: "Responder a Discussion antes de PR.",
       nextSteps: ["confirmar ordem"],
-    }, "gpt-test", "https://github.com/dev865077/depix-mvp/discussions/97");
+    }, "gpt-test");
 
-    expect(body).toContain("## Discussion");
-    expect(body).toContain("## Resposta operacional requerida");
+    expect(body).not.toContain("https://github.com/dev865077/depix-mvp/discussions/");
+    expect(body).toContain("## Planning automatico");
     expect(body).toContain("Prontidao de execucao");
+    expect(body).toContain("Rota canonica: `discussion_before_pr`");
+    expect(body).toContain("canonical_state: `issue_needs_planning`");
+    expect(body).toContain("next_actor: `ai_issue_planning_review`");
+    expect(body).toContain("ready_for_codex: `false`");
     expect(body).toContain("## Racional de rota");
-    expect(body).toContain("quatro papeis: produto, tecnica, scrum e risco");
-    expect(body).toContain("aprovacao unanime");
-    expect(body).toContain("Antes de abrir branch ou PR");
-    expect(body).toContain("https://github.com/dev865077/depix-mvp/discussions/97");
+    expect(body).toContain("criar ou reutilizar uma unica Discussion canonica");
   });
 
-  it("builds a discussion body with the structured debate", () => {
-    const body = buildDiscussionBody({
-      number: 51,
-      title: "Criar automacao",
-      url: "https://github.com/dev865077/depix-mvp/issues/51",
-      body: "Descricao da issue.",
-    }, {
-      impact: "medio",
-      route: "discussion_before_pr",
-      executionReadiness: "needs_discussion",
-      needsDiscussion: true,
-      reason: "Precisa debate curto de arquitetura e ordem de execucao.",
-      productView: "Escopo precisa gate.",
-      technicalView: "Fluxo toca GitHub Actions e automacao.",
-      riskView: "Pode travar PRs pequenas.",
-      decision: "Criar Discussion antes de PR quando impacto nao for baixo.",
-      nextSteps: ["fechar regra", "implementar workflow"],
-    });
+  it("marks direct issues as ready for Codex without planning Discussion", () => {
+    const body = buildIssueCommentBody({
+      impact: "baixo",
+      route: "direct_pr",
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "Escopo pequeno e fechado.",
+      justification: "Pode implementar direto.",
+      productView: "Sem decisao pendente.",
+      technicalView: "Mudanca localizada.",
+      riskView: "Baixo risco.",
+      decision: "Abrir branch e PR.",
+      nextSteps: ["implementar"],
+    }, "gpt-test");
 
-    expect(body).toContain("## Debate");
-    expect(body).toContain("## Sintese final");
-    expect(body).toContain("## Resposta operacional requerida");
-    expect(body).toContain("quatro papeis: produto, tecnica, scrum e risco");
-    expect(body).toContain("Antes de abrir branch ou PR");
-    expect(body).toContain("Issue origem: #51");
+    expect(body).toContain("Rota canonica: `direct_pr`");
+    expect(body).toContain("canonical_state: `issue_ready_for_codex`");
+    expect(body).toContain("next_actor: `codex`");
+    expect(body).toContain("ready_for_codex: `true`");
+    expect(body).not.toContain("## Planning automatico");
   });
 });

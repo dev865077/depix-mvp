@@ -25,11 +25,15 @@ on:
     types:
       - created
       - edited
+  issue_comment:
+    types:
+      - created
+      - edited
 
 permissions:
   contents: read
   discussions: write
-  issues: read
+  issues: write
 
 concurrency:
   group: ai-issue-planning-review-${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.discussion_number != '' && format('manual-discussion-{0}', github.event.inputs.discussion_number) || github.event.inputs.issue_number != '' && format('manual-issue-{0}', github.event.inputs.issue_number) || format('manual-run-{0}', github.run_id)) || github.event.issue.number && format('issue-{0}', github.event.issue.number) || github.event.discussion.number && format('discussion-{0}', github.event.discussion.number) || format('event-{0}', github.run_id) }}
@@ -60,6 +64,7 @@ jobs:
           AI_ISSUE_PLANNING_TECHNICAL_PROMPT_PATH: .github/prompts/ai-issue-planning-technical.md
           AI_ISSUE_PLANNING_SCRUM_PROMPT_PATH: .github/prompts/ai-issue-planning-scrum.md
           AI_ISSUE_PLANNING_RISK_PROMPT_PATH: .github/prompts/ai-issue-planning-risk.md
+          AI_ISSUE_PLANNING_DISCUSSION_CATEGORY: ${{ vars.AI_ISSUE_PLANNING_DISCUSSION_CATEGORY || vars.AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_ISSUE_PLANNING_REVIEW_MODEL: ${{ vars.OPENAI_ISSUE_PLANNING_REVIEW_MODEL || 'gpt-5.4-mini' }}

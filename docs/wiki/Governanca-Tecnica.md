@@ -24,12 +24,13 @@
 ## Gate de decisao antes da PR
 
 - issue nova pode receber triagem automatica de impacto
-- `baixo` segue para PR direta
-- `medio` e `alto` geram Discussion com debate curto entre perspectivas de produto, tecnica e risco
-- quando a triagem abrir Discussion, a issue entra na lane de planning review com quatro papeis especializados: produto, technical, scrum e risk
+- `impact` e sinal descritivo; a rota depende de clareza, risco, dependencias e necessidade de decisao compartilhada
+- `direct_pr` segue direto para Codex quando a issue publicar `ready_for_codex: true`
+- `discussion_before_pr` nao cria Discussion na triagem; ele aciona a lane de planning review, que cria ou reutiliza uma unica Discussion canonica via API
+- a planning review roda quatro papeis especializados: produto, technical, scrum e risk
 - a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
-- a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis
+- a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis e a propria issue publicar `canonical_state: issue_ready_for_codex`
 - quando a planning review concluir `Blocked`, a issue nao esta rejeitada; ela esta especificada, mas ainda depende de trabalho upstream explicito antes da implementacao
 
 ## Regra de longo prazo

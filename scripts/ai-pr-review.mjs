@@ -2338,6 +2338,9 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
+  const canonicalState = isApproved ? "pr_ready_to_merge" : "pr_review_request_changes";
+  const nextActor = isApproved ? "codex" : "pr_author";
+  const nextAction = isApproved ? "merge_when_required_checks_are_green" : "reply_to_pr_conclusion_after_changes";
   const policyLine =
     "Merge approval in the discussion lane requires unanimous `Approve` from `product`, `technical`, and `risk`. `synthesis` is summary-only.";
 
@@ -2351,6 +2354,12 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
     ...(blockerLine ? [blockerLine] : []),
     policyLine,
     canonicalLine,
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${canonicalState}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_merge: \`${String(isApproved)}\``,
     "",
     `Final recommendation: \`${recommendation}\``,
   ].join("\n");

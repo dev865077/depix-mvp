@@ -2,8 +2,11 @@
  * Automated issue triage runner.
  *
  * This workflow-side script reads one GitHub issue, asks OpenAI for a
- * structured triage decision, optionally creates a GitHub Discussion, and
- * keeps a single sticky comment on the issue with the current decision.
+ * structured triage decision, and keeps a single sticky comment on the issue.
+ *
+ * It deliberately does not create Discussions. When the issue needs planning,
+ * the planning workflow observes this sticky comment and owns the single
+ * specialist Discussion lifecycle through the GitHub API.
  */
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -18,17 +21,6 @@ const MAX_ISSUE_BODY_CHARS = 5000;
 const MAX_EXISTING_COMMENT_CHARS = 5000;
 const MAX_OUTPUT_TOKENS = 25000;
 const REASONING_EFFORT = "low";
-const DISCUSSION_ACKNOWLEDGEMENT_TITLE = "## Resposta operacional requerida";
-const DISCUSSION_ACKNOWLEDGEMENT_BODY = [
-  "Esta Discussion tambem recebera uma rodada automatica de planning review com quatro papeis: produto, tecnica, scrum e risco.",
-  "A issue so deve ser tratada como pronta para execucao quando essa rodada terminar com aprovacao unanime.",
-  "",
-  "Antes de abrir branch ou PR para esta issue, o implementador deve responder nesta Discussion com:",
-  "- decisao operacional adotada",
-  "- ordem de execucao",
-  "- escopo da primeira PR",
-  "- riscos ou pendencias que continuam fora da primeira PR",
-].join("\n");
 
 /**
  * @typedef {{
@@ -46,14 +38,6 @@ const DISCUSSION_ACKNOWLEDGEMENT_BODY = [
  *   discussionTitle: string,
  *   nextSteps: string[],
  * }} IssueTriagePlan
- */
-
-/**
- * @typedef {{
- *   id: string,
- *   name: string,
- *   isAnswerable: boolean,
- * }} DiscussionCategory
  */
 
 /**
@@ -157,40 +141,6 @@ async function githubRequest(url, init = {}) {
 }
 
 /**
- * Perform an authenticated GitHub GraphQL request.
- *
- * @param {string} query GraphQL query or mutation text.
- * @param {Record<string, unknown>} [variables] GraphQL variables.
- * @returns {Promise<any>} Parsed GraphQL data.
- */
-async function githubGraphqlRequest(query, variables = {}) {
-  const token = readRequiredEnv("GITHUB_TOKEN");
-  const response = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`GitHub GraphQL request failed (${response.status}): ${body}`);
-  }
-
-  const payload = await response.json();
-
-  if (Array.isArray(payload.errors) && payload.errors.length > 0) {
-    throw new Error(`GitHub GraphQL request returned errors: ${JSON.stringify(payload.errors)}`);
-  }
-
-  return payload.data;
-}
-
-/**
  * Fetch up to one page of issue comments in stable API order.
  *
  * A single sticky comment is enough for this workflow, so 100 comments gives
@@ -205,127 +155,6 @@ async function fetchIssueComments(repoFullName, issueNumber) {
 }
 
 /**
- * Fetch discussion metadata needed for category selection and deduplication.
- *
- * @param {string} owner Repository owner.
- * @param {string} name Repository name.
- * @returns {Promise<{
- *   id: string,
- *   hasDiscussionsEnabled: boolean,
- *   discussionCategories: { nodes: DiscussionCategory[] },
- *   discussions: { nodes: Array<{ id: string, title: string, url: string }> },
- * }>} Repository discussion metadata.
- */
-async function fetchRepositoryDiscussionMetadata(owner, name) {
-  const query = `
-    query($owner: String!, $name: String!) {
-      repository(owner: $owner, name: $name) {
-        id
-        hasDiscussionsEnabled
-        discussionCategories(first: 20) {
-          nodes {
-            id
-            name
-            isAnswerable
-          }
-        }
-        discussions(first: 50, orderBy: { field: CREATED_AT, direction: DESC }) {
-          nodes {
-            id
-            title
-            url
-          }
-        }
-      }
-    }
-  `;
-  const data = await githubGraphqlRequest(query, { owner, name });
-  const repository = data?.repository;
-
-  if (!repository) {
-    throw new Error("GitHub GraphQL response did not include repository metadata.");
-  }
-
-  if (repository.hasDiscussionsEnabled !== true) {
-    throw new Error("GitHub Discussions is not enabled for this repository.");
-  }
-
-  return repository;
-}
-
-/**
- * Choose the safest discussion category for automated design debate.
- *
- * Selection order:
- * 1. explicitly configured category name
- * 2. `Ideas`
- * 3. `General`
- * 4. first non-answerable category
- * 5. first available category
- *
- * @param {DiscussionCategory[]} categories Repository discussion categories.
- * @param {string} [preferredName] Optional configured category name.
- * @returns {DiscussionCategory} Selected category.
- */
-export function selectDiscussionCategory(categories, preferredName = "") {
-  if (!Array.isArray(categories) || categories.length === 0) {
-    throw new Error("No GitHub Discussion categories are available in this repository.");
-  }
-
-  const normalizedPreferredName = preferredName.trim().toLowerCase();
-
-  if (normalizedPreferredName) {
-    const preferredCategory = categories.find((category) => category.name.toLowerCase() === normalizedPreferredName);
-
-    if (preferredCategory) {
-      return preferredCategory;
-    }
-  }
-
-  const ideasCategory = categories.find((category) => category.name.toLowerCase() === "ideas");
-
-  if (ideasCategory) {
-    return ideasCategory;
-  }
-
-  const generalCategory = categories.find((category) => category.name.toLowerCase() === "general");
-
-  if (generalCategory) {
-    return generalCategory;
-  }
-
-  const firstOpenEndedCategory = categories.find((category) => category.isAnswerable !== true);
-
-  if (firstOpenEndedCategory) {
-    return firstOpenEndedCategory;
-  }
-
-  return categories[0];
-}
-
-/**
- * Extract a GitHub Discussion URL from a sticky triage comment body.
- *
- * @param {string} body Sticky comment body.
- * @returns {string | null} Discussion URL when present.
- */
-export function extractDiscussionUrlFromComment(body) {
-  if (typeof body !== "string" || body.length === 0) {
-    return null;
-  }
-
-  const markdownLinkMatch = body.match(/\[Discussion\]\((https:\/\/github\.com\/[^)\s]+\/discussions\/\d+)\)/i);
-
-  if (markdownLinkMatch) {
-    return markdownLinkMatch[1];
-  }
-
-  const plainUrlMatch = body.match(/https:\/\/github\.com\/[^\s)]+\/discussions\/\d+/i);
-
-  return plainUrlMatch ? plainUrlMatch[0] : null;
-}
-
-/**
  * Find the existing sticky triage comment generated by this workflow.
  *
  * @param {any[]} comments Issue comments.
@@ -334,31 +163,6 @@ export function extractDiscussionUrlFromComment(body) {
 function findExistingTriageComment(comments) {
   return comments.find((comment) =>
     comment.user?.login === "github-actions[bot]" && typeof comment.body === "string" && comment.body.includes(TRIAGE_MARKER)) ?? null;
-}
-
-/**
- * Detect a pre-existing discussion to avoid duplicates across reruns.
- *
- * The sticky comment is the primary source of truth. Recent repository
- * discussions are a fallback in case the comment was removed or edited.
- *
- * @param {number} issueNumber Issue number.
- * @param {any[]} comments Issue comments.
- * @param {Array<{ title: string, url: string }>} discussions Recent discussions.
- * @returns {string | null} Existing discussion URL if found.
- */
-function findExistingDiscussionUrl(issueNumber, comments, discussions) {
-  const stickyComment = findExistingTriageComment(comments);
-  const commentDiscussionUrl = stickyComment ? extractDiscussionUrlFromComment(stickyComment.body) : null;
-
-  if (commentDiscussionUrl) {
-    return commentDiscussionUrl;
-  }
-
-  const issueMarker = `[Issue #${issueNumber}]`;
-  const matchingDiscussion = discussions.find((discussion) => typeof discussion.title === "string" && discussion.title.includes(issueMarker));
-
-  return matchingDiscussion?.url ?? null;
 }
 
 /**
@@ -633,58 +437,23 @@ export function assertValidIssueTriagePlan(rawPlan) {
 }
 
 /**
- * Create a new GitHub Discussion for the issue debate.
- *
- * @param {string} repositoryId Repository GraphQL node id.
- * @param {string} categoryId Selected discussion category id.
- * @param {string} title Discussion title.
- * @param {string} body Discussion body.
- * @returns {Promise<{ id: string, url: string }>} Created discussion metadata.
- */
-async function createDiscussion(repositoryId, categoryId, title, body) {
-  const mutation = `
-    mutation($repositoryId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
-      createDiscussion(input: {
-        repositoryId: $repositoryId,
-        categoryId: $categoryId,
-        title: $title,
-        body: $body
-      }) {
-        discussion {
-          id
-          url
-        }
-      }
-    }
-  `;
-  const data = await githubGraphqlRequest(mutation, { repositoryId, categoryId, title, body });
-  const discussion = data?.createDiscussion?.discussion;
-
-  if (!discussion?.url) {
-    throw new Error("GitHub GraphQL response did not include the created discussion URL.");
-  }
-
-  return discussion;
-}
-
-/**
  * Build the markdown body for the sticky issue comment.
  *
  * @param {IssueTriagePlan} plan Safe triage plan.
  * @param {string} model Explicit model name.
- * @param {string | null} discussionUrl Existing or newly created discussion URL.
  * @returns {string} Markdown comment body.
  */
-export function buildIssueCommentBody(plan, model, discussionUrl) {
+export function buildIssueCommentBody(plan, model) {
   const routeLabel = plan.route === ROUTE_DIRECT_PR ? "PR direta" : "Discussion antes da PR";
-  const discussionSection = discussionUrl
+  const needsPlanning = plan.route === ROUTE_DISCUSSION_BEFORE_PR;
+  const canonicalState = needsPlanning ? "issue_needs_planning" : "issue_ready_for_codex";
+  const nextActor = needsPlanning ? "ai_issue_planning_review" : "codex";
+  const nextAction = needsPlanning ? "create_or_reuse_issue_planning_discussion" : "open_branch_and_pr";
+  const planningSection = needsPlanning
     ? [
-      "## Discussion",
+      "## Planning automatico",
       "",
-      `[Discussion](${discussionUrl})`,
-      "",
-      DISCUSSION_ACKNOWLEDGEMENT_TITLE,
-      DISCUSSION_ACKNOWLEDGEMENT_BODY,
+      "A triage nao cria Discussion. O workflow `AI Issue Planning Review` deve observar este comentario, criar ou reutilizar uma unica Discussion canonica da issue, rodar os quatro especialistas e marcar a issue como pronta para Codex apenas quando houver aprovacao unanime.",
     ]
     : [];
 
@@ -695,7 +464,17 @@ export function buildIssueCommentBody(plan, model, discussionUrl) {
     `Model: \`${model}\``,
     `Impacto: \`${plan.impact}\``,
     `Fluxo recomendado: \`${routeLabel}\``,
+    `Rota canonica: \`${plan.route}\``,
     `Prontidao de execucao: \`${plan.executionReadiness}\``,
+    `needs_discussion: \`${String(plan.needsDiscussion)}\``,
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${canonicalState}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_codex: \`${String(!needsPlanning)}\``,
+    `ready_for_branch: \`${String(!needsPlanning)}\``,
+    `ready_for_pr: \`${String(!needsPlanning)}\``,
     "",
     "## Justificativa",
     plan.justification,
@@ -719,56 +498,7 @@ export function buildIssueCommentBody(plan, model, discussionUrl) {
     "",
     "## Proximos passos",
     ...plan.nextSteps.map((step) => `- ${step}`),
-    ...(discussionSection.length > 0 ? ["", ...discussionSection] : []),
-  ].join("\n");
-}
-
-/**
- * Build the markdown body for a newly created Discussion.
- *
- * @param {{
- *   number: number,
- *   title: string,
- *   url: string,
- *   body?: string | null,
- * }} issue Issue payload from GitHub.
- * @param {IssueTriagePlan} plan Safe triage plan.
- * @returns {string} Markdown body.
- */
-export function buildDiscussionBody(issue, plan) {
-  return [
-    `Issue origem: #${issue.number} - [${issue.title}](${issue.url})`,
-    "",
-    "## Contexto da issue",
-    truncateText(issue.body ?? "[sem descricao]", MAX_ISSUE_BODY_CHARS),
-    "",
-    "## Classificacao",
-    `- Impacto: \`${plan.impact}\``,
-    `- Fluxo: \`${plan.route}\``,
-    `- Prontidao: \`${plan.executionReadiness}\``,
-    "",
-    "## Debate",
-    "",
-    "### Produto e escopo",
-    plan.productView,
-    "",
-    "### Tecnica e arquitetura",
-    plan.technicalView,
-    "",
-    "### Risco e qualidade",
-    plan.riskView,
-    "",
-    "## Sintese final",
-    plan.decision,
-    "",
-    "## Racional de rota",
-    plan.reason,
-    "",
-    DISCUSSION_ACKNOWLEDGEMENT_TITLE,
-    DISCUSSION_ACKNOWLEDGEMENT_BODY,
-    "",
-    "## Proximos passos",
-    ...plan.nextSteps.map((step) => `- ${step}`),
+    ...(planningSection.length > 0 ? ["", ...planningSection] : []),
   ].join("\n");
 }
 
@@ -809,10 +539,9 @@ async function upsertIssueComment(repoFullName, issueNumber, body) {
  * Write a compact GitHub Actions summary when the runner exposes it.
  *
  * @param {IssueTriagePlan} plan Safe triage plan.
- * @param {string | null} discussionUrl Existing or newly created discussion URL.
  * @returns {Promise<void>} Resolves when summary is written or skipped.
  */
-async function writeStepSummary(plan, discussionUrl) {
+async function writeStepSummary(plan) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
 
   if (!summaryPath) {
@@ -824,11 +553,11 @@ async function writeStepSummary(plan, discussionUrl) {
     "",
     `Impacto: ${plan.impact}`,
     `Fluxo: ${plan.route}`,
+    `Ready for Codex: ${plan.route === ROUTE_DIRECT_PR}`,
     "",
     plan.decision,
     "",
     ...plan.nextSteps.map((step) => `- ${step}`),
-    ...(discussionUrl ? ["", `Discussion: ${discussionUrl}`] : []),
     "",
   ].join("\n");
 
@@ -844,7 +573,6 @@ async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
   const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
-  const preferredDiscussionCategory = process.env.AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY?.trim() || "Ideas";
   const model = readConfiguredModel();
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const issue = event.issue;
@@ -863,9 +591,7 @@ async function main() {
     return;
   }
 
-  const [owner, name] = repository.split("/");
-
-  if (!owner || !name) {
+  if (!repository.includes("/")) {
     throw new Error(`Invalid GITHUB_REPOSITORY value: ${repository}`);
   }
 
@@ -889,25 +615,10 @@ async function main() {
 
   const rawTriage = await generateIssueTriage(systemPrompt, userPrompt, model);
   const plan = assertValidIssueTriagePlan(parseIssueTriageResponse(rawTriage));
-  let discussionUrl = null;
 
-  if (plan.route === ROUTE_DISCUSSION_BEFORE_PR) {
-    const repositoryMetadata = await fetchRepositoryDiscussionMetadata(owner, name);
-    discussionUrl = findExistingDiscussionUrl(issue.number, comments, repositoryMetadata.discussions.nodes);
-
-    if (!discussionUrl) {
-      const category = selectDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredDiscussionCategory);
-      const discussionTitle = `[Issue #${issue.number}] ${plan.discussionTitle}`;
-      const discussionBody = buildDiscussionBody(issue, plan);
-      const discussion = await createDiscussion(repositoryMetadata.id, category.id, discussionTitle, discussionBody);
-
-      discussionUrl = discussion.url;
-    }
-  }
-
-  const commentBody = buildIssueCommentBody(plan, model, discussionUrl);
+  const commentBody = buildIssueCommentBody(plan, model);
   await upsertIssueComment(repository, issue.number, commentBody);
-  await writeStepSummary(plan, discussionUrl);
+  await writeStepSummary(plan);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

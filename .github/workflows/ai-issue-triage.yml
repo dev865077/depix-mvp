@@ -10,7 +10,6 @@ on:
 permissions:
   contents: read
   issues: write
-  discussions: write
 
 concurrency:
   group: ai-issue-triage-${{ github.event.issue.number }}
@@ -33,7 +32,6 @@ jobs:
       - name: Run AI issue triage
         env:
           AI_ISSUE_TRIAGE_PROMPT_PATH: .github/prompts/ai-issue-triage.md
-          AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY: ${{ vars.AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_ISSUE_TRIAGE_MODEL: ${{ vars.OPENAI_ISSUE_TRIAGE_MODEL }}

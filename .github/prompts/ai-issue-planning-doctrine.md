@@ -22,6 +22,7 @@ Output contract:
 - In `## Findings`, use `- None.` when no material findings remain.
 - In `## Questions`, use `- None.` when there are no open questions.
 - The latest automated planning conclusion plus the human replies below it are the canonical handoff for the next round.
+- When the issue is approved, the automation must leave an issue-visible handoff for Codex with `ready_for_codex: true`; Codex should not be needed during planning rounds.
 - In `## Recommendation`, say exactly one of:
   - `Approve`
   - `Blocked`

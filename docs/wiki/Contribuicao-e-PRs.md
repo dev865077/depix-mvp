@@ -20,13 +20,16 @@
 - `direct_pr` so vale quando o escopo ja esta claro, limitado e executavel sem rodada de planning
 - `discussion_before_pr` vale quando ainda falta decisao compartilhada sobre escopo, decomposicao, arquitetura, operacao, risco ou dependencias
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
-- quando a triagem abrir uma Discussion, a issue entra na lane de planning review antes da implementacao
+- a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
+- quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` cria ou reutiliza uma unica Discussion canonica da issue via API
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - o planning review tem tres estados canonicos:
   - `Approve`: issue pronta para execucao
   - `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito
   - `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
+- quando o planning aprova, ele publica na propria issue `canonical_state: issue_ready_for_codex` e `ready_for_codex: true`
+- Codex so deve entrar para abrir branch e PR depois desse handoff canonico ou quando a triage direta publicar `ready_for_codex: true`
 - a thread canonica de cada nova rodada e a reply humana na conclusao mais recente da Discussion
 - a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte
 - quando uma nova rodada aprova, a automacao responde nessa thread explicando por que agora passou
@@ -34,7 +37,7 @@
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
 - itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos de forma explicita
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
-- quando a issue cair em Discussion, o implementador deve responder ali com a decisao operacional, a ordem de execucao, o escopo da primeira PR e os riscos ou pendencias que ficam fora dela antes de abrir branch ou PR
+- enquanto a issue estiver em planning, a evolucao da issue e da Discussion pertence aos workflows via API; o implementador/Codex so entra depois do estado `ready_for_codex: true`
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 
 ## Corpo obrigatorio da PR
@@ -79,7 +82,7 @@ Explicitar:
 - a automacao pode fechar ou reabrir a Discussion via API para refletir o estado atual, mas a trilha canonica continua sendo append-only na thread da conclusao
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional
-- quando a triagem exigir Discussion, a issue deve trazer o acknowledgement operacional antes de qualquer branch ou PR
+- quando a triagem exigir Discussion, a issue deve trazer o handoff canonico para o planning antes de qualquer branch ou PR
 
 ## Fluxo de documentacao da wiki
 
