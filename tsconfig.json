@@ -15,7 +15,9 @@
   },
   "include": [
     "src/**/*.js",
-    "src/**/*.ts",
+    "src/**/*.ts"
+  ],
+  "files": [
     "worker-configuration.d.ts"
   ],
   "exclude": [
