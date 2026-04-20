@@ -30,3 +30,6 @@ Output requirements:
 - In `## Recommendation`, say exactly one of:
   - `Approve`
   - `Request changes`
+- If `## Recommendation` is `Request changes`, add a `## Blocker contract` section after `## Merge posture`.
+- In `## Blocker contract`, emit exactly one highest-severity blocker contract using the canonical labels from the shared doctrine.
+- If `## Recommendation` is `Approve`, omit `## Blocker contract` entirely.

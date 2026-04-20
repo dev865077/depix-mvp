@@ -18,6 +18,24 @@ Review doctrine:
 - The latest automated conclusion thread is the canonical handoff between rounds. Read the previous conclusion plus the human replies below it to understand what the author claims to have changed.
 - Every merge-blocking finding must cite current evidence: a file path, behavior in the current diff, or a named missing test in the current payload.
 - If the current payload is insufficient to verify a concern, say the review input is insufficient instead of stating the concern as fact.
+- Product, Technical, and Risk must use the exact same blocker-contract labels when they block.
+- When `## Recommendation` is `Request changes`, emit exactly one canonical blocker contract for the single highest-severity blocker in that role memo.
+- The blocker contract must appear in a `## Blocker contract` section.
+- For `Testability: Testable`, include exactly these labels:
+  - `Testability`
+  - `Behavior protected`
+  - `Suggested test file`
+  - `Minimum scenario`
+  - `Essential assertions`
+  - `Resolution rule`
+  - `Why this test resolves the blocker`
+- For `Testability: Not testable`, include exactly these labels:
+  - `Testability`
+  - `Reason`
+  - `Required human resolution`
+- Use the exact label spellings above. No synonyms, no role-specific wording.
+- If `## Recommendation` is `Approve`, omit the `## Blocker contract` section entirely.
+- Keep any extra prose outside the blocker contract short and non-conflicting. Do not emit a second blocker contract, alternate blocker schema, or legacy blocker prose.
 
 Repository automation contract:
 - Tiny docs/test-only PRs may stay in the direct review lane.
