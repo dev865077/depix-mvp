@@ -24,6 +24,8 @@ Estado atual:
 - em `confirmation`, `cancelar` encerra o pedido sem criar deposito
 - o fluxo tambem aceita `/cancel`, `cancelar` e `recomecar` para cancelar ou reiniciar pedidos abertos em `amount`, `wallet` e `confirmation`
 - `recomecar` so reinicia quando existe contexto aberto; caso contrario, apenas orienta o usuario a usar `/start`
+- o comando `/status` consulta o pedido aberto atual; se nao houver pedido aberto, ele mostra o ultimo pedido relevante do mesmo tenant/usuario/canal sem criar ou alterar linhas
+- `/status` e somente leitura: nao reabre pedido terminal, nao cria pedido novo e nao muda o estado do agregado
 - mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`

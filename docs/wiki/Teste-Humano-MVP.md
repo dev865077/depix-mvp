@@ -192,18 +192,24 @@ Nao use como retry cego. Registre janela, `HTTP_STATUS`, linhas aplicadas, linha
 
 ## Criterios de parada em test
 
-Pare, registre evidencia e abra bug pequena se ocorrer:
-
-- `GET /health` diferente de `ok`
-- secrets, split ou webhook com divergencia de configuracao
-- deposito criado sem `orderId`/`depositEntryId` consistente
-- webhook da Eulen retornando erro nao tratavel
-- recheck manual voltando `409` inesperado
-- o pagamento ser conciliado, mas a notificacao Telegram assíncrona falhar de forma repetida sem evolucao no status operacional
-- o pagamento ser conciliado e a mesma mensagem de confirmacao ser repetida em duplicidade
+- o QR foi gerado e evidenciado
+- o pagamento foi conciliado ou o erro foi isolado de forma conclusiva
+- o estado final ficou consistente em `orders` e `deposits`
+- a mensagem assincrona foi observada ou a ausencia foi justificada com recheck e logs
+- a issue recebeu comentario com evidencia suficiente
 
 ## Criterios de parada em production
 
-Em production, o teste humano so deve ser executado quando a issue de promocao autorizar explicitamente e a evidencia de test estiver anexada.
+Production nao deve ser usada para improviso.
 
-Nao repetir validacao em production se test ja mostrou falha de fluxo, split ou webhook. Corrija primeiro em test.
+Antes de executar:
+
+- conferir aprovacao da issue correspondente
+- conferir janela operacional combinada
+- conferir se o risco de recheck e fallback foi aceito
+- conferir se ha suporte responsavel online
+- conferir se a mensagem de smoke esta pronta para ser registrada no comentario da issue
+
+## Risco residual
+
+Se a conciliacao nao chegar, o operador nao deve repetir a compra no escuro. A ordem correta e registrar evidencia, rodar recheck pontual, e so depois considerar fallback por janela quando a janela e o impacto estiverem claros.
