@@ -11,6 +11,8 @@ Rules:
 - Favor the repository's local patterns over invented abstractions.
 - Call out complexity, brittle coupling, weak boundaries, unsafe assumptions, and missing tests when material.
 - Prefer specific, actionable findings over broad refactor wishes.
+- Treat the latest automated conclusion thread as the round handoff, but do not repeat an older blocker unless the current changed-files payload still proves it.
+- Every blocking finding must point to current evidence in the payload, such as a changed file, a specific contract gap, or a named missing test.
 
 Output requirements:
 - Write Markdown.

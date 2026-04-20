@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidReviewRecommendation,
+  buildAutomationEvidenceContext,
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
   buildDiscussionGateReview,
@@ -67,6 +68,20 @@ describe("ai pr review recommendation parser", () => {
     ].join("\n");
 
     expect(() => assertValidReviewRecommendation(review)).toThrow(/Forbidden recommendation/);
+  });
+
+  it("keeps Blocked planning-only by rejecting it in PR review recommendations", () => {
+    const review = [
+      "Blocked",
+      "",
+      "## Findings",
+      "- Waiting on another change.",
+      "",
+      "## Recommendation",
+      "Blocked",
+    ].join("\n");
+
+    expect(() => assertValidReviewRecommendation(review)).toThrow(/missing the ## Recommendation section|Invalid AI review recommendation/i);
   });
 
   it("turns Request changes into a failing GitHub check verdict", () => {
@@ -347,13 +362,14 @@ describe("ai pr review discussion gate", () => {
   it("summarizes categories and top-level areas deterministically", () => {
     const summary = summarizePullRequestScope([
       { filename: "src/app.js", additions: 10, deletions: 1 },
+      { filename: ".github/prompts/ai-pr-discussion-product.md", additions: 3, deletions: 0 },
       { filename: ".github/workflows/ai-pr-review.yml", additions: 12, deletions: 2 },
       { filename: "test/app.test.js", additions: 5, deletions: 0 },
     ]);
 
-    expect(summary.categories).toEqual(["source", "tests", "workflow"]);
+    expect(summary.categories).toEqual(["prompt", "source", "tests", "workflow"]);
     expect(summary.areas).toEqual([".github", "src", "test"]);
-    expect(summary.totalChangedLines).toBe(30);
+    expect(summary.totalChangedLines).toBe(33);
   });
 });
 
@@ -423,6 +439,7 @@ describe("ai pr review discussion rendering", () => {
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment("Approve");
     const blocked = buildDiscussionCompletionComment("Request changes", ["risk"]);
+    const followUpApproved = buildDiscussionCompletionComment("Approve", [], { isFollowUpRound: true });
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
     expect(approved).toContain("Discussion concluded");
@@ -435,6 +452,8 @@ describe("ai pr review discussion rendering", () => {
     expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
     expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
+    expect(followUpApproved).toContain("Why this passed now");
+    expect(followUpApproved).toContain("resolved the prior blockers");
   });
 
   it("turns model timeouts into bounded request-changes output", () => {
@@ -474,12 +493,18 @@ describe("ai pr review discussion rendering", () => {
         },
       ],
       gate,
+      "",
+      [
+        "## Automation contract evidence",
+        "- Current PR review workflow state: discussion-comment reruns are enabled.",
+      ].join("\n"),
     );
 
     expect(body).toContain("Repository: dev865077/depix-mvp");
     expect(body).toContain("PR: #60 - Automate review");
     expect(body).toContain("Base branch: main");
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
+    expect(body).toContain("## Automation contract evidence");
     expect(body).toContain("scripts/ai-pr-review.mjs");
   });
 
@@ -524,6 +549,64 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("retry sequencial testado");
     expect(body).toContain("Final recommendation: `Request changes`");
     expect(body.indexOf("## Existing Discussion context")).toBeLessThan(body.indexOf("## Changed files digest"));
+  });
+
+  it("builds rerun context from the conclusion thread while dropping stale specialist bot output", () => {
+    const discussionContext = buildDiscussionHistoryContext([
+      {
+        author: { login: "github-actions[bot]" },
+        publishedAt: "2026-04-18T22:14:58Z",
+        body: [
+          "<!-- ai-pr-discussion-review:openai -->",
+          "<!-- ai-pr-discussion-role:technical -->",
+          "## Technical and architecture review",
+          "",
+          "## Findings",
+          "- Old blocker.",
+          "",
+          "## Recommendation",
+          "Request changes",
+        ].join("\n"),
+        replies: { nodes: [] },
+      },
+      {
+        id: "final-1",
+        author: { login: "github-actions" },
+        publishedAt: "2026-04-18T22:15:13Z",
+        body: [
+          "<!-- ai-pr-discussion-final:openai -->",
+          "Final recommendation: `Request changes`",
+        ].join("\n"),
+        replies: {
+          nodes: [
+            {
+              author: { login: "dev865077" },
+              createdAt: "2026-04-18T22:16:00Z",
+              body: "Resolvido: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
+            },
+            {
+              author: { login: "dev865077" },
+              createdAt: "2026-04-18T22:17:00Z",
+              body: "Estou citando <!-- ai-pr-discussion-final:openai --> para explicar o bug anterior.",
+            },
+          ],
+        },
+      },
+      {
+        author: { login: "dev865077" },
+        publishedAt: "2026-04-18T22:18:00Z",
+        body: "Comentario humano solto fora da thread final.",
+        replies: { nodes: [] },
+      },
+    ]);
+
+    expect(discussionContext).not.toContain("Old blocker");
+    expect(discussionContext).toContain("## Latest conclusion thread");
+    expect(discussionContext).toContain("Previous automated conclusion");
+    expect(discussionContext).toContain("Final recommendation: `Request changes`");
+    expect(discussionContext).toContain("Resolvido: agora existe teste cobrindo a regressao");
+    expect(discussionContext).toContain("citando <!-- ai-pr-discussion-final:openai -->");
+    expect(discussionContext).toContain("Comentario humano solto fora da thread final");
   });
 
   it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {
@@ -877,5 +960,64 @@ describe("ai pr review discussion rendering", () => {
       "Risk, security, and operations",
       "Synthesis",
     ]);
+  });
+
+  it("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow", () => {
+    const evidence = buildAutomationEvidenceContext({
+      files: [
+        { filename: ".github/workflows/ai-pr-review.yml" },
+        { filename: ".github/workflows/ai-issue-planning-review.yml" },
+        { filename: "scripts/ai-pr-review.mjs" },
+        { filename: "scripts/ai-issue-planning-review.mjs" },
+        { filename: "scripts/ai-issue-triage.mjs" },
+        { filename: "test/ai-pr-review.test.js" },
+        { filename: "test/ai-issue-planning-review.test.js" },
+        { filename: "test/ai-issue-triage.test.js" },
+      ],
+      prReviewWorkflow: [
+        "on:",
+        "  discussion_comment:",
+        "jobs:",
+        "  discussion-review:",
+        "    permissions:",
+        "      discussions: write",
+      ].join("\n"),
+      planningWorkflow: [
+        "outputs:",
+        "  planning_status:",
+        "  blocking_roles:",
+        "  blocked_by_dependencies:",
+        ">> \"$GITHUB_STEP_SUMMARY\"",
+      ].join("\n"),
+      prReviewScript: [
+        "resolvePullRequestContext();",
+        "buildDiscussionHistoryContext();",
+        "replyToId: latestFinalComment?.id ?? null,",
+      ].join("\n"),
+      planningScript: [
+        "\"Blocked\"",
+        "writeGitHubOutput(\"planning_status\", value);",
+        "writeGitHubOutput(\"blocked_by_dependencies\", value);",
+      ].join("\n"),
+      triageScript: [
+        "executionReadiness",
+        "needsDiscussion",
+      ].join("\n"),
+      prReviewTests: [
+        "keeps Blocked planning-only by rejecting it in PR review recommendations",
+        "pins the discussion-comment entrypoint and discussion-review write permissions in the workflow",
+      ].join("\n"),
+      planningTests: "pins planning workflow outputs in the operator summary",
+      triageTests: [
+        "still allows medium-impact issues to route directly when execution is already clear",
+        "still sends low-impact but ambiguous issues into discussion before PR",
+      ].join("\n"),
+    });
+
+    expect(evidence).toContain("## Automation contract evidence");
+    expect(evidence).toContain("discussion-review");
+    expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
+    expect(evidence).toContain("Blocked");
+    expect(evidence).toContain("medio -> direct_pr");
   });
 });

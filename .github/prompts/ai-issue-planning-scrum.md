@@ -13,3 +13,8 @@ Use `Request changes` when:
 - issues are too fuzzy, too broad, or not testable
 - dependencies or evidence expectations are missing
 - the epic is not implementation-ready as a working Scrum artifact
+
+Use `Blocked` when:
+- sequencing is already explicit
+- the artifact is otherwise implementation-ready
+- but the next executable slice is waiting on explicit upstream work rather than missing planning

@@ -21,6 +21,7 @@ import {
   isAutomationDiscussionCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
+  resolvePlanningConcurrencyTarget,
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
@@ -102,9 +103,10 @@ describe("ai issue planning review", () => {
       author: { login: "dev865077" },
       body: "<!-- ai-issue-planning-final:openai --> citado por humano",
     })).toBe(false);
-    expect(history).not.toContain("Final recommendation");
-    expect(history).not.toContain("Request changes");
-    expect(history).toContain("stop conditions");
+    expect(history).not.toContain("## Product and scope review");
+    expect(history).toContain("Latest planning conclusion thread");
+    expect(history).toContain("Final recommendation: `Request changes`");
+    expect(history).not.toContain("stop conditions");
     expect(history).toContain("citando o marcador");
     expect(history).toContain("PR docs-only");
   });
@@ -157,6 +159,14 @@ describe("ai issue planning review", () => {
     });
   });
 
+  it("builds stable planning concurrency targets across event kinds", () => {
+    expect(resolvePlanningConcurrencyTarget({ inputs: { discussion_number: "97" } })).toBe("manual-discussion-97");
+    expect(resolvePlanningConcurrencyTarget({ inputs: { issue_number: "91" } })).toBe("manual-issue-91");
+    expect(resolvePlanningConcurrencyTarget({ issue: { number: 44 } })).toBe("issue-44");
+    expect(resolvePlanningConcurrencyTarget({ discussion: { number: 12 } })).toBe("discussion-12");
+    expect(resolvePlanningConcurrencyTarget({})).toBeNull();
+  });
+
   it("parses referenced child issues from the root issue body", () => {
     const issueNumbers = parseReferencedIssueNumbers(
       [
@@ -201,6 +211,12 @@ describe("ai issue planning review", () => {
     });
     const blocked = evaluateIssuePlanningRecommendation({
       product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nDependency exists.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady once parent lands.\n\n## Recommendation\nBlocked",
+      scrum: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
+      risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
+    });
+    const requestChanges = evaluateIssuePlanningRecommendation({
+      product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
       technical: "## Perspective\nNeeds split.\n\n## Findings\n- Too broad.\n\n## Questions\n- None.\n\n## Backlog posture\nNot ready.\n\n## Recommendation\nRequest changes",
       scrum: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
       risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
@@ -208,8 +224,11 @@ describe("ai issue planning review", () => {
 
     expect(unanimous.recommendation).toBe("Approve");
     expect(unanimous.blockingRoles).toEqual([]);
-    expect(blocked.recommendation).toBe("Request changes");
+    expect(blocked.recommendation).toBe("Blocked");
     expect(blocked.blockingRoles).toEqual(["technical"]);
+    expect(blocked.blockedRoles).toEqual(["technical"]);
+    expect(requestChanges.recommendation).toBe("Request changes");
+    expect(requestChanges.changeRequestRoles).toEqual(["technical"]);
   });
 
   it("builds append-only discussion comments and final status", () => {
@@ -219,13 +238,19 @@ describe("ai issue planning review", () => {
       scrum: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
       risk: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady.\n\n## Recommendation\nApprove",
     });
+    const blockedCompletion = buildIssuePlanningCompletionComment("Blocked", ["scrum"]);
     const completion = buildIssuePlanningCompletionComment("Request changes", ["scrum", "risk"]);
+    const followUpApproved = buildIssuePlanningCompletionComment("Approve", [], { isFollowUpRound: true });
 
     expect(comments).toHaveLength(4);
     expect(comments[2].body).toContain("<!-- ai-issue-planning-role:scrum -->");
+    expect(blockedCompletion).toContain("well specified, but execution is still blocked");
+    expect(blockedCompletion).toContain("`Blocked`");
     expect(completion).toContain("Execution readiness requires unanimous `Approve`");
     expect(completion).toContain("`scrum`");
     expect(completion).toContain("`risk`");
+    expect(followUpApproved).toContain("Why this passed now");
+    expect(followUpApproved).toContain("resolved the previous planning blockers");
   });
 
   it("builds prompt context with child issues and discussion history", () => {
@@ -258,9 +283,13 @@ describe("ai issue planning review", () => {
         comments: {
           nodes: [
             {
+              id: "planning-final-1",
               author: { login: "github-actions" },
               createdAt: "2026-04-19T00:00:01Z",
-              body: "Comentario principal.",
+              body: [
+                "<!-- ai-issue-planning-final:openai -->",
+                "Final recommendation: `Request changes`",
+              ].join("\n"),
               replies: {
                 nodes: [
                   {
@@ -280,5 +309,8 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("#90 - validar production");
     expect(prompt).toContain("Comentario de issue.");
     expect(prompt).toContain("Resposta operacional.");
+    expect(prompt).toContain("Latest planning conclusion thread");
+    expect(prompt).toContain("Final recommendation: `Request changes`");
   });
+
 });

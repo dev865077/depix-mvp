@@ -400,6 +400,17 @@ async function fetchPullRequestFiles(repoFullName, pullRequestNumber) {
 }
 
 /**
+ * Fetch one pull request by number.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} pullRequestNumber PR number.
+ * @returns {Promise<any>} Pull request payload.
+ */
+async function fetchPullRequest(repoFullName, pullRequestNumber) {
+  return githubRequest(`https://api.github.com/repos/${repoFullName}/pulls/${pullRequestNumber}`);
+}
+
+/**
  * Fetch PR comments. Pull request comments are issue comments under the hood.
  *
  * @param {string} repoFullName Repository in owner/name form.
@@ -464,7 +475,7 @@ async function fetchRepositoryDiscussionMetadata(owner, name) {
  * Fetch recent comments from an existing GitHub Discussion.
  *
  * @param {string} discussionId GitHub GraphQL node id.
- * @returns {Promise<Array<{ author?: { login?: string }, publishedAt?: string, body?: string }>>} Recent comments.
+ * @returns {Promise<any[]>} Recent comments with one reply level.
  */
 async function fetchDiscussionComments(discussionId) {
   const query = `
@@ -473,11 +484,22 @@ async function fetchDiscussionComments(discussionId) {
         ... on Discussion {
           comments(last: $limit) {
             nodes {
+              id
               publishedAt
               author {
                 login
               }
               body
+              replies(last: 20) {
+                nodes {
+                  id
+                  createdAt
+                  author {
+                    login
+                  }
+                  body
+                }
+              }
             }
           }
         }
@@ -619,7 +641,10 @@ function findExistingDiscussionTarget(pullRequestNumber, comments, discussions) 
       return { id: matchingDiscussion.id, url: matchingDiscussion.url };
     }
 
-    return { url: commentDiscussionUrl };
+    return {
+      number: parseDiscussionNumberFromUrl(commentDiscussionUrl),
+      url: commentDiscussionUrl,
+    };
   }
 
   const issueMarker = `[PR #${pullRequestNumber}]`;
@@ -627,6 +652,260 @@ function findExistingDiscussionTarget(pullRequestNumber, comments, discussions) 
     typeof discussion.title === "string" && discussion.title.includes(issueMarker));
 
   return matchingDiscussion ? { id: matchingDiscussion.id, url: matchingDiscussion.url } : null;
+}
+
+/**
+ * Extract a numeric GitHub Discussion number from a repository discussion URL.
+ *
+ * @param {string} url GitHub Discussion URL.
+ * @returns {number | null} Parsed discussion number when present.
+ */
+function parseDiscussionNumberFromUrl(url) {
+  if (typeof url !== "string" || url.length === 0) {
+    return null;
+  }
+
+  const match = url.match(/\/discussions\/(\d+)(?:$|[?#/])/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseInt(match[1], 10);
+
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * Fetch one repository discussion by number so reruns can recover the canonical
+ * Discussion even when it fell outside the recent lookback window.
+ *
+ * @param {string} owner Repository owner.
+ * @param {string} name Repository name.
+ * @param {number} discussionNumber Discussion number.
+ * @returns {Promise<any | null>} Discussion metadata or null.
+ */
+async function fetchDiscussionByNumber(owner, name, discussionNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!, $limit: Int!) {
+      repository(owner: $owner, name: $name) {
+        discussion(number: $number) {
+          id
+          number
+          title
+          body
+          url
+          closed
+          comments(last: $limit) {
+            nodes {
+              id
+              publishedAt
+              author {
+                login
+              }
+              body
+              replies(last: 20) {
+                nodes {
+                  id
+                  createdAt
+                  author {
+                    login
+                  }
+                  body
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, {
+    owner,
+    name,
+    number: discussionNumber,
+    limit: MAX_DISCUSSION_CONTEXT_COMMENTS,
+  });
+
+  return data?.repository?.discussion ?? null;
+}
+
+/**
+ * Detect one automation-authored PR Discussion comment body so reruns do not
+ * feed stale bot findings back into the next model round.
+ *
+ * @param {string} body Discussion comment body.
+ * @returns {boolean} True when the body belongs to this automation.
+ */
+function isAutomatedDiscussionCommentBody(body) {
+  if (typeof body !== "string") {
+    return false;
+  }
+
+  const trimmedBody = body.trimStart();
+
+  return trimmedBody.startsWith(DISCUSSION_COMMENT_MARKER)
+    || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+/**
+ * Decide whether one Discussion comment should be treated as automation noise.
+ *
+ * Human replies that quote automation markers are still useful operational
+ * context, so filtering only applies to actual bot-authored comments.
+ *
+ * @param {{ author?: { login?: string }, body?: string }} comment Discussion comment.
+ * @returns {boolean} True when this comment came from the automation itself.
+ */
+function isAutomatedDiscussionComment(comment) {
+  const authorLogin = comment?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedDiscussionCommentBody(comment?.body);
+}
+
+/**
+ * Detect one automation-authored Discussion event so reply-triggered reruns do
+ * not recurse on comments published by this workflow.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {boolean} True when the current event comment belongs to the bot.
+ */
+function isAutomationDiscussionCommentEvent(event) {
+  const authorLogin = event?.comment?.user?.login ?? event?.comment?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedDiscussionCommentBody(event?.comment?.body);
+}
+
+/**
+ * Detect one automation-authored reply in the conclusion thread.
+ *
+ * @param {any} reply Discussion reply payload.
+ * @returns {boolean} True when the reply came from the automation.
+ */
+function isAutomatedDiscussionReply(reply) {
+  const authorLogin = reply?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedDiscussionCommentBody(reply?.body);
+}
+
+/**
+ * Detect one top-level automated final-status comment.
+ *
+ * @param {any} comment Discussion comment payload.
+ * @returns {boolean} True when the comment is the canonical conclusion root.
+ */
+function isAutomatedFinalDiscussionComment(comment) {
+  const authorLogin = comment?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && typeof comment?.body === "string"
+    && comment.body.trimStart().startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+/**
+ * Find the newest automated final-status root comment in one Discussion.
+ *
+ * @param {any[]} comments Discussion comments.
+ * @returns {any | null} Latest automated final comment.
+ */
+function findLatestAutomatedFinalComment(comments) {
+  if (!Array.isArray(comments) || comments.length === 0) {
+    return null;
+  }
+
+  return [...comments].reverse().find((comment) => isAutomatedFinalDiscussionComment(comment)) ?? null;
+}
+
+/**
+ * Extract a pull request number from one Discussion title/body string.
+ *
+ * @param {string} value Discussion title or body.
+ * @returns {number | null} PR number when found.
+ */
+function extractPullRequestNumberFromText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const match = value.match(/(?:\[PR\s*#|Pull request origem:\s*#|Pull request origin:\s*#)\s*(\d+)/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const number = Number.parseInt(match[1], 10);
+
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+/**
+ * Extract the linked pull request number from one Discussion payload.
+ *
+ * @param {{ title?: string, body?: string }} discussion Discussion payload.
+ * @returns {number | null} Linked PR number when present.
+ */
+function extractPullRequestNumberFromDiscussion(discussion) {
+  return extractPullRequestNumberFromText(discussion?.title)
+    ?? extractPullRequestNumberFromText(discussion?.body);
+}
+
+/**
+ * Build a bounded view of the latest conclusion thread.
+ *
+ * The previous automated conclusion plus the human replies below it are the
+ * social contract for the next round. That thread tells the model what changed
+ * since the last `Request changes` without feeding stale specialist memos back
+ * in as if they were current facts.
+ *
+ * @param {any} finalComment Latest automated final-status root comment.
+ * @returns {string} Bounded conclusion-thread context.
+ */
+function buildLatestConclusionThreadContext(finalComment) {
+  if (!finalComment) {
+    return "";
+  }
+
+  const automatedEntries = [
+    {
+      body: finalComment.body,
+      createdAt: finalComment.publishedAt ?? finalComment.createdAt ?? "unknown time",
+    },
+    ...(finalComment.replies?.nodes ?? [])
+      .filter((reply) => isAutomatedDiscussionReply(reply))
+      .map((reply) => ({
+        body: reply.body,
+        createdAt: reply.createdAt ?? "unknown time",
+      })),
+  ];
+  const latestAutomatedEntry = automatedEntries.at(-1);
+  const humanReplies = (finalComment.replies?.nodes ?? [])
+    .filter((reply) => !isAutomatedDiscussionReply(reply))
+    .filter((reply) => typeof reply?.body === "string" && reply.body.trim().length > 0)
+    .map((reply) => [
+      `#### reply by ${reply.author?.login ?? "unknown"} @ ${reply.createdAt ?? "unknown time"}`,
+      truncateText(sanitizePublishedMarkdown(reply.body), MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+    ].join("\n"));
+
+  if (!latestAutomatedEntry && humanReplies.length === 0) {
+    return "";
+  }
+
+  return [
+    "## Latest conclusion thread",
+    "Treat this thread as the current round handoff. Human replies here are the author's response to the previous conclusion.",
+    "",
+    ...(latestAutomatedEntry
+      ? [
+        `### Previous automated conclusion @ ${latestAutomatedEntry.createdAt}`,
+        truncateText(sanitizePublishedMarkdown(latestAutomatedEntry.body), MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+        "",
+      ]
+      : []),
+    ...humanReplies,
+  ].join("\n");
 }
 
 /**
@@ -645,8 +924,10 @@ export function buildDiscussionHistoryContext(comments) {
     return "";
   }
 
+  const latestFinalComment = findLatestAutomatedFinalComment(comments);
   const sections = comments
     .filter((comment) => typeof comment?.body === "string" && comment.body.trim().length > 0)
+    .filter((comment) => !isAutomatedDiscussionComment(comment))
     .map((comment) => {
       const author = comment.author?.login ?? "unknown";
       const publishedAt = comment.publishedAt ?? "unknown time";
@@ -657,8 +938,12 @@ export function buildDiscussionHistoryContext(comments) {
         body,
       ].join("\n");
     });
+  const conclusionThreadContext = buildLatestConclusionThreadContext(latestFinalComment);
 
-  return truncateText(sections.join("\n\n"), MAX_DISCUSSION_CONTEXT_CHARS);
+  return truncateText(
+    [...sections, ...(conclusionThreadContext ? [conclusionThreadContext] : [])].join("\n\n"),
+    MAX_DISCUSSION_CONTEXT_CHARS,
+  );
 }
 
 /**
@@ -681,6 +966,19 @@ async function resolveExistingDiscussionContext(repository, pullRequestNumber) {
   );
 
   if (!existingDiscussion?.id) {
+    if (existingDiscussion?.number) {
+      const recoveredDiscussion = await fetchDiscussionByNumber(owner, name, existingDiscussion.number);
+
+      if (recoveredDiscussion?.id) {
+        const discussionComments = await fetchDiscussionComments(recoveredDiscussion.id);
+
+        return {
+          discussionUrl: recoveredDiscussion.url,
+          context: buildDiscussionHistoryContext(discussionComments),
+        };
+      }
+    }
+
     return {
       discussionUrl: existingDiscussion?.url ?? null,
       context: "",
@@ -693,6 +991,69 @@ async function resolveExistingDiscussionContext(repository, pullRequestNumber) {
     discussionUrl: existingDiscussion.url,
     context: buildDiscussionHistoryContext(discussionComments),
   };
+}
+
+/**
+ * Resolve the pull request context for either pull_request or Discussion-side
+ * reruns.
+ *
+ * Reply-driven reruns are anchored in the existing PR Discussion. The workflow
+ * therefore supports both native pull_request events and human comments in the
+ * linked Discussion thread.
+ *
+ * @param {string} repository Repository in owner/name form.
+ * @param {any} event Raw GitHub event payload.
+ * @returns {Promise<{ pullRequest: any, discussion: any | null } | null>} PR context or null when skipped.
+ */
+async function resolvePullRequestContext(repository, event) {
+  if (event.pull_request) {
+    return {
+      pullRequest: event.pull_request,
+      discussion: null,
+    };
+  }
+
+  if (event.comment && event.discussion && isAutomationDiscussionCommentEvent(event)) {
+    logOperationalEvent("ai_pr_review.skip", {
+      reason: "bot_discussion_comment",
+      discussionNumber: event.discussion.number,
+    });
+    return null;
+  }
+
+  if (!event.discussion?.number) {
+    throw new Error("Unsupported GitHub event for AI PR review.");
+  }
+
+  const [owner, name] = repository.split("/");
+  const discussion = await fetchDiscussionByNumber(owner, name, event.discussion.number);
+
+  if (!discussion) {
+    throw new Error(`Discussion #${event.discussion.number} could not be reloaded.`);
+  }
+
+  const pullRequestNumber = extractPullRequestNumberFromDiscussion(discussion);
+
+  if (!pullRequestNumber) {
+    logOperationalEvent("ai_pr_review.skip", {
+      reason: "discussion_not_linked_to_pull_request",
+      discussionNumber: discussion.number,
+    });
+    return null;
+  }
+
+  const pullRequest = await fetchPullRequest(repository, pullRequestNumber);
+
+  if (pullRequest.state !== "open") {
+    logOperationalEvent("ai_pr_review.skip", {
+      reason: "pull_request_not_open",
+      pullRequestNumber,
+      discussionNumber: discussion.number,
+    });
+    return null;
+  }
+
+  return { pullRequest, discussion };
 }
 
 /**
@@ -731,50 +1092,19 @@ async function createDiscussion(repositoryId, categoryId, title, body) {
 }
 
 /**
- * Update an existing GitHub Discussion body/title.
- *
- * @param {string} discussionId Discussion node id.
- * @param {string} title Discussion title.
- * @param {string} body Discussion body.
- * @returns {Promise<{ id: string, url: string }>} Updated discussion metadata.
- */
-async function updateDiscussion(discussionId, title, body) {
-  const mutation = `
-    mutation($discussionId: ID!, $title: String!, $body: String!) {
-      updateDiscussion(input: {
-        discussionId: $discussionId,
-        title: $title,
-        body: $body
-      }) {
-        discussion {
-          id
-          url
-        }
-      }
-    }
-  `;
-  const data = await githubGraphqlRequest(mutation, { discussionId, title, body });
-  const discussion = data?.updateDiscussion?.discussion;
-
-  if (!discussion?.url) {
-    throw new Error("GitHub GraphQL response did not include the updated discussion URL.");
-  }
-
-  return discussion;
-}
-
-/**
- * Add one top-level comment to a GitHub Discussion.
+ * Add one GitHub Discussion comment or one reply to an existing comment.
  *
  * @param {string} discussionId Discussion node id.
  * @param {string} body Markdown comment body.
+ * @param {string | null} [replyToId] Existing Discussion comment id when publishing a reply.
  * @returns {Promise<{ id: string, url: string }>} Created comment metadata.
  */
-async function addDiscussionComment(discussionId, body) {
+async function addDiscussionComment(discussionId, body, replyToId = null) {
   const mutation = `
-    mutation($discussionId: ID!, $body: String!) {
+    mutation($discussionId: ID!, $body: String!, $replyToId: ID) {
       addDiscussionComment(input: {
         discussionId: $discussionId,
+        replyToId: $replyToId,
         body: $body
       }) {
         comment {
@@ -784,7 +1114,7 @@ async function addDiscussionComment(discussionId, body) {
       }
     }
   `;
-  const data = await githubGraphqlRequest(mutation, { discussionId, body });
+  const data = await githubGraphqlRequest(mutation, { discussionId, body, replyToId });
   const comment = data?.addDiscussionComment?.comment;
 
   if (!comment?.url) {
@@ -795,6 +1125,47 @@ async function addDiscussionComment(discussionId, body) {
 }
 
 /**
+ * Close or reopen one Discussion so the GitHub UI reflects the current state.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @param {"Approve" | "Request changes"} recommendation Final recommendation.
+ * @returns {Promise<"closed" | "open">} Persisted lifecycle state.
+ */
+async function syncDiscussionLifecycle(discussionId, recommendation) {
+  if (recommendation === "Approve") {
+    const mutation = `
+      mutation($discussionId: ID!) {
+        closeDiscussion(input: {
+          discussionId: $discussionId
+        }) {
+          discussion {
+            id
+            closed
+          }
+        }
+      }
+    `;
+    await githubGraphqlRequest(mutation, { discussionId });
+    return "closed";
+  }
+
+  const mutation = `
+    mutation($discussionId: ID!) {
+      reopenDiscussion(input: {
+        discussionId: $discussionId
+      }) {
+        discussion {
+          id
+          closed
+        }
+      }
+    }
+  `;
+  await githubGraphqlRequest(mutation, { discussionId });
+  return "open";
+}
+
+/**
  * Classify one changed file into a repository-specific review category.
  *
  * @param {string} filename GitHub file path.
@@ -802,6 +1173,10 @@ async function addDiscussionComment(discussionId, body) {
  */
 function classifyReviewFile(filename) {
   const normalizedPath = normalizeRepositoryPath(filename);
+
+  if (normalizedPath.startsWith(".github/prompts/")) {
+    return "prompt";
+  }
 
   if (
     normalizedPath === "readme.md" ||
@@ -822,10 +1197,6 @@ function classifyReviewFile(filename) {
 
   if (normalizedPath.startsWith(".github/workflows/")) {
     return "workflow";
-  }
-
-  if (normalizedPath.startsWith(".github/prompts/")) {
-    return "prompt";
   }
 
   if (
@@ -1211,6 +1582,194 @@ function buildFilesReviewPayload(files) {
 }
 
 /**
+ * Check whether the current PR touches one repository path.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @param {string} filename Repository-relative file path.
+ * @returns {boolean} True when the path is part of the current PR.
+ */
+function hasChangedFile(files, filename) {
+  const normalizedTarget = normalizeRepositoryPath(filename);
+
+  return files.some((file) => normalizeRepositoryPath(file?.filename) === normalizedTarget);
+}
+
+/**
+ * Build a concise evidence block for automation-contract PRs.
+ *
+ * Broad automation PRs can leave the model staring at a large diff without the
+ * one or two facts that prove the contract is wired end to end. This summary
+ * reads the current checked-out repository state and surfaces the exact
+ * workflow/script/test facts reviewers keep asking for.
+ *
+ * @param {{
+ *   files: any[],
+ *   prReviewWorkflow?: string,
+ *   planningWorkflow?: string,
+ *   prReviewScript?: string,
+ *   planningScript?: string,
+ *   triageScript?: string,
+ *   prReviewTests?: string,
+ *   planningTests?: string,
+ *   triageTests?: string,
+ * }} inputs Current repository evidence inputs.
+ * @returns {string} Markdown summary, or an empty string when nothing relevant changed.
+ */
+export function buildAutomationEvidenceContext(inputs) {
+  const {
+    files,
+    prReviewWorkflow = "",
+    planningWorkflow = "",
+    prReviewScript = "",
+    planningScript = "",
+    triageScript = "",
+    prReviewTests = "",
+    planningTests = "",
+    triageTests = "",
+  } = inputs;
+  const bullets = [];
+
+  if (
+    hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
+    && prReviewWorkflow.includes("discussion_comment:")
+    && prReviewWorkflow.includes("discussion-review:")
+    && prReviewWorkflow.includes("discussions: write")
+  ) {
+    bullets.push(
+      "- Current PR review workflow state: `pull_request` and `discussion_comment` both route into the same workflow, and the `discussion-review` job requests `discussions: write` for Discussion publication.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-pr-review.mjs")
+    && prReviewScript.includes("resolvePullRequestContext")
+    && prReviewScript.includes("replyToId")
+    && prReviewScript.includes("buildDiscussionHistoryContext")
+  ) {
+    bullets.push(
+      "- Current PR review runtime state: discussion-side reruns resolve the linked PR, read the latest conclusion thread as handoff, and publish follow-up final status as a Discussion reply.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, ".github/workflows/ai-issue-planning-review.yml")
+    && planningWorkflow.includes("planning_status")
+    && planningWorkflow.includes("blocking_roles")
+    && planningWorkflow.includes("blocked_by_dependencies")
+    && planningWorkflow.includes("$GITHUB_STEP_SUMMARY")
+  ) {
+    bullets.push(
+      "- Current planning workflow state: `planning_status`, `blocking_roles`, and `blocked_by_dependencies` are exposed as step outputs and mirrored into `$GITHUB_STEP_SUMMARY` for visible operator consumption.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-issue-planning-review.mjs")
+    && planningScript.includes("\"Blocked\"")
+    && planningScript.includes("writeGitHubOutput(\"planning_status\"")
+    && planningScript.includes("blocked_by_dependencies")
+  ) {
+    bullets.push(
+      "- Current planning runtime state: `Blocked` is a first-class planning outcome, exported through workflow outputs, and kept separate from the binary PR-review gate.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-issue-triage.mjs")
+    && triageScript.includes("executionReadiness")
+    && triageScript.includes("needsDiscussion")
+  ) {
+    bullets.push(
+      "- Current issue triage state: routing now validates `executionReadiness` and `needsDiscussion`, so `impact` is descriptive and no longer the only route decision input.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-pr-review.test.js")
+    && prReviewTests.includes("keeps Blocked planning-only by rejecting it in PR review recommendations")
+    && prReviewTests.includes("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow")
+  ) {
+    bullets.push(
+      "- Current PR review regression tests: `test/ai-pr-review.test.js` explicitly pins the `discussion_comment` entrypoint, the `discussion-review` write permission, and the guard that rejects `Blocked` inside PR review recommendations.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-issue-planning-review.test.js")
+    && planningTests.includes("pins planning workflow outputs in the operator summary")
+  ) {
+    bullets.push(
+      "- Current planning regression tests: `test/ai-issue-planning-review.test.js` pins the workflow summary outputs so the new planning state contract stays visible and consumed.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-issue-triage.test.js")
+    && triageTests.includes("still allows medium-impact issues to route directly when execution is already clear")
+    && triageTests.includes("still sends low-impact but ambiguous issues into discussion before PR")
+  ) {
+    bullets.push(
+      "- Current triage regression tests: `test/ai-issue-triage.test.js` explicitly covers `medio -> direct_pr` and `baixo -> discussion_before_pr` so the relaxed route policy stays intentional.",
+    );
+  }
+
+  if (bullets.length === 0) {
+    return "";
+  }
+
+  return truncateText([
+    "## Automation contract evidence",
+    "Use these repository-state facts when deciding whether older automation blockers are still true.",
+    "",
+    ...bullets,
+  ].join("\n"), 6000);
+}
+
+/**
+ * Read the current checked-out repository files that prove automation state.
+ *
+ * The PR review runs inside a checkout of the head commit, so it can inspect
+ * the exact workflow/script/test content that GitHub's changed-files API may
+ * truncate or omit from the diff patch.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @returns {Promise<string>} Markdown evidence block for the review payload.
+ */
+async function loadAutomationEvidenceContext(files) {
+  const wantedFiles = [
+    ".github/workflows/ai-pr-review.yml",
+    ".github/workflows/ai-issue-planning-review.yml",
+    "scripts/ai-pr-review.mjs",
+    "scripts/ai-issue-planning-review.mjs",
+    "scripts/ai-issue-triage.mjs",
+    "test/ai-pr-review.test.js",
+    "test/ai-issue-planning-review.test.js",
+    "test/ai-issue-triage.test.js",
+  ].filter((filename) => hasChangedFile(files, filename));
+  const uniqueFiles = [...new Set(wantedFiles)];
+  const fileEntries = await Promise.all(uniqueFiles.map(async (filename) => {
+    try {
+      return [filename, await fs.readFile(filename, "utf8")];
+    } catch {
+      return [filename, ""];
+    }
+  }));
+  const fileMap = Object.fromEntries(fileEntries);
+
+  return buildAutomationEvidenceContext({
+    files,
+    prReviewWorkflow: fileMap[".github/workflows/ai-pr-review.yml"],
+    planningWorkflow: fileMap[".github/workflows/ai-issue-planning-review.yml"],
+    prReviewScript: fileMap["scripts/ai-pr-review.mjs"],
+    planningScript: fileMap["scripts/ai-issue-planning-review.mjs"],
+    triageScript: fileMap["scripts/ai-issue-triage.mjs"],
+    prReviewTests: fileMap["test/ai-pr-review.test.js"],
+    planningTests: fileMap["test/ai-issue-planning-review.test.js"],
+    triageTests: fileMap["test/ai-issue-triage.test.js"],
+  });
+}
+
+/**
  * Build the shared user payload that every reviewer role receives.
  *
  * @param {string} repository Repository in owner/name form.
@@ -1218,9 +1777,17 @@ function buildFilesReviewPayload(files) {
  * @param {any[]} files Changed files from GitHub.
  * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
  * @param {string} [discussionContext] Prior Discussion context for append-only reruns.
+ * @param {string} [automationEvidence] Current repository-state evidence for automation contract changes.
  * @returns {string} Final user payload.
  */
-export function buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext = "") {
+export function buildPullRequestUserPrompt(
+  repository,
+  pullRequest,
+  files,
+  gate,
+  discussionContext = "",
+  automationEvidence = "",
+) {
   const boundedDiscussionContext = discussionContext.trim()
     ? [
       "## Existing Discussion context",
@@ -1249,6 +1816,7 @@ export function buildPullRequestUserPrompt(repository, pullRequest, files, gate,
     "## PR description",
     truncateText(pullRequest.body ?? "", MAX_PR_BODY_CHARS) || "[no description provided]",
     "",
+    ...(automationEvidence.trim() ? [automationEvidence.trim(), ""] : []),
     ...boundedDiscussionContext,
     "## Changed files digest",
     buildChangedFilesDigest(files) || "[no changed files reported]",
@@ -1747,16 +2315,24 @@ export function buildDiscussionReviewComments(debate) {
  * Build the final visible lifecycle comment for the Discussion.
  *
  * @param {string} recommendation Parsed final recommendation.
+ * @param {string[]} [blockingRoles] Specialist reviewer roles still blocking.
+ * @param {{ isFollowUpRound?: boolean }} [options] Rendering options.
  * @returns {string} Final Discussion status comment.
  */
-export function buildDiscussionCompletionComment(recommendation, blockingRoles = []) {
+export function buildDiscussionCompletionComment(recommendation, blockingRoles = [], options = {}) {
   const isApproved = recommendation === "Approve";
+  const isFollowUpRound = options.isFollowUpRound === true;
   const statusLine = isApproved
     ? "Discussion concluded: all specialist reviewer roles returned `Approve`."
     : "Discussion concluded: unanimous approval was not reached across the specialist reviewer roles.";
   const closeLine = isApproved
     ? "This append-only comment is the visible closure marker for the automated review."
     : "The Discussion remains open because at least one specialist reviewer role still requests changes.";
+  const roundLine = isFollowUpRound
+    ? isApproved
+      ? "Why this passed now: the current diff plus the author's replies in this conclusion thread resolved the prior blockers for product, technical, and risk."
+      : "Round feedback: after reviewing the current diff plus the author's replies in this conclusion thread, blocking findings still remain."
+    : null;
   const canonicalLine =
     "Because this workflow is append-only, this newest final-status comment supersedes earlier automated final-status comments in this Discussion.";
   const blockerLine = !isApproved && blockingRoles.length > 0
@@ -1771,6 +2347,7 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
     "",
     statusLine,
     closeLine,
+    ...(roundLine ? [roundLine] : []),
     ...(blockerLine ? [blockerLine] : []),
     policyLine,
     canonicalLine,
@@ -2019,10 +2596,21 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
       discussion = createdDiscussion;
     }
 
+    if (discussion?.number && !discussion.id) {
+      const recoveredDiscussion = await fetchDiscussionByNumber(owner, name, discussion.number);
+
+      if (recoveredDiscussion?.id) {
+        discussion = recoveredDiscussion;
+      }
+    }
+
     if (!discussion.id) {
       return { url: discussion.url, failure: null };
     }
-
+    const existingThreadComments = Array.isArray(discussion.comments?.nodes)
+      ? discussion.comments.nodes
+      : await fetchDiscussionComments(discussion.id);
+    const latestFinalComment = findLatestAutomatedFinalComment(existingThreadComments);
     const discussionComments = buildDiscussionReviewComments(debate);
 
     for (const comment of discussionComments) {
@@ -2035,13 +2623,23 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const evaluation = evaluateDiscussionRecommendation(debate);
-    const finalCommentBody = buildDiscussionCompletionComment(evaluation.recommendation, evaluation.blockingRoles);
-    await addDiscussionComment(discussion.id, finalCommentBody);
+    const finalCommentBody = buildDiscussionCompletionComment(
+      evaluation.recommendation,
+      evaluation.blockingRoles,
+      { isFollowUpRound: Boolean(latestFinalComment) },
+    );
+    await addDiscussionComment(
+      discussion.id,
+      finalCommentBody,
+      latestFinalComment?.id ?? null,
+    );
+    const lifecycleState = await syncDiscussionLifecycle(discussion.id, evaluation.recommendation);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
-      action: "created",
+      action: latestFinalComment ? "replied" : "created",
       recommendation: evaluation.recommendation,
       blockingRoles: evaluation.blockingRoles,
+      lifecycleState,
       discussionUrl: discussion.url,
     });
 
@@ -2072,14 +2670,23 @@ async function main() {
   const synthesisPromptPath = process.env.AI_PR_DISCUSSION_SYNTHESIS_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-synthesis.md";
   const preferredDiscussionCategory = process.env.AI_PR_DISCUSSION_CATEGORY?.trim() || DISCUSSION_CATEGORY_DEFAULT;
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
-  const pullRequest = event.pull_request;
+  const resolvedContext = await resolvePullRequestContext(repository, event);
 
-  if (!pullRequest) {
-    throw new Error("This workflow only supports pull_request events.");
+  if (!resolvedContext) {
+    return;
   }
+  const { pullRequest, discussion } = resolvedContext;
 
   const files = await fetchPullRequestFiles(repository, pullRequest.number);
-  const gate = assessDiscussionGate(files);
+  const baseGate = assessDiscussionGate(files);
+  const gate = discussion
+    ? {
+      ...baseGate,
+      route: DISCUSSION_ROUTE_REQUIRED,
+      requiresDiscussion: true,
+      reason: "Existing PR Discussion thread is active; continue the review in the same Discussion with the latest conclusion replies as round context.",
+    }
+    : baseGate;
 
   if (runMode === RUN_MODE_CLASSIFY) {
     await writeGitHubOutput("route", gate.route);
@@ -2102,20 +2709,33 @@ async function main() {
   let discussionUrl = null;
   let discussionPublicationFailure = null;
   let discussionContext = "";
+  const automationEvidence = await loadAutomationEvidenceContext(files);
 
   if (gate.requiresDiscussion) {
-    const existingDiscussionContext = await resolveExistingDiscussionContext(repository, pullRequest.number);
+    if (discussion?.url) {
+      discussionUrl = discussion.url;
+      discussionContext = buildDiscussionHistoryContext(discussion.comments?.nodes ?? []);
+    } else {
+      const existingDiscussionContext = await resolveExistingDiscussionContext(repository, pullRequest.number);
 
-    discussionUrl = existingDiscussionContext.discussionUrl;
-    discussionContext = existingDiscussionContext.context;
+      discussionUrl = existingDiscussionContext.discussionUrl;
+      discussionContext = existingDiscussionContext.context;
+    }
 
     logOperationalEvent("ai_pr_review.discussion_context.loaded", {
-      hasExistingDiscussion: Boolean(existingDiscussionContext.discussionUrl),
+      hasExistingDiscussion: Boolean(discussionUrl),
       contextChars: discussionContext.length,
     });
   }
 
-  const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext);
+  const userPrompt = buildPullRequestUserPrompt(
+    repository,
+    pullRequest,
+    files,
+    gate,
+    discussionContext,
+    automationEvidence,
+  );
 
   if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([

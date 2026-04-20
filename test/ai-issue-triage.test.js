@@ -17,6 +17,9 @@ describe("ai issue triage validation", () => {
     const plan = {
       impact: "baixo",
       route: "direct_pr",
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "Escopo claro e pequeno.",
       summary: "ok",
       justification: "ok",
       productView: "ok",
@@ -36,6 +39,9 @@ describe("ai issue triage validation", () => {
       impact: "baixo",
       justification: "Escopo pequeno e claro.",
       route: "direct_pr",
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "Ja da para implementar sem rodada de planning.",
       productView: "Nao muda produto.",
       technicalView: "Mudanca localizada.",
       riskView: "Baixo risco.",
@@ -47,24 +53,44 @@ describe("ai issue triage validation", () => {
     expect(plan.route).toBe("direct_pr");
   });
 
-  it("requires discussion for medium and high impact plans", () => {
-    expect(() => assertValidIssueTriagePlan({
-      summary: "Escopo cruzado.",
+  it("accepts route decisions based on full context instead of rigid impact mapping", () => {
+    const directPlan = assertValidIssueTriagePlan({
+      summary: "Escopo medio, mas bem limitado.",
       impact: "medio",
-      justification: "Afeta varios fluxos.",
+      justification: "Toca duas areas, mas o contrato ja esta definido.",
       route: "direct_pr",
-      productView: "Produto muda fluxo.",
-      technicalView: "Arquitetura toca varias areas.",
-      riskView: "Pode regressar comportamento.",
-      decision: "Precisa debate curto.",
-      nextSteps: ["discutir"],
-    })).toThrow(/must require Discussion/);
-
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "O trabalho ja esta claro e implementavel sem debate adicional.",
+      productView: "Nao muda o fluxo de produto.",
+      technicalView: "Mudanca pequena em contrato existente.",
+      riskView: "Coberta por testes diretos.",
+      decision: "Pode seguir direto para PR.",
+      nextSteps: ["abrir branch", "implementar"],
+    });
+    const discussionPlan = assertValidIssueTriagePlan({
+      summary: "Escopo ainda ambiguo.",
+      impact: "baixo",
+      justification: "Pequeno no tamanho, mas ambíguo no contrato.",
+      route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Ainda precisa uma decisao compartilhada antes de codar.",
+      productView: "Pode mudar comportamento do operador.",
+      technicalView: "Contrato ainda nao foi fechado.",
+      riskView: "Ambiguidade pode gerar retrabalho.",
+      decision: "Abrir Discussion antes da PR.",
+      discussionTitle: "Alinhar contrato antes da PR",
+      nextSteps: ["abrir discussion"],
+    });
     const plan = assertValidIssueTriagePlan({
       summary: "Escopo cruzado.",
       impact: "alto",
       justification: "Afeta processo central.",
       route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Precisa consenso entre produto, tecnica e risco antes da implementacao.",
       productView: "Mexe no fluxo de entrega.",
       technicalView: "Mexe em automacao e governanca.",
       riskView: "Pode criar burocracia errada.",
@@ -73,7 +99,50 @@ describe("ai issue triage validation", () => {
       nextSteps: ["criar discussion", "fechar decisao"],
     });
 
+    expect(directPlan.route).toBe("direct_pr");
+    expect(discussionPlan.route).toBe("discussion_before_pr");
     expect(plan.discussionTitle).toContain("gate");
+  });
+
+  it("still allows medium-impact issues to route directly when execution is already clear", () => {
+    const plan = assertValidIssueTriagePlan({
+      summary: "Ajuste medio, mas fechado.",
+      impact: "medio",
+      justification: "Escopo conhecido e pequeno.",
+      route: "direct_pr",
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "Nao falta decisao compartilhada para implementar.",
+      productView: "Sem mudanca de contrato.",
+      technicalView: "Mudanca localizada.",
+      riskView: "Coberta por teste.",
+      decision: "Pode seguir direto para PR.",
+      nextSteps: ["abrir branch"],
+    });
+
+    expect(plan.route).toBe("direct_pr");
+    expect(plan.executionReadiness).toBe("ready_now");
+  });
+
+  it("still sends low-impact but ambiguous issues into discussion before PR", () => {
+    const plan = assertValidIssueTriagePlan({
+      summary: "Pequena, mas ambigua.",
+      impact: "baixo",
+      justification: "O tamanho e pequeno, mas a decisao ainda nao foi fechada.",
+      route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Ainda precisa alinhamento de contrato antes da execucao.",
+      productView: "Pode afetar o operador.",
+      technicalView: "Contrato em aberto.",
+      riskView: "Ambiguidade aumenta retrabalho.",
+      decision: "Abrir Discussion antes da PR.",
+      discussionTitle: "Fechar contrato antes da PR",
+      nextSteps: ["abrir discussion"],
+    });
+
+    expect(plan.route).toBe("discussion_before_pr");
+    expect(plan.needsDiscussion).toBe(true);
   });
 
   it("selects category with configured preference and safe fallback", () => {
@@ -102,6 +171,9 @@ describe("ai issue triage validation", () => {
     const body = buildIssueCommentBody({
       impact: "alto",
       route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Existe dependencia de alinhamento antes da primeira PR.",
       justification: "Escopo amplo.",
       productView: "Precisa alinhar escopo.",
       technicalView: "Precisa dividir PRs.",
@@ -112,6 +184,8 @@ describe("ai issue triage validation", () => {
 
     expect(body).toContain("## Discussion");
     expect(body).toContain("## Resposta operacional requerida");
+    expect(body).toContain("Prontidao de execucao");
+    expect(body).toContain("## Racional de rota");
     expect(body).toContain("quatro papeis: produto, tecnica, scrum e risco");
     expect(body).toContain("aprovacao unanime");
     expect(body).toContain("Antes de abrir branch ou PR");
@@ -127,6 +201,9 @@ describe("ai issue triage validation", () => {
     }, {
       impact: "medio",
       route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Precisa debate curto de arquitetura e ordem de execucao.",
       productView: "Escopo precisa gate.",
       technicalView: "Fluxo toca GitHub Actions e automacao.",
       riskView: "Pode travar PRs pequenas.",

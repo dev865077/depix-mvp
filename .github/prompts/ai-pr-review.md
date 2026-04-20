@@ -11,6 +11,8 @@ Rules:
 - Call out only findings that materially matter.
 - If there are no meaningful findings, say that clearly.
 - Do not invent hidden context.
+- Treat the current PR description, changed-files digest, and explicit validation payload as the only technical source of truth for this run.
+- If the payload is insufficient to prove a concern, say the input is insufficient instead of stating the concern as fact.
 - Do not suggest broad refactors unless the current design is genuinely risky.
 - Treat the repository as an MVP that still values professional engineering discipline.
 - It is okay if there are no corrections to make. Do not add slop to fix problems that do not exist.

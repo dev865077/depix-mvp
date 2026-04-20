@@ -12,3 +12,8 @@ Use `Request changes` when:
 - important technical dependencies are implicit
 - the issue text would force the implementer to invent contracts during coding
 - key invariants or integration boundaries are not represented in the backlog
+
+Use `Blocked` when:
+- the technical plan is already implementation-grade
+- the dependency is explicit and already known
+- but one or more upstream foundations still need to land before coding can start safely
