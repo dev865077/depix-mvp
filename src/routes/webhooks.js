@@ -8,7 +8,9 @@ import { Hono } from "hono";
 
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
+import { dispatchNonBlockingTask } from "../lib/background-tasks.js";
 import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
+import { notifyTelegramOrderTransitionSafely } from "../services/telegram-payment-notifications.js";
 
 export const webhooksRouter = new Hono();
 
@@ -65,6 +67,19 @@ export async function handleEulenDepositWebhook(c) {
   if (!result.ok) {
     return jsonError(c, result.status, result.code, result.message, result.details);
   }
+
+  await dispatchNonBlockingTask(c, notifyTelegramOrderTransitionSafely({
+    env: c.env,
+    db,
+    runtimeConfig,
+    tenant,
+    requestContext: {
+      requestId: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
+    },
+    ...result.details,
+  }));
 
   return c.json(
     {

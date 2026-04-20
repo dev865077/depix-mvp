@@ -15,6 +15,7 @@ import {
 } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 import { reconcileOrderPatch } from "../src/services/eulen-deposit-webhook.js";
+import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -72,7 +73,7 @@ function createWorkerEnv() {
   };
 }
 
-async function seedDepositAggregate() {
+async function seedDepositAggregate(input = {}) {
   await resetDatabaseSchema();
 
   const db = getDatabase(env);
@@ -89,6 +90,7 @@ async function seedDepositAggregate() {
     status: "pending",
     splitAddress: "split_wallet_alpha",
     splitFee: "0.50",
+    telegramChatId: input.telegramChatId ?? "telegram_chat_alpha_001",
   });
 
   await createDeposit(db, {
@@ -150,8 +152,26 @@ describe("eulen deposit webhook", () => {
     });
   });
 
-  it("processes a valid webhook and applies payment truth", async function assertValidWebhookProcessing() {
+  it("processes a valid webhook, applies payment truth and notifies Telegram", async function assertValidWebhookProcessing() {
     await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramNotification(input, init) {
+      const url = String(input);
+
+      expect(url).toContain("https://api.telegram.org/botalpha-bot-token/sendMessage");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 501,
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
 
     const response = await requestEulenWebhook({
       authorizationHeader: "Basic alpha-eulen-secret",
@@ -173,6 +193,72 @@ describe("eulen deposit webhook", () => {
     expect(updatedDeposit?.externalStatus).toBe("depix_sent");
     expect(savedEvents).toHaveLength(1);
     expect(savedEvents[0]?.bankTxId).toBe("bank_tx_alpha_001");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({
+      chat_id: "telegram_chat_alpha_001",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("keeps webhook reconciliation successful when the Telegram notification layer throws unexpectedly", async function assertWebhookNotificationFailureIsolation() {
+    await seedDepositAggregate();
+
+    const createBotSpy = vi.fn(() => {
+      throw new Error("synthetic telegram runtime failure");
+    });
+
+    vi.spyOn(telegramRuntimeModule, "getTelegramRuntime").mockReturnValue({
+      createBot: createBotSpy,
+    });
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+    const db = getDatabase(env);
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(savedEvents).toHaveLength(1);
+    expect(createBotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps webhook reconciliation successful when Telegram returns 429", async function assertWebhookTelegram429Isolation() {
+    await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: false,
+        error_code: 429,
+        description: "Too Many Requests: retry later",
+      }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+    const db = getDatabase(env);
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an invalid webhook secret at the boundary", async function assertInvalidSecretRejection() {
@@ -190,8 +276,22 @@ describe("eulen deposit webhook", () => {
     expect(savedEvents).toHaveLength(0);
   });
 
-  it("ignores repeated delivery without duplicating persistence", async function assertWebhookIdempotency() {
+  it("ignores repeated delivery without duplicating persistence or Telegram notification", async function assertWebhookIdempotency() {
     await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 502,
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
 
     const firstResponse = await requestEulenWebhook({
       authorizationHeader: "Basic alpha-eulen-secret",
@@ -206,6 +306,7 @@ describe("eulen deposit webhook", () => {
     expect(secondResponse.status).toBe(200);
     expect(secondBody.duplicate).toBe(true);
     expect(savedEvents).toHaveLength(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("repairs aggregate state when the latest duplicate event is retried", async function assertDuplicateRepair() {

@@ -9,6 +9,7 @@ import { getDatabase } from "../src/db/client.js";
 import { listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import { createDeposit, getDepositByDepositEntryId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
+import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -90,6 +91,7 @@ async function seedDepositAggregate(input = {}) {
     status: input.status ?? "pending",
     splitAddress: "split_wallet_alpha",
     splitFee: "0.50",
+    telegramChatId: input.telegramChatId ?? `${tenantId}_telegram_chat_001`,
   });
 
   await createDeposit(db, {
@@ -107,15 +109,41 @@ async function seedDepositAggregate(input = {}) {
   return { db, tenantId, orderId, depositEntryId };
 }
 
-function mockDepositsListResponse(rows) {
-  return vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(
-    new Response(JSON.stringify(rows), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }),
-  ));
+function mockDepositsListResponse(rows, options = {}) {
+  const telegramMessageId = options.telegramMessageId ?? 701;
+
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = String(input);
+
+    if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+      return Promise.resolve(
+        new Response(JSON.stringify(rows), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }),
+      );
+    }
+
+    if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+      return Promise.resolve(
+        new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: telegramMessageId,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }),
+      );
+    }
+
+    throw new Error(`Unexpected fetch call: ${url}`);
+  });
 }
 
 async function requestDepositsFallback(options = {}) {
@@ -248,7 +276,7 @@ describe("deposits fallback route", () => {
     const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", depositEntryId);
 
     expect(response.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(String(fetchSpy.mock.calls[0][0])).toContain("/deposits?start=2026-04-18T00%3A00%3A00Z");
     expect(String(fetchSpy.mock.calls[0][0])).toContain("end=2026-04-19T00%3A00%3A00Z");
     expect(String(fetchSpy.mock.calls[0][0])).toContain("status=depix_sent");
@@ -275,6 +303,251 @@ describe("deposits fallback route", () => {
     expect(savedEvents[0]?.externalStatus).toBe("depix_sent");
     expect(savedEvents[0]?.bankTxId).toBe("bank_tx_001");
     expect(savedEvents[0]?.rawPayload).toContain("2026-04-18T00:00:00Z");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toMatchObject({
+      chat_id: "alpha_telegram_chat_001",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("keeps fallback reconciliation successful and attempts every notification even when the Telegram runtime throws", async function assertDepositsFallbackNotificationFailureIsolation() {
+    const { db } = await seedDepositAggregate();
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "alpha_telegram_user_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 45678,
+      walletAddress: "depix_wallet_alpha_002",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+      telegramChatId: "alpha_telegram_chat_002",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_alpha_002",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T05:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+          {
+            qrId: "qr_alpha_002",
+            status: "depix_sent",
+            bankTxId: "bank_tx_002",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const createBotSpy = vi.fn(() => {
+      throw new Error("synthetic telegram runtime failure");
+    });
+
+    vi.spyOn(telegramRuntimeModule, "getTelegramRuntime").mockReturnValue({
+      createBot: createBotSpy,
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const firstOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const secondOrder = await getOrderById(db, "alpha", "order_alpha_002");
+
+    expect(response.status).toBe(200);
+    expect(body.summary).toEqual({
+      remoteRows: 2,
+      processed: 2,
+      duplicate: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(firstOrder?.status).toBe("paid");
+    expect(firstOrder?.currentStep).toBe("completed");
+    expect(secondOrder?.status).toBe("paid");
+    expect(secondOrder?.currentStep).toBe("completed");
+    expect(createBotSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps later fallback notifications running when an earlier Telegram send returns 429", async function assertDepositsFallbackPerRowIsolation() {
+    const { db } = await seedDepositAggregate();
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "alpha_telegram_user_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 45678,
+      walletAddress: "depix_wallet_alpha_002",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+      telegramChatId: "alpha_telegram_chat_002",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_alpha_002",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T05:00:00Z",
+    });
+
+    let telegramAttempts = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+          {
+            qrId: "qr_alpha_002",
+            status: "depix_sent",
+            bankTxId: "bank_tx_002",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        telegramAttempts += 1;
+
+        if (telegramAttempts === 1) {
+          return Promise.resolve(new Response(JSON.stringify({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests: retry later",
+          }), {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }));
+        }
+
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 702,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const firstOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const secondOrder = await getOrderById(db, "alpha", "order_alpha_002");
+
+    expect(response.status).toBe(200);
+    expect(body.summary).toEqual({
+      remoteRows: 2,
+      processed: 2,
+      duplicate: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(firstOrder?.status).toBe("paid");
+    expect(firstOrder?.currentStep).toBe("completed");
+    expect(secondOrder?.status).toBe("paid");
+    expect(secondOrder?.currentStep).toBe("completed");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(2);
+  });
+
+  it("keeps fallback reconciliation successful when Telegram returns 429", async function assertDepositsFallbackTelegram429Isolation() {
+    const { db, depositEntryId, orderId } = await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: false,
+          error_code: 429,
+          description: "Too Many Requests: retry later",
+        }), {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", depositEntryId);
+    const updatedOrder = await getOrderById(db, "alpha", orderId);
+
+    expect(response.status).toBe(200);
+    expect(body.summary.processed).toBe(1);
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(1);
   });
 
   it("fails closed when Eulen returns more rows than the supported fallback limit", async function assertDepositsFallbackRemoteRowLimit() {
@@ -316,6 +589,7 @@ describe("deposits fallback route", () => {
       repairedAggregate: false,
     });
     expect(savedEvents).toHaveLength(1);
+    expect(globalThis.fetch.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(1);
   });
 
   it("skips remote deposits that cannot be correlated to a local qrId", async function assertUnknownRemoteDepositSkip() {
