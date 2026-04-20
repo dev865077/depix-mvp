@@ -2,6 +2,7 @@
  * Focused tests for the issue planning review workflow.
  */
 import { describe, expect, it } from "vitest";
+import issuePlanningWorkflowText from "../.github/workflows/ai-issue-planning-review.yml?raw";
 
 import {
   buildDiscussionHistoryContext,
@@ -36,6 +37,15 @@ import {
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
+  it("keeps the real issue planning workflow on the canonical entrypoints", () => {
+    expect(hasCanonicalIssuePlanningEntrypoints(issuePlanningWorkflowText)).toBe(true);
+    expect(issuePlanningWorkflowText).toContain("workflow_dispatch:");
+    expect(issuePlanningWorkflowText).toContain("discussion:");
+    expect(issuePlanningWorkflowText).toContain("discussion_comment:");
+    expect(issuePlanningWorkflowText).not.toMatch(/^\s+issues\s*:\s*$/m);
+    expect(issuePlanningWorkflowText).not.toMatch(/^\s+issue_comment\s*:\s*$/m);
+  });
+
   it("keeps issue planning entrypoints canonical to avoid duplicate Discussions", () => {
     expect(hasCanonicalIssuePlanningEntrypoints([
       "on:",
