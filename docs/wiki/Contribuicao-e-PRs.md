@@ -23,9 +23,9 @@
 - quando a triagem abrir uma Discussion, a issue entra na lane de planning review antes da implementacao
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - o planning review tem tres estados canonicos:
-- `Approve`: issue pronta para execucao
-- `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito
-- `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
+  - `Approve`: issue pronta para execucao
+  - `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito
+  - `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
 - a thread canonica de cada nova rodada e a reply humana na conclusao mais recente da Discussion
 - a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte
