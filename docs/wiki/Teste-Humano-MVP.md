@@ -194,15 +194,15 @@ Nao use como retry cego. Registre janela, `HTTP_STATUS`, linhas aplicadas, linha
 Pare, registre evidencia e abra bug pequena se ocorrer:
 
 - `GET /health` diferente de `ok`
-- secrets, split ou token operacional ausentes
-- webhook Telegram divergente do host canonico
-- migrations remotas pendentes ou D1 inacessivel
-- QR nao entregue ate 2 minutos depois da confirmacao
-- D1 sem `order` e `deposit` correlacionados apos QR
-- pagamento sem evento ou estado final ate 10 minutos
-- pedido aberto sem orientacao contextual quando o operador usa `/help`
-- payload ou logs sem `orderId` ou `depositEntryId`
+- secrets, split ou webhook com divergencia de configuracao
+- deposito criado sem `orderId`/`depositEntryId` consistente
+- webhook da Eulen retornando erro nao tratavel
+- recheck manual voltando `409` inesperado
+- o pagamento ser conciliado, mas a notificacao Telegram assíncrona falhar de forma repetida sem evolucao no status operacional
+- o pagamento ser conciliado e a mesma mensagem de confirmacao ser repetida em duplicidade
 
-## Criterios de aceite
+## Criterios de parada em production
 
-A validacao so fecha quando a issue publica evidencia suficiente para reconstruir o fluxo inteiro sem depender de contexto oral.
+Em production, o teste humano so deve ser executado quando a issue de promocao autorizar explicitamente e a evidencia de test estiver anexada.
+
+Nao repetir validacao em production se test ja mostrou falha de fluxo, split ou webhook. Corrija primeiro em test.

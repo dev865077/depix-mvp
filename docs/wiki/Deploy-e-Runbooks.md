@@ -35,9 +35,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `GET /health` responde com inventario publico redigido de tenants, sem expor mapas brutos de bindings ou nomes de bindings sensiveis
 - as fronteiras canonicas de rota ja existem
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
-- `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen
-- `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status` e reconcilia `deposits` + `orders`
-- `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list` e reconcilia linhas compactas por `qrId`
+- `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
+- `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
+- `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 
@@ -52,6 +52,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - trilha local: evento `deposit_events.source = "recheck_deposit_status"`
 - efeito esperado: hidratar `qrId` quando necessario e aplicar o status reconciliado em `deposits` e `orders`
 - persistencia critica: evento de auditoria + `deposits` + `orders` sao gravados no mesmo batch do D1 para reduzir risco de estado parcial
+- quando o agregado passar para estado de pagamento confirmado, a notificacao Telegram pode ser disparada em background; o recheck nao deve depender do envio para responder com sucesso
 
 ## Contrato operacional do recheck
 
@@ -76,6 +77,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - retry manual depois de `502 deposit_status_unavailable` e permitido
 - retry manual depois de `409 deposit_status_regression`, `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch` nao deve ser tratado como tentativa cega; primeiro e preciso entender a divergencia
 - quando o agregado local ja estiver concluido por `depix_sent`, o recheck nao aceita um `deposit-status` atrasado que volte com `pending`, `under_review` ou outro estado inferior
+- a notificacao Telegram associada ao estado final deve respeitar idempotencia por transicao visivel e nao repetir a mesma mensagem em recheck subsequente
 
 ## Webhook do Telegram
 
@@ -95,20 +97,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - a migracao adiciona `orders.telegram_chat_id` como coluna nullable e nao exige backfill destrutivo
 - pedidos novos ou retomados pelo Telegram passam a gravar o `chat.id` real da conversa
 - pedidos abertos legados com `telegram_chat_id = NULL` so ganham destino seguro quando receberem novo update Telegram do mesmo tenant, usuario e canal
-- pedidos legados que nao receberem novo update permanecem sem destino assincrono seguro; a futura notificacao pos-pagamento deve registrar skip controlado e nunca usar `user_id` como fallback
+- pedidos legados que nao receberem novo update permanecem sem destino assincrono seguro; a notificacao pos-pagamento deve registrar skip controlado e nunca usar `user_id` como fallback
 - pedidos do canal `telegram` com `telegram_chat_id` valido agora recebem notificacao assincrona apenas quando o agregado financeiro confirma pagamento (`depix_sent` / `paid` + `completed`); duplicatas de webhook, recheck e fallback nao devem repetir a mesma mensagem
 - no fallback por janela, cada linha reparada so pode disparar a mesma notificacao pos-pagamento quando aquele agregado tambem chegar em `depix_sent` / `paid` + `completed`; linhas fora desse estado nao notificam
 - se um update conversacional chegar sem `chat.id`, o Worker falha fechado com `400 telegram_order_registration_failed` e `reason=missing_telegram_chat_id`, sem criar pedido parcial
 - se um update chegar de chat diferente do persistido, o Worker nao sobrescreve `telegram_chat_id`, responde orientando usar a conversa original e registra `telegram.order.chat_divergence_detected`
 - superficie order-bearing suportada no MVP: `message`/`message:text`; callback query, mensagem editada, channel post e demais updates recebem tratamento unsupported e nao criam nem retomam pedido
-
-## Acao do operador por resposta
-
-- `200 deposit_recheck_processed`: registrar `requestId`, `tenantId`, `depositEntryId` e `eventId` e seguir com a conciliacao concluida
-- `400 telegram_order_registration_failed`: verificar se o update veio da superficie correta e se o payload possui `chat.id`
-- `401 ops_authorization_required`: reenviar com Bearer valido
-- `403 ops_authorization_invalid`: revisar token operacional informado
-- `404 deposit_not_found`: conferir `tenantId` e `depositEntryId`
-- `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch`: investigar ownership e divergencia antes de repetir
-- `502 deposit_status_unavailable` ou `502 deposit_status_invalid_response`: retry manual depois de checar a Eulen
-- `503 ops_route_disabled` ou `503 telegram_webhook_dependency_unavailable`: revisar flags e secrets do ambiente antes de novo deploy

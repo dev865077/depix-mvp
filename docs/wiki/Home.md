@@ -26,6 +26,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o webhook principal da Eulen ja existe com validacao, idempotencia base e persistencia
 - o recheck operacional de deposito ja existe via `POST /ops/:tenantId/recheck/deposit`
 - o fallback por janela via `POST /ops/:tenantId/reconcile/deposits` ja reconcilia linhas compactas da Eulen por `qrId`
+- a conciliacao de pagamento agora pode disparar notificacao assincrona no Telegram quando o estado visivel do pedido muda para confirmacao
+- a notificacao assincrona do Telegram foi desenhada para ser idempotente e nao repetir a mesma mensagem em webhook, recheck ou fallback
 - a triagem de issues com impacto medio ou alto agora pode abrir uma Discussion de planning review antes da implementacao
 - a planning review roda quatro papeis especializados e exige aprovacao unanime para tratar a issue como pronta
 - o fluxo funcional completo do bot ainda nao esta concluido

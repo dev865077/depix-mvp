@@ -12,6 +12,7 @@
 8. O usuario recebe o QR.
 9. O webhook da Eulen confirma o status.
 10. O sistema atualiza `deposit_events`, `deposits` e `orders`.
+11. Quando o pagamento e conciliado em estado visivel, o usuario recebe uma confirmacao assincrona no Telegram.
 
 ## Regras de dados importantes
 
@@ -29,6 +30,7 @@
 - valores BRL simples aceitos no chat devem ser conservadores e nao ambíguos
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `wallet`
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `confirmation`
+- a confirmacao assincrona pos-pagamento deve ser tratada como side effect idempotente, acionada apenas quando a transicao financeira visivel for relevante
 
 ## Fora de escopo
 
@@ -52,6 +54,7 @@
 - mensagens invalidas mantem o pedido no passo atual e orientam o usuario a reenviar a informacao correta
 - a confirmacao de pedido ainda depende da integracao completa com a Eulen para criar o deposito final
 - o processamento real do fluxo ainda esta incompleto
+- a notificacao assincrona pos-pagamento ja faz parte do estado atual do sistema quando a conciliacao confirma o pagamento
 
 ## Leitura correta
 

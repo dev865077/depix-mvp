@@ -28,6 +28,8 @@ Estado atual:
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
+- apos conciliacao de pagamento, o sistema pode enviar uma mensagem assincrona de confirmacao ao chat original quando houver `telegram_chat_id` valido e transicao visivel relevante
+- essa notificacao assincrona e idempotente por transicao visivel: webhook, recheck e fallback nao devem repetir a mesma mensagem
 
 ## Eulen
 
@@ -80,9 +82,11 @@ No recheck operacional, a mesma politica vale para `deposit-status`: conflito de
 
 O write path do recheck foi desenhado para manter auditoria e agregado alinhados: o evento `recheck_deposit_status` e os updates em `deposits`/`orders` sao persistidos no mesmo batch do D1.
 
-Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao terminal nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
+Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
 
 No fallback por `deposits`, a correlacao e feita por `qrId` porque o endpoint remoto retorna uma lista compacta. Linhas sem `qrId` local correspondente sao ignoradas com resultado `skipped`, e linhas que tentariam regredir um agregado concluido tambem nao escrevem no banco. Quando a linha e aplicavel, o runtime grava `deposit_events.source = "recheck_deposits_list"` junto dos updates em `deposits` e `orders`.
+
+Quando a conciliacao define um estado de pagamento confirmado, o service de notificacao pode derivar o `chat.id` persistido no pedido e disparar a mensagem de confirmacao. Esse envio nao substitui a verdade financeira: e apenas um side effect humano, separado do commit principal.
 
 ## Split em deposit
 
