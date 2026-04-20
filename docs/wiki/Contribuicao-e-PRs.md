@@ -22,7 +22,7 @@
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
-- o trigger `issue_comment` do planning continua restrito a comentarios novos do `github-actions[bot]` com marcador automatizado da triage; comentarios humanos, comentarios editados e comentarios em PR nao podem iniciar ou rerodar planning
+- o planning nao deve ouvir `issues` nem `issue_comment` como entrada automatica paralela; esses gatilhos redundantes foram removidos para manter uma unica porta canonica de planejamento
 - para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
@@ -81,7 +81,13 @@ Explicitar:
 - quando a PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
 - em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada
-- na reconciliacao de follow-up, a automacao aceita como evidencia a reply humana da conclusao mais recente quando ela cita o cenario de validacao ou a resolucao do bloqueio; nao depende apenas de texto literal copiado do patch alterado
-- o parser de follow-up continua exigindo evidencia testavel do diff atual e `CI / Test`; a reply humana da thread final apenas pode complementar ou satisfazer o marcador restante quando ela descreve o contrato validado
-- blocos classificados como `Not testable` continuam em secao humana separada e nao entram no conjunto de bloqueios testaveis
-- a sintese da PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao
+- na revisao automatica de PR, falhas operacionais de GitHub e logs de Actions passam a ser tratadas como contexto operacional antes de virar feedback de conteudo
+
+## Checklist de revisao antes do merge
+
+- escopo coerente
+- docs atualizadas quando necessario
+- testes executados
+- sem segredos expostos
+- sem alteracao fora do pedido
+- sem drift entre decisao e implementacao
