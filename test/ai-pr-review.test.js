@@ -347,13 +347,14 @@ describe("ai pr review discussion gate", () => {
   it("summarizes categories and top-level areas deterministically", () => {
     const summary = summarizePullRequestScope([
       { filename: "src/app.js", additions: 10, deletions: 1 },
+      { filename: ".github/prompts/ai-pr-discussion-product.md", additions: 3, deletions: 0 },
       { filename: ".github/workflows/ai-pr-review.yml", additions: 12, deletions: 2 },
       { filename: "test/app.test.js", additions: 5, deletions: 0 },
     ]);
 
-    expect(summary.categories).toEqual(["source", "tests", "workflow"]);
+    expect(summary.categories).toEqual(["prompt", "source", "tests", "workflow"]);
     expect(summary.areas).toEqual([".github", "src", "test"]);
-    expect(summary.totalChangedLines).toBe(30);
+    expect(summary.totalChangedLines).toBe(33);
   });
 });
 
@@ -524,6 +525,49 @@ describe("ai pr review discussion rendering", () => {
     expect(body).toContain("retry sequencial testado");
     expect(body).toContain("Final recommendation: `Request changes`");
     expect(body.indexOf("## Existing Discussion context")).toBeLessThan(body.indexOf("## Changed files digest"));
+  });
+
+  it("drops prior automation comments from rerun context while keeping human replies", () => {
+    const discussionContext = buildDiscussionHistoryContext([
+      {
+        author: { login: "github-actions[bot]" },
+        publishedAt: "2026-04-18T22:14:58Z",
+        body: [
+          "<!-- ai-pr-discussion-review:openai -->",
+          "<!-- ai-pr-discussion-role:technical -->",
+          "## Technical and architecture review",
+          "",
+          "## Findings",
+          "- Old blocker.",
+          "",
+          "## Recommendation",
+          "Request changes",
+        ].join("\n"),
+      },
+      {
+        author: { login: "github-actions[bot]" },
+        publishedAt: "2026-04-18T22:15:13Z",
+        body: [
+          "<!-- ai-pr-discussion-final:openai -->",
+          "Final recommendation: `Request changes`",
+        ].join("\n"),
+      },
+      {
+        author: { login: "dev865077" },
+        publishedAt: "2026-04-18T22:16:00Z",
+        body: "Resolvido: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
+      },
+      {
+        author: { login: "dev865077" },
+        publishedAt: "2026-04-18T22:17:00Z",
+        body: "Estou citando <!-- ai-pr-discussion-final:openai --> para explicar o bug anterior.",
+      },
+    ]);
+
+    expect(discussionContext).not.toContain("Old blocker");
+    expect(discussionContext).not.toContain("Final recommendation: `Request changes`");
+    expect(discussionContext).toContain("Resolvido: agora existe teste cobrindo a regressao");
+    expect(discussionContext).toContain("citando <!-- ai-pr-discussion-final:openai -->");
   });
 
   it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {

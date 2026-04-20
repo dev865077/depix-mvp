@@ -619,7 +619,10 @@ function findExistingDiscussionTarget(pullRequestNumber, comments, discussions) 
       return { id: matchingDiscussion.id, url: matchingDiscussion.url };
     }
 
-    return { url: commentDiscussionUrl };
+    return {
+      number: parseDiscussionNumberFromUrl(commentDiscussionUrl),
+      url: commentDiscussionUrl,
+    };
   }
 
   const issueMarker = `[PR #${pullRequestNumber}]`;
@@ -627,6 +630,84 @@ function findExistingDiscussionTarget(pullRequestNumber, comments, discussions) 
     typeof discussion.title === "string" && discussion.title.includes(issueMarker));
 
   return matchingDiscussion ? { id: matchingDiscussion.id, url: matchingDiscussion.url } : null;
+}
+
+/**
+ * Extract a numeric GitHub Discussion number from a repository discussion URL.
+ *
+ * @param {string} url GitHub Discussion URL.
+ * @returns {number | null} Parsed discussion number when present.
+ */
+function parseDiscussionNumberFromUrl(url) {
+  if (typeof url !== "string" || url.length === 0) {
+    return null;
+  }
+
+  const match = url.match(/\/discussions\/(\d+)(?:$|[?#/])/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number.parseInt(match[1], 10);
+
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * Fetch one repository discussion by number so reruns can recover the canonical
+ * Discussion even when it fell outside the recent lookback window.
+ *
+ * @param {string} owner Repository owner.
+ * @param {string} name Repository name.
+ * @param {number} discussionNumber Discussion number.
+ * @returns {Promise<{ id: string, url: string, closed: boolean } | null>} Discussion metadata or null.
+ */
+async function fetchDiscussionByNumber(owner, name, discussionNumber) {
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        discussion(number: $number) {
+          id
+          url
+          closed
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, { owner, name, number: discussionNumber });
+
+  return data?.repository?.discussion ?? null;
+}
+
+/**
+ * Detect one automation-authored PR Discussion comment body so reruns do not
+ * feed stale bot findings back into the next model round.
+ *
+ * @param {string} body Discussion comment body.
+ * @returns {boolean} True when the body belongs to this automation.
+ */
+function isAutomatedDiscussionCommentBody(body) {
+  return typeof body === "string" && (
+    body.includes(DISCUSSION_COMMENT_MARKER)
+    || body.includes(DISCUSSION_FINAL_COMMENT_MARKER)
+  );
+}
+
+/**
+ * Decide whether one Discussion comment should be treated as automation noise.
+ *
+ * Human replies that quote automation markers are still useful operational
+ * context, so filtering only applies to actual bot-authored comments.
+ *
+ * @param {{ author?: { login?: string }, body?: string }} comment Discussion comment.
+ * @returns {boolean} True when this comment came from the automation itself.
+ */
+function isAutomatedDiscussionComment(comment) {
+  return (
+    comment?.author?.login === "github-actions[bot]"
+    && isAutomatedDiscussionCommentBody(comment?.body)
+  );
 }
 
 /**
@@ -647,6 +728,7 @@ export function buildDiscussionHistoryContext(comments) {
 
   const sections = comments
     .filter((comment) => typeof comment?.body === "string" && comment.body.trim().length > 0)
+    .filter((comment) => !isAutomatedDiscussionComment(comment))
     .map((comment) => {
       const author = comment.author?.login ?? "unknown";
       const publishedAt = comment.publishedAt ?? "unknown time";
@@ -681,6 +763,19 @@ async function resolveExistingDiscussionContext(repository, pullRequestNumber) {
   );
 
   if (!existingDiscussion?.id) {
+    if (existingDiscussion?.number) {
+      const recoveredDiscussion = await fetchDiscussionByNumber(owner, name, existingDiscussion.number);
+
+      if (recoveredDiscussion?.id) {
+        const discussionComments = await fetchDiscussionComments(recoveredDiscussion.id);
+
+        return {
+          discussionUrl: recoveredDiscussion.url,
+          context: buildDiscussionHistoryContext(discussionComments),
+        };
+      }
+    }
+
     return {
       discussionUrl: existingDiscussion?.url ?? null,
       context: "",
@@ -844,6 +939,10 @@ async function syncDiscussionLifecycle(discussionId, recommendation) {
 function classifyReviewFile(filename) {
   const normalizedPath = normalizeRepositoryPath(filename);
 
+  if (normalizedPath.startsWith(".github/prompts/")) {
+    return "prompt";
+  }
+
   if (
     normalizedPath === "readme.md" ||
     normalizedPath.startsWith("docs/") ||
@@ -863,10 +962,6 @@ function classifyReviewFile(filename) {
 
   if (normalizedPath.startsWith(".github/workflows/")) {
     return "workflow";
-  }
-
-  if (normalizedPath.startsWith(".github/prompts/")) {
-    return "prompt";
   }
 
   if (
@@ -2060,9 +2155,19 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
       discussion = createdDiscussion;
     }
 
+    if (discussion?.number && !discussion.id) {
+      const recoveredDiscussion = await fetchDiscussionByNumber(owner, name, discussion.number);
+
+      if (recoveredDiscussion?.id) {
+        discussion = recoveredDiscussion;
+      }
+    }
+
     if (!discussion.id) {
       return { url: discussion.url, failure: null };
     }
+
+    discussion = await updateDiscussion(discussion.id, discussionTitle, discussionBody);
 
     const discussionComments = buildDiscussionReviewComments(debate);
 
