@@ -7,22 +7,28 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  discussion_comment:
+    types:
+      - created
+      - edited
 
 permissions:
   contents: read
   pull-requests: read
+  discussions: read
 
 concurrency:
-  group: ai-pr-review-${{ github.event.pull_request.number }}
+  group: ai-pr-review-${{ github.event.pull_request.number || github.event.discussion.number }}
   cancel-in-progress: true
 
 jobs:
   classify:
-    if: github.event.pull_request.draft == false
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: read
+      discussions: read
     outputs:
       requires_discussion: ${{ steps.gate.outputs.requires_discussion }}
       route: ${{ steps.gate.outputs.route }}
@@ -46,7 +52,7 @@ jobs:
 
   direct-review:
     needs: classify
-    if: github.event.pull_request.draft == false && needs.classify.outputs.requires_discussion == 'false'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -73,7 +79,7 @@ jobs:
 
   discussion-review:
     needs: classify
-    if: github.event.pull_request.draft == false && needs.classify.outputs.requires_discussion == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

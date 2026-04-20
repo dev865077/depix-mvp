@@ -424,6 +424,7 @@ describe("ai pr review discussion rendering", () => {
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment("Approve");
     const blocked = buildDiscussionCompletionComment("Request changes", ["risk"]);
+    const followUpApproved = buildDiscussionCompletionComment("Approve", [], { isFollowUpRound: true });
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
     expect(approved).toContain("Discussion concluded");
@@ -436,6 +437,8 @@ describe("ai pr review discussion rendering", () => {
     expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
     expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
+    expect(followUpApproved).toContain("Why this passed now");
+    expect(followUpApproved).toContain("resolved the prior blockers");
   });
 
   it("turns model timeouts into bounded request-changes output", () => {
@@ -527,7 +530,7 @@ describe("ai pr review discussion rendering", () => {
     expect(body.indexOf("## Existing Discussion context")).toBeLessThan(body.indexOf("## Changed files digest"));
   });
 
-  it("drops prior automation comments from rerun context while keeping human replies", () => {
+  it("builds rerun context from the conclusion thread while dropping stale specialist bot output", () => {
     const discussionContext = buildDiscussionHistoryContext([
       {
         author: { login: "github-actions[bot]" },
@@ -543,31 +546,46 @@ describe("ai pr review discussion rendering", () => {
           "## Recommendation",
           "Request changes",
         ].join("\n"),
+        replies: { nodes: [] },
       },
       {
-        author: { login: "github-actions[bot]" },
+        id: "final-1",
+        author: { login: "github-actions" },
         publishedAt: "2026-04-18T22:15:13Z",
         body: [
           "<!-- ai-pr-discussion-final:openai -->",
           "Final recommendation: `Request changes`",
         ].join("\n"),
+        replies: {
+          nodes: [
+            {
+              author: { login: "dev865077" },
+              createdAt: "2026-04-18T22:16:00Z",
+              body: "Resolvido: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
+            },
+            {
+              author: { login: "dev865077" },
+              createdAt: "2026-04-18T22:17:00Z",
+              body: "Estou citando <!-- ai-pr-discussion-final:openai --> para explicar o bug anterior.",
+            },
+          ],
+        },
       },
       {
         author: { login: "dev865077" },
-        publishedAt: "2026-04-18T22:16:00Z",
-        body: "Resolvido: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
-      },
-      {
-        author: { login: "dev865077" },
-        publishedAt: "2026-04-18T22:17:00Z",
-        body: "Estou citando <!-- ai-pr-discussion-final:openai --> para explicar o bug anterior.",
+        publishedAt: "2026-04-18T22:18:00Z",
+        body: "Comentario humano solto fora da thread final.",
+        replies: { nodes: [] },
       },
     ]);
 
     expect(discussionContext).not.toContain("Old blocker");
-    expect(discussionContext).not.toContain("Final recommendation: `Request changes`");
+    expect(discussionContext).toContain("## Latest conclusion thread");
+    expect(discussionContext).toContain("Previous automated conclusion");
+    expect(discussionContext).toContain("Final recommendation: `Request changes`");
     expect(discussionContext).toContain("Resolvido: agora existe teste cobrindo a regressao");
     expect(discussionContext).toContain("citando <!-- ai-pr-discussion-final:openai -->");
+    expect(discussionContext).toContain("Comentario humano solto fora da thread final");
   });
 
   it("prioritizes current source and test evidence ahead of docs in broad review payloads", () => {

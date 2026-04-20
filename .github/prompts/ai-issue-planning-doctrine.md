@@ -21,6 +21,7 @@ Output contract:
   - `## Recommendation`
 - In `## Findings`, use `- None.` when no material findings remain.
 - In `## Questions`, use `- None.` when there are no open questions.
+- The latest automated planning conclusion plus the human replies below it are the canonical handoff for the next round.
 - In `## Recommendation`, say exactly one of:
   - `Approve`
   - `Blocked`

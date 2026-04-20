@@ -15,14 +15,22 @@
 
 ## Fluxo de issue para PR
 
-- issue pequena, clara e de baixo impacto pode seguir direto para branch e PR
-- issue com impacto `medio` ou `alto` deve passar por Discussion curta antes da PR
-- a triagem automatica registra justificativa, debate resumido e proximo passo na propria issue
+- issue pequena, clara e de baixo risco pode seguir direto para branch e PR
+- a triagem automatica usa `impact` como sinal descritivo, nao como roteador rigido por si so
+- `direct_pr` so vale quando o escopo ja esta claro, limitado e executavel sem rodada de planning
+- `discussion_before_pr` vale quando ainda falta decisao compartilhada sobre escopo, decomposicao, arquitetura, operacao, risco ou dependencias
+- a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
 - quando a triagem abrir uma Discussion, a issue entra na lane de planning review antes da implementacao
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
+- o planning review tem tres estados canonicos:
+- `Approve`: issue pronta para execucao
+- `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito
+- `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
-- o comentario final mais recente da planning Discussion e o estado canonico da prontidao da issue
-- comentarios automatizados de triagem e de planning review nao devem entrar como contexto bruto da nova rodada; respostas humanas nesses comentarios permanecem como contexto operacional da resolucao
+- a thread canonica de cada nova rodada e a reply humana na conclusao mais recente da Discussion
+- a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte
+- quando uma nova rodada aprova, a automacao responde nessa thread explicando por que agora passou
+- comentarios automatizados antigos dos especialistas nao devem entrar como contexto bruto da nova rodada; o contexto operacional valido e a thread da conclusao e comentarios humanos soltos relevantes
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
 - itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos de forma explicita
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
@@ -57,14 +65,18 @@ Explicitar:
 - PR grande de docs/testes tambem entra em Discussion, porque tamanho por si so aumenta risco de revisao
 - a Discussion e um artefato de revisao: produto/escopo, tecnica/arquitetura, risco/operacao e sintese final
 - a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
-- comentarios antigos nunca devem ser editados ou removidos; o comentario final de status mais recente e sempre o estado canonico da automacao
+- comentarios antigos nunca devem ser editados ou removidos
+- a thread canonica da rodada seguinte e a reply humana na conclusao automatizada mais recente
+- a automacao le a conclusao anterior e as replies humanas nessa thread antes de emitir nova rodada
+- quando a PR passar numa rodada seguinte, a automacao deve responder na thread da conclusao explicando por que os bloqueios anteriores deixaram de valer
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - na lane de Discussion, a PR so fica pronta para merge quando `product`, `technical` e `risk` retornarem `Approve`; `Request changes` em qualquer um deles sempre falha o check
+- a lane de PR continua binaria: aqui nao existe `Blocked`; esse estado vale so para planning de issue
 - `synthesis` continua obrigatoria para visibilidade e fechamento operacional da Discussion, mas e resumo: ela nao vira um quarto voto de bloqueio por drift de redacao
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
 - se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
 - timeout do modelo publica sintese `Request changes` e falha o check; o mantenedor pode rerodar o check ou aceitar explicitamente o risco em um fluxo manual separado
-- a automacao nao fecha Discussions via API; o fechamento operacional e o comentario final append-only de status
+- a automacao pode fechar ou reabrir a Discussion via API para refletir o estado atual, mas a trilha canonica continua sendo append-only na thread da conclusao
 - a categoria da Discussion pode ser configurada por `AI_PR_DISCUSSION_CATEGORY`; se a categoria configurada nao existir, o workflow usa uma categoria aberta disponivel
 - texto gerado por IA publicado no GitHub deve neutralizar mencoes, imagens e links model-authored para reduzir spam e ruido operacional
 - quando a triagem exigir Discussion, a issue deve trazer o acknowledgement operacional antes de qualquer branch ou PR

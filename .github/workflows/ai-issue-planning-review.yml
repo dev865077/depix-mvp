@@ -65,3 +65,14 @@ jobs:
           OPENAI_ISSUE_PLANNING_REVIEW_MODEL: ${{ vars.OPENAI_ISSUE_PLANNING_REVIEW_MODEL || 'gpt-5.4-mini' }}
           OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}
         run: node scripts/ai-issue-planning-review.mjs
+
+      - name: Summarize planning outputs
+        if: always()
+        run: |
+          {
+            echo "## AI Issue Planning Review outputs"
+            echo ""
+            echo "- planning_status: \`${{ steps.review.outputs.planning_status || 'n/a' }}\`"
+            echo "- blocking_roles: \`${{ steps.review.outputs.blocking_roles || 'n/a' }}\`"
+            echo "- blocked_by_dependencies: \`${{ steps.review.outputs.blocked_by_dependencies || 'n/a' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

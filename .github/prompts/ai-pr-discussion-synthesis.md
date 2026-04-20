@@ -10,6 +10,8 @@ Rules:
 - Do not water down a concrete blocker into vague follow-up work.
 - Do not repeat every point from every reviewer.
 - Surface only the highest-signal findings.
+- Keep the decision anchored to the current PR payload and the latest conclusion thread handoff, not stale historical comments by themselves.
+- If the current payload is insufficient to prove a concern, say that directly instead of inflating the blocker.
 
 Output requirements:
 - Write Markdown.

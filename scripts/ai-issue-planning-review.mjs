@@ -664,6 +664,9 @@ export function buildIssueCommentContext(comments) {
  */
 export function buildDiscussionHistoryContext(discussion) {
   const entries = [];
+  const latestFinalComment = [...(discussion.comments?.nodes ?? [])]
+    .reverse()
+    .find((comment) => isAutomatedPlanningFinalComment(comment)) ?? null;
 
   for (const comment of discussion.comments?.nodes ?? []) {
     if (!isAutomatedPlanningComment(comment)) {
@@ -672,13 +675,43 @@ export function buildDiscussionHistoryContext(discussion) {
         truncateText(comment.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
       ].join("\n"));
     }
+  }
 
-    for (const reply of comment.replies?.nodes ?? []) {
-      entries.push([
+  if (latestFinalComment) {
+    const automatedEntries = [
+      {
+        body: latestFinalComment.body,
+        createdAt: latestFinalComment.createdAt ?? "unknown",
+      },
+      ...(latestFinalComment.replies?.nodes ?? [])
+        .filter((reply) => isAutomatedPlanningReply(reply))
+        .map((reply) => ({
+          body: reply.body,
+          createdAt: reply.createdAt ?? "unknown",
+        })),
+    ];
+    const latestAutomatedEntry = automatedEntries.at(-1);
+    const humanReplies = (latestFinalComment.replies?.nodes ?? [])
+      .filter((reply) => !isAutomatedPlanningReply(reply))
+      .filter((reply) => typeof reply?.body === "string" && reply.body.trim().length > 0)
+      .map((reply) => [
         `#### reply by ${reply.author?.login ?? "unknown"} @ ${reply.createdAt ?? "unknown"}`,
         truncateText(reply.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
       ].join("\n"));
-    }
+
+    entries.push([
+      "## Latest planning conclusion thread",
+      "Treat this thread as the current round handoff. Human replies here are the operator's response to the previous planning conclusion.",
+      "",
+      ...(latestAutomatedEntry
+        ? [
+          `### Previous automated conclusion @ ${latestAutomatedEntry.createdAt}`,
+          truncateText(latestAutomatedEntry.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+          "",
+        ]
+        : []),
+      ...humanReplies,
+    ].join("\n"));
   }
 
   return truncateText(entries.slice(-MAX_DISCUSSION_CONTEXT_COMMENTS).join("\n\n"), MAX_DISCUSSION_CONTEXT_CHARS);
@@ -723,6 +756,33 @@ export function isAutomatedPlanningComment(comment) {
 
   return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
     && isAutomatedPlanningCommentBody(comment?.body);
+}
+
+/**
+ * Detecta replies automatizadas dentro da thread de conclusao do planning.
+ *
+ * @param {{ author?: { login?: string | null } | null, body?: string | null }} reply Reply GraphQL.
+ * @returns {boolean} Verdadeiro apenas para replies automatizadas do bot.
+ */
+function isAutomatedPlanningReply(reply) {
+  const authorLogin = reply?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && isAutomatedPlanningCommentBody(reply?.body);
+}
+
+/**
+ * Detecta o comentario raiz de conclusao do planning review.
+ *
+ * @param {{ author?: { login?: string | null } | null, body?: string | null }} comment Comentario GraphQL.
+ * @returns {boolean} Verdadeiro quando o comentario e a conclusao canonica.
+ */
+function isAutomatedPlanningFinalComment(comment) {
+  const authorLogin = comment?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && typeof comment?.body === "string"
+    && comment.body.trimStart().startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
 }
 
 /**
@@ -909,11 +969,13 @@ export function buildIssuePlanningReviewComments(debate) {
  *
  * @param {"Approve" | "Blocked" | "Request changes"} recommendation Final recommendation.
  * @param {string[]} [blockingRoles] Specialist roles still blocking.
+ * @param {{ isFollowUpRound?: boolean }} [options] Rendering options.
  * @returns {string} Final status comment.
  */
-export function buildIssuePlanningCompletionComment(recommendation, blockingRoles = []) {
+export function buildIssuePlanningCompletionComment(recommendation, blockingRoles = [], options = {}) {
   const isApproved = recommendation === "Approve";
   const isBlocked = recommendation === "Blocked";
+  const isFollowUpRound = options.isFollowUpRound === true;
   const statusLine = isApproved
     ? "Planning review concluded: all four specialist reviewer roles returned `Approve`."
     : isBlocked
@@ -924,6 +986,13 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
     : isBlocked
       ? "The planning Discussion remains open because at least one specialist reviewer role marked the work as `Blocked`, not because the artifact itself is under-specified."
       : "The planning Discussion remains open because at least one specialist reviewer role still requests changes.";
+  const roundLine = isFollowUpRound
+    ? isApproved
+      ? "Why this passed now: the updated issue plus the operator replies in this conclusion thread resolved the previous planning blockers."
+      : isBlocked
+        ? "Round feedback: after re-reading the updated issue plus the operator replies in this conclusion thread, the artifact is now well specified but still waiting on explicit upstream dependencies."
+        : "Round feedback: after re-reading the updated issue plus the operator replies in this conclusion thread, blocking planning gaps still remain."
+    : null;
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
@@ -938,6 +1007,7 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
     "",
     statusLine,
     closeLine,
+    ...(roundLine ? [roundLine] : []),
     ...(blockerLine ? [blockerLine] : []),
     policyLine,
     canonicalLine,
@@ -951,13 +1021,15 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
  *
  * @param {string} discussionId Discussion node id.
  * @param {string} body Markdown body.
+ * @param {string | null} [replyToId] Existing Discussion comment id when replying to the prior conclusion.
  * @returns {Promise<void>} Completes when the comment is persisted.
  */
-async function createDiscussionComment(discussionId, body) {
+async function createDiscussionComment(discussionId, body, replyToId = null) {
   const mutation = `
-    mutation($discussionId: ID!, $body: String!) {
+    mutation($discussionId: ID!, $body: String!, $replyToId: ID) {
       addDiscussionComment(input: {
         discussionId: $discussionId,
+        replyToId: $replyToId,
         body: $body
       }) {
         comment {
@@ -967,7 +1039,7 @@ async function createDiscussionComment(discussionId, body) {
       }
     }
   `;
-  await githubGraphqlRequest(mutation, { discussionId, body });
+  await githubGraphqlRequest(mutation, { discussionId, body, replyToId });
 }
 
 /**
@@ -1371,6 +1443,9 @@ async function main() {
   });
   const evaluation = evaluateIssuePlanningRecommendation(debate);
   const discussionComments = buildIssuePlanningReviewComments(debate);
+  const latestFinalComment = [...(context.discussion.comments?.nodes ?? [])]
+    .reverse()
+    .find((comment) => isAutomatedPlanningFinalComment(comment)) ?? null;
 
   // Publish specialist memos before the final status so the closing verdict
   // always points at review comments already visible in the Discussion.
@@ -1380,7 +1455,12 @@ async function main() {
 
   await createDiscussionComment(
     context.discussion.id,
-    buildIssuePlanningCompletionComment(evaluation.recommendation, evaluation.blockingRoles),
+    buildIssuePlanningCompletionComment(
+      evaluation.recommendation,
+      evaluation.blockingRoles,
+      { isFollowUpRound: Boolean(latestFinalComment) },
+    ),
+    latestFinalComment?.id ?? null,
   );
 
   const lifecycleState = await syncDiscussionLifecycle(context.discussion.id, evaluation.recommendation);

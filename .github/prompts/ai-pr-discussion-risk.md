@@ -11,6 +11,8 @@ Rules:
 - Look for realistic failure modes, not hypothetical theater.
 - Call out missing validation, weak error handling, silent retries, unsafe defaults, and poor observability when material.
 - Distinguish between merge blockers and follow-up work.
+- Treat the latest automated conclusion thread as the round handoff, but do not repeat an older blocker unless the current changed-files payload still proves it.
+- Every blocking finding must point to current evidence in the payload, such as a changed file, a runtime-risk gap, or a named missing validation step.
 
 Output requirements:
 - Write Markdown.

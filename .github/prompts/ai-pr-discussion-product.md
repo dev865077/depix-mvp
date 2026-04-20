@@ -11,6 +11,8 @@ Rules:
 - Be skeptical of scope creep and hidden behavior changes.
 - Call out ambiguity, missing acceptance framing, and missing operator/user communication only when material.
 - Prefer concrete merge blockers over generic advice.
+- Treat the latest automated conclusion thread as the round handoff, but do not repeat an older blocker unless the current changed-files payload still proves it.
+- Every blocking finding must point to current evidence in the payload, such as a changed file, a stated behavior gap, or a named missing validation step.
 
 Output requirements:
 - Write Markdown.
