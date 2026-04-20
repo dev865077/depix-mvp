@@ -6,6 +6,13 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 
 ## Eixos de entrega
 
+### Visao de plataforma
+
+- documentar o MVP atual como primeira vertical DePix/Telegram
+- preservar a direcao futura multi-oferta sem misturar isso no escopo imediato
+- tratar internacionalizacao, multiplos pagamentos e stablecoins como evolucao planejada
+- avaliar stablecoin propria apenas como opcao estrategica de longo prazo
+
 ### Fundacao
 
 - Worker base com `Hono`
@@ -36,6 +43,7 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - `P0` antes de `P1`
 - nao puxar item com dependencia aberta
 - nao misturar feature funcional com refatoracao estrutural aleatoria
+- nao transformar visao futura em requisito de MVP sem issue, planning review e PR propria
 
 ## Estado atual
 
@@ -47,6 +55,7 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - recheck real: avancado, com `deposit-status` por deposito e `deposits` por janela
 - backlog novo passa por gate de planning review em Discussions antes da implementacao de itens de maior impacto
 - itens antigos nao entram nesse gate automaticamente: o mantenedor deve reenfileirar por comentario na Discussion ou por rerun manual do workflow
+- a visao futura de plataforma esta documentada em [Visao Futura da Plataforma](Visao-Futura-da-Plataforma), separada do escopo operacional imediato
 
 ## Fonte de verdade
 

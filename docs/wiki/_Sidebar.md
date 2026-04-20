@@ -6,6 +6,7 @@
 ## Produto
 
 - [Visao Geral do Produto](Visao-Geral-do-Produto)
+- [Visao Futura da Plataforma](Visao-Futura-da-Plataforma)
 - [Escopo e Fluxo](Escopo-e-Fluxo)
 - [Roadmap e Backlog](Roadmap-e-Backlog)
 
