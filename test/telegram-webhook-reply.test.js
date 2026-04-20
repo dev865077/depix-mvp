@@ -234,6 +234,7 @@ async function clearTelegramPersistence() {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE
     )`,
+    "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
     `CREATE TABLE IF NOT EXISTS deposit_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
       tenant_id TEXT NOT NULL,
@@ -249,6 +250,7 @@ async function clearTelegramPersistence() {
       FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
       FOREIGN KEY (deposit_entry_id) REFERENCES deposits(deposit_entry_id) ON DELETE CASCADE
     )`,
+    "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
   ];
 
   await env.DB.batch(schemaStatements.map((statement) => env.DB.prepare(statement)));
@@ -1939,6 +1941,334 @@ describe("telegram webhook reply flow", () => {
     expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-alpha-001");
     expect(replayReply.payload.text).toContain("já está aguardando pagamento");
     expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("reuses an existing local deposit for a confirmation retry without calling Eulen again", async function assertConfirmationRetryUsesExistingDeposit() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockExistingDepositRetry(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        throw new Error("retry with an existing local deposit must not call Eulen create-deposit");
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          url,
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: telegramCalls.length,
+            date: 1713434450,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id ?? 8707,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in existing deposit retry flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_confirmation_existing_deposit",
+      userId: "877",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8707",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_existing_retry_001",
+      qrId: null,
+      orderId: "order_confirmation_existing_deposit",
+      nonce: "nonce_existing_retry_001",
+      qrCopyPaste: "0002010102122688pix-existing-retry-001",
+      qrImageUrl: "https://example.com/qr/existing-retry-001.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T06:00:00Z",
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8707,
+          fromId: 877,
+          updateId: 71,
+        }),
+      },
+      workerEnv,
+    );
+
+    const savedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status, split_address AS splitAddress, split_fee AS splitFee FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_confirmation_existing_deposit")
+      .first();
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_confirmation_existing_deposit")
+      .first();
+    const eulenCalls = fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit");
+    const photoReply = telegramCalls.find((entry) => entry.url.includes("/sendPhoto"));
+    const copyPasteReply = telegramCalls.find((entry) => entry.payload.text?.includes("Pix copia e cola:"));
+
+    expect(eulenCalls).toHaveLength(0);
+    expect(savedOrder).toEqual({
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: SIDESWAP_LQ_ADDRESS,
+      splitFee: "1.00%",
+    });
+    expect(persistedDeposits?.count).toBe(1);
+    expect(photoReply?.payload.photo).toBe("https://example.com/qr/existing-retry-001.png");
+    expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-existing-retry-001");
+  });
+
+  it("serializes concurrent confirmations before the Eulen create-deposit call", async function assertConcurrentConfirmationUsesOrderLease() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const eulenCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockConcurrentConfirmation(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        eulenCalls.push(JSON.parse(String(init?.body)));
+
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_concurrent_confirmation_001",
+            qrCopyPaste: "0002010102122688pix-concurrent-confirmation-001",
+            qrImageUrl: "https://example.com/qr/concurrent-confirmation-001.png",
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 50,
+            date: 1713434455,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id ?? 8808,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in concurrent confirmation flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_concurrent_confirmation",
+      userId: "888",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8808",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+
+    await Promise.all([
+      app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text: "confirmar",
+            chatId: 8808,
+            fromId: 888,
+            updateId: 72,
+          }),
+        },
+        workerEnv,
+      ),
+      app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text: "confirmar",
+            chatId: 8808,
+            fromId: 888,
+            updateId: 73,
+          }),
+        },
+        workerEnv,
+      ),
+    ]);
+
+    const finalOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_concurrent_confirmation")
+      .first();
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_concurrent_confirmation")
+      .first();
+
+    expect(eulenCalls).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(1);
+    expect(persistedDeposits?.count).toBe(1);
+    expect(finalOrder).toEqual({
+      currentStep: "awaiting_payment",
+      status: "pending",
+    });
+  });
+
+  it("fails closed when a reused local deposit is missing Telegram QR fields", async function assertMalformedExistingDepositFailsClosed() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const telegramMessages = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockMalformedExistingDeposit(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        throw new Error("malformed local deposit recovery must not create another Eulen deposit");
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramMessages.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 51,
+            date: 1713434456,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in malformed deposit flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_malformed_existing_deposit",
+      userId: "889",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8809",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+    await getDatabase(env)
+      .prepare(`INSERT INTO deposits (
+        tenant_id,
+        deposit_entry_id,
+        qr_id,
+        order_id,
+        nonce,
+        qr_copy_paste,
+        qr_image_url,
+        external_status,
+        expiration
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        "alpha",
+        "deposit_malformed_existing_001",
+        null,
+        "order_malformed_existing_deposit",
+        "nonce_malformed_existing_001",
+        "",
+        "https://example.com/qr/malformed-existing.png",
+        "pending",
+        "2026-04-18T06:00:00Z",
+      )
+      .run();
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8809,
+          fromId: 889,
+          updateId: 74,
+        }),
+      },
+      workerEnv,
+    );
+    const failedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_malformed_existing_deposit")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(0);
+    expect(failedOrder).toEqual({
+      currentStep: "failed",
+      status: "failed",
+    });
+    expect(telegramMessages.join("\n")).toContain("Nao consegui criar seu Pix agora.");
   });
 
   it("resolves async Eulen deposit creation before replying to the user", async function assertAsyncConfirmationFlow() {

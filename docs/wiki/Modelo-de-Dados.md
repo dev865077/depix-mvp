@@ -42,6 +42,18 @@
 - `raw_payload`
 - `tenant_id`
 
+### `deposit_order_duplicate_quarantine`
+
+- guarda linhas historicas retiradas de `deposits` quando uma migration encontra mais de um deposito para o mesmo `tenant_id + order_id`
+- preserva `canonical_deposit_entry_id` para apontar qual deposito continuou ativo no agregado principal
+- existe para auditoria e recuperacao operacional; o runtime do usuario nao deve ler essa tabela como fonte de QR ativo
+
+### `deposit_order_duplicate_event_quarantine`
+
+- guarda eventos associados aos depositos movidos para quarentena
+- preserva `original_event_id`, payload bruto e `canonical_deposit_entry_id`
+- permite investigar duplicidade historica sem manter dois depositos ativos no mesmo pedido
+
 ## Regras de consistencia
 
 - `orders`, `deposits` e `deposit_events` formam um agregado operacional
@@ -50,6 +62,12 @@
 - `nonce` representa a intencao da cobranca e deve ser reutilizado em retry controlado
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
+- cada par `tenant_id + order_id` pode ter no maximo um registro em `deposits`; esta e a invariavel financeira do MVP enquanto nao houver refund, chargeback, split em varias cobrancas ou recriacao explicita de cobranca dentro do mesmo pedido
+- retry de confirmacao deve reutilizar o deposito local existente do pedido em vez de chamar a Eulen novamente
+- a transicao `confirmation -> creating_deposit` funciona como lease do side effect externo: apenas o request que grava essa transicao pode chamar `POST /deposit`; concorrentes devem observar conflito de passo antes da Eulen
+- um deposito local reutilizado precisa ter `depositEntryId`, `qrCopyPaste` e `qrImageUrl`; se uma linha historica estiver malformada, o pedido falha fechado e exige operacao manual, sem criar nova cobranca externa
+- se a migration de unicidade encontrar duplicados historicos, apenas o deposito canonico permanece em `deposits`; os demais vao para quarentena auditavel antes da criacao do indice unico
+- a escolha canonica de duplicados historicos prioriza `depix_sent`, depois `pending_pix2fa`, depois `pending`, depois `expired`, e por fim o registro mais recente
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
 - `orders.telegram_chat_id` guarda o destino real do chat Telegram para notificacoes assincronas futuras; ele nao deve ser inferido a partir de `user_id`
 - a escrita de `telegram_chat_id` continua sendo o contrato de persistencia do destino; o envio assincrono pos-pagamento agora usa esse campo quando o estado financeiro confirmar pagamento

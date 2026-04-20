@@ -18,6 +18,7 @@ import {
 import { readTenantSecret, readTenantSplitConfig } from "../config/tenants.js";
 import {
   createDeposit,
+  DepositOrderUniquenessError,
   getLatestDepositByOrderId,
 } from "../db/repositories/deposits-repository.js";
 import { updateOrderByIdWithStepGuard } from "../db/repositories/orders-repository.js";
@@ -218,6 +219,49 @@ function extractCreatedDeposit(responseData) {
 }
 
 /**
+ * Garante que um deposito local reaproveitado ainda possui os dados minimos
+ * para entregar o QR ao usuario.
+ *
+ * O D1 protege `NOT NULL`, mas nao consegue distinguir uma string vazia de um
+ * QR valido. Como a regra nova torna o deposito local autoritativo para retries
+ * e concorrencia, a camada de produto precisa recusar explicitamente linhas
+ * malformadas em vez de reenviar uma cobranca incompleta ou criar uma segunda
+ * cobranca externa.
+ *
+ * @param {Record<string, unknown>} deposit Deposito lido do repositorio.
+ * @param {{ tenantId: string, orderId: string }} context Identidade segura para logs.
+ * @returns {Record<string, unknown>} O mesmo deposito, ja validado.
+ */
+function assertReusableTelegramDeposit(deposit, context) {
+  const requiredFields = [
+    "depositEntryId",
+    "qrCopyPaste",
+    "qrImageUrl",
+  ];
+  const missingFields = requiredFields.filter((field) => {
+    const value = deposit[field];
+
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (missingFields.length === 0) {
+    return deposit;
+  }
+
+  throw new TelegramOrderConfirmationError(
+    "telegram_order_existing_deposit_invalid",
+    "Telegram order confirmation found a local deposit that cannot be safely reused.",
+    TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+    {
+      tenantId: context.tenantId,
+      orderId: context.orderId,
+      depositEntryId: typeof deposit.depositEntryId === "string" ? deposit.depositEntryId : null,
+      missingFields,
+    },
+  );
+}
+
+/**
  * Avanca o pedido para um passo terminal de falha.
  *
  * A confirmacao nao deixa o pedido preso em `creating_deposit` quando a Eulen
@@ -264,15 +308,99 @@ async function markTelegramOrderConfirmationFailure(input) {
 }
 
 /**
+ * Persiste a transicao local para `awaiting_payment` a partir de um deposito ja
+ * conhecido pelo D1.
+ *
+ * O helper e usado tanto no caminho feliz quanto no caminho idempotente. Isso
+ * garante que retry, concorrencia local ou uma falha parcial ja recuperavel nao
+ * disparem nova cobranca externa quando o pedido ja tem deposito associado.
+ *
+ * @param {{
+ *   db: import("@cloudflare/workers-types").D1Database,
+ *   tenantId: string,
+ *   order: Record<string, unknown>,
+ *   deposit: Record<string, unknown>,
+ *   splitConfig: { depixSplitAddress: string, splitFee: string }
+ * }} input Pedido, deposito e split canonico.
+ * @returns {Promise<{ order: Record<string, unknown>, deposit: Record<string, unknown>, accepted: boolean, conflict: boolean, parseResult: null }>} Resultado no shape do service.
+ */
+async function persistTelegramAwaitingPaymentFromDeposit(input) {
+  const reusableDeposit = assertReusableTelegramDeposit(input.deposit, {
+    tenantId: input.tenantId,
+    orderId: input.order.orderId,
+  });
+  const depositCreatedProgression = advanceOrderProgression({
+    currentStep: input.order.currentStep,
+    context: {
+      tenantId: input.tenantId,
+      orderId: input.order.orderId,
+      userId: input.order.userId,
+      amountInCents: input.order.amountInCents,
+      walletAddress: input.order.walletAddress,
+    },
+    event: {
+      type: ORDER_PROGRESS_EVENTS.DEPOSIT_CREATED,
+      tenantId: input.tenantId,
+      depositEntryId: reusableDeposit.depositEntryId,
+    },
+  });
+  const awaitingPaymentWrite = await updateOrderByIdWithStepGuard(
+    input.db,
+    input.tenantId,
+    input.order.orderId,
+    input.order.currentStep,
+    {
+      ...depositCreatedProgression.orderPatch,
+      splitAddress: input.splitConfig.depixSplitAddress,
+      splitFee: input.splitConfig.splitFee,
+    },
+  );
+
+  if (awaitingPaymentWrite.notFound) {
+    throw new TelegramOrderConfirmationError(
+      "telegram_order_awaiting_payment_missing",
+      "Telegram order disappeared before awaiting_payment persistence could complete.",
+      TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+      {
+        tenantId: input.tenantId,
+        orderId: input.order.orderId,
+        depositEntryId: reusableDeposit.depositEntryId,
+      },
+    );
+  }
+
+  if (awaitingPaymentWrite.conflict) {
+    return {
+      order: awaitingPaymentWrite.order ?? input.order,
+      deposit: reusableDeposit,
+      accepted: false,
+      conflict: true,
+      parseResult: null,
+    };
+  }
+
+  return {
+    order: awaitingPaymentWrite.order,
+    deposit: reusableDeposit,
+    accepted: true,
+    conflict: false,
+    parseResult: null,
+  };
+}
+
+/**
  * Confirma o pedido atual e cria a cobranca real na Eulen.
  *
  * O fluxo e deliberadamente sequencial:
  * 1. `confirmation` -> `creating_deposit`
- * 2. chamada real na Eulen com secrets do tenant e o endereco final do usuario
+ * 2. chamada real na Eulen somente pelo request que venceu o compare-and-set
  * 3. persistencia em `deposits`
  * 4. `creating_deposit` -> `awaiting_payment`
  *
- * Se um retry chegar depois da criacao, o service reaproveita o deposito ja
+ * A primeira transicao funciona como lease local: dois `confirmar` concorrentes
+ * podem ler o mesmo pedido, mas so um consegue trocar `confirmation` por
+ * `creating_deposit`; o perdedor recebe conflito antes de chamar a Eulen. Se um
+ * retry chegar depois da criacao, o service reaproveita o deposito ja
  * persistido e nao dispara nova cobranca.
  *
  * @param {{
@@ -382,6 +510,22 @@ export async function confirmTelegramOrder(input) {
 
     assertTelegramSplitConfigReady(input.tenant.tenantId, splitConfig);
 
+    const preexistingDeposit = await getLatestDepositByOrderId(
+      input.db,
+      input.tenant.tenantId,
+      creatingDepositOrder.orderId,
+    );
+
+    if (preexistingDeposit) {
+      return await persistTelegramAwaitingPaymentFromDeposit({
+        db: input.db,
+        tenantId: input.tenant.tenantId,
+        order: creatingDepositOrder,
+        deposit: preexistingDeposit,
+        splitConfig,
+      });
+    }
+
     const response = await resolveEulenAsyncResponse(
       await createEulenDeposit(input.runtimeConfig, {
         apiToken,
@@ -395,48 +539,45 @@ export async function confirmTelegramOrder(input) {
       },
     );
     const createdDeposit = extractCreatedDeposit(response.data);
-    const savedDeposit = await createDeposit(input.db, {
-      tenantId: input.tenant.tenantId,
-      depositEntryId: createdDeposit.depositEntryId,
-      qrId: null,
-      orderId: creatingDepositOrder.orderId,
-      nonce: response.nonce,
-      qrCopyPaste: createdDeposit.qrCopyPaste,
-      qrImageUrl: createdDeposit.qrImageUrl,
-      externalStatus: "pending",
-      expiration: createdDeposit.expiration,
-    });
-    const depositCreatedProgression = advanceOrderProgression({
-      currentStep: creatingDepositOrder.currentStep,
-      context: {
-        tenantId: input.tenant.tenantId,
-        orderId: creatingDepositOrder.orderId,
-        userId: creatingDepositOrder.userId,
-        amountInCents: creatingDepositOrder.amountInCents,
-        walletAddress: creatingDepositOrder.walletAddress,
-      },
-      event: {
-        type: ORDER_PROGRESS_EVENTS.DEPOSIT_CREATED,
+    let savedDeposit;
+
+    try {
+      savedDeposit = await createDeposit(input.db, {
         tenantId: input.tenant.tenantId,
         depositEntryId: createdDeposit.depositEntryId,
-      },
-    });
-    const awaitingPaymentWrite = await updateOrderByIdWithStepGuard(
-      input.db,
-      input.tenant.tenantId,
-      creatingDepositOrder.orderId,
-      creatingDepositOrder.currentStep,
-      {
-        ...depositCreatedProgression.orderPatch,
-        splitAddress: splitConfig.depixSplitAddress,
-        splitFee: splitConfig.splitFee,
-      },
-    );
+        qrId: null,
+        orderId: creatingDepositOrder.orderId,
+        nonce: response.nonce,
+        qrCopyPaste: createdDeposit.qrCopyPaste,
+        qrImageUrl: createdDeposit.qrImageUrl,
+        externalStatus: "pending",
+        expiration: createdDeposit.expiration,
+      });
+    } catch (error) {
+      if (error instanceof DepositOrderUniquenessError && error.existingDeposit) {
+        savedDeposit = error.existingDeposit;
+      } else if (error instanceof DepositOrderUniquenessError) {
+        throw new TelegramOrderConfirmationError(
+          "telegram_order_deposit_uniqueness_unresolved",
+          "Telegram order confirmation hit the tenant/order uniqueness guard but could not read the winning deposit.",
+          TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+          {
+            tenantId: input.tenant.tenantId,
+            orderId: creatingDepositOrder.orderId,
+          },
+          error,
+        );
+      } else {
+        throw error;
+      }
+    }
 
-    if (awaitingPaymentWrite.notFound) {
+    const persistedDeposit = savedDeposit ?? await getLatestDepositByOrderId(input.db, input.tenant.tenantId, creatingDepositOrder.orderId);
+
+    if (!persistedDeposit) {
       throw new TelegramOrderConfirmationError(
-        "telegram_order_awaiting_payment_missing",
-        "Telegram order disappeared before awaiting_payment persistence could complete.",
+        "telegram_order_deposit_persistence_incomplete",
+        "Telegram order confirmation could not read the deposit after local persistence.",
         TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
         {
           tenantId: input.tenant.tenantId,
@@ -446,23 +587,13 @@ export async function confirmTelegramOrder(input) {
       );
     }
 
-    if (awaitingPaymentWrite.conflict) {
-      return {
-        order: awaitingPaymentWrite.order ?? creatingDepositOrder,
-        deposit: savedDeposit ?? await getLatestDepositByOrderId(input.db, input.tenant.tenantId, creatingDepositOrder.orderId),
-        accepted: false,
-        conflict: true,
-        parseResult: null,
-      };
-    }
-
-    return {
-      order: awaitingPaymentWrite.order,
-      deposit: savedDeposit ?? await getLatestDepositByOrderId(input.db, input.tenant.tenantId, creatingDepositOrder.orderId),
-      accepted: true,
-      conflict: false,
-      parseResult: null,
-    };
+    return await persistTelegramAwaitingPaymentFromDeposit({
+      db: input.db,
+      tenantId: input.tenant.tenantId,
+      order: creatingDepositOrder,
+      deposit: persistedDeposit,
+      splitConfig,
+    });
   } catch (error) {
     const failedOrder = await markTelegramOrderConfirmationFailure({
       db: input.db,

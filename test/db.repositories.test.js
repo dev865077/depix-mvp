@@ -4,10 +4,13 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import migration0005Sql from "../migrations/0005_deposit_order_uniqueness.sql?raw";
+
 import { getDatabase } from "../src/db/client.js";
 import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import {
   createDeposit,
+  DepositOrderUniquenessError,
   getDepositByDepositEntryId,
   getDepositByQrId,
   updateDepositByDepositEntryId,
@@ -133,6 +136,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_id_idx ON deposits (tenant_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -166,6 +170,41 @@ const CURRENT_SCHEMA_STATEMENTS = [
     IFNULL(blockchain_tx_id, ''),
     raw_payload
   )`,
+  `CREATE TABLE IF NOT EXISTS deposit_order_duplicate_quarantine (
+    tenant_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    deposit_entry_id TEXT PRIMARY KEY NOT NULL,
+    qr_id TEXT,
+    nonce TEXT NOT NULL,
+    qr_copy_paste TEXT NOT NULL,
+    qr_image_url TEXT NOT NULL,
+    external_status TEXT NOT NULL,
+    expiration TEXT,
+    original_created_at TEXT NOT NULL,
+    original_updated_at TEXT NOT NULL,
+    quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    canonical_deposit_entry_id TEXT NOT NULL,
+    quarantine_reason TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS deposit_order_duplicate_event_quarantine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    original_event_id INTEGER NOT NULL,
+    tenant_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    deposit_entry_id TEXT NOT NULL,
+    qr_id TEXT,
+    source TEXT NOT NULL,
+    external_status TEXT NOT NULL,
+    bank_tx_id TEXT,
+    blockchain_tx_id TEXT,
+    raw_payload TEXT NOT NULL,
+    original_received_at TEXT NOT NULL,
+    quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    canonical_deposit_entry_id TEXT NOT NULL,
+    quarantine_reason TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS deposit_order_duplicate_quarantine_tenant_order_idx ON deposit_order_duplicate_quarantine (tenant_id, order_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_order_duplicate_event_quarantine_tenant_order_idx ON deposit_order_duplicate_event_quarantine (tenant_id, order_id)",
 ];
 
 const MIGRATION_0003_STATEMENTS = [
@@ -289,12 +328,38 @@ const MIGRATION_0003_STATEMENTS = [
   )`,
 ];
 
+/**
+ * Divide um arquivo SQL de migration em statements executaveis pelo D1 local.
+ *
+ * Os testes precisam aplicar o mesmo arquivo que vai para Cloudflare, nao uma
+ * versao reduzida em memoria. O split por ponto-e-virgula e suficiente aqui
+ * porque nossas migrations nao usam strings SQL com `;` interno.
+ *
+ * @param {string} sql Conteudo bruto da migration.
+ * @returns {string[]} Statements nao vazios, preservando comentarios uteis.
+ */
+function splitMigrationStatements(sql) {
+  return sql
+    .split(/\r?\n/u)
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
+    .split(/;\s*(?:\r?\n|$)/u)
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+}
+
+const MIGRATION_0005_STATEMENTS = splitMigrationStatements(
+  migration0005Sql,
+);
+
 export function readInitialMigrationSql() {
   return CURRENT_SCHEMA_STATEMENTS;
 }
 
 export async function resetDatabaseSchema() {
   const resetStatements = [
+    "DROP TABLE IF EXISTS deposit_order_duplicate_event_quarantine",
+    "DROP TABLE IF EXISTS deposit_order_duplicate_quarantine",
     "DROP TABLE IF EXISTS deposit_events",
     "DROP TABLE IF EXISTS deposits",
     "DROP TABLE IF EXISTS orders",
@@ -306,6 +371,8 @@ export async function resetDatabaseSchema() {
 
 export async function resetLegacyDatabaseSchema() {
   const resetStatements = [
+    "DROP TABLE IF EXISTS deposit_order_duplicate_event_quarantine",
+    "DROP TABLE IF EXISTS deposit_order_duplicate_quarantine",
     "DROP TABLE IF EXISTS deposit_events",
     "DROP TABLE IF EXISTS deposits",
     "DROP TABLE IF EXISTS orders",
@@ -442,16 +509,106 @@ async function assertLegacyMigrationBackfill() {
       'pending',
       '{"status":"pending"}'
     )`,
+    `INSERT INTO orders (
+      tenant_id,
+      order_id,
+      user_id,
+      channel,
+      product_type,
+      amount_in_cents,
+      current_step,
+      status
+    ) VALUES ('alpha', 'order_legacy_duplicate_001', 'telegram_legacy_duplicate_001', 'telegram', 'depix', 2500, 'awaiting_payment', 'pending')`,
+    `INSERT INTO deposits (
+      tenant_id,
+      deposit_id,
+      order_id,
+      nonce,
+      qr_copy_paste,
+      qr_image_url,
+      external_status,
+      expiration,
+      created_at,
+      updated_at
+    ) VALUES (
+      'alpha',
+      'legacy_duplicate_pending_001',
+      'order_legacy_duplicate_001',
+      'nonce_legacy_duplicate_pending_001',
+      'pix-copy-paste-duplicate-pending',
+      'https://example.com/qr/duplicate-pending.png',
+      'pending',
+      '2026-04-18T04:00:00Z',
+      '2026-04-18T04:00:00Z',
+      '2026-04-18T04:00:00Z'
+    )`,
+    `INSERT INTO deposits (
+      tenant_id,
+      deposit_id,
+      order_id,
+      nonce,
+      qr_copy_paste,
+      qr_image_url,
+      external_status,
+      expiration,
+      created_at,
+      updated_at
+    ) VALUES (
+      'alpha',
+      'legacy_duplicate_paid_001',
+      'order_legacy_duplicate_001',
+      'nonce_legacy_duplicate_paid_001',
+      'pix-copy-paste-duplicate-paid',
+      'https://example.com/qr/duplicate-paid.png',
+      'depix_sent',
+      '2026-04-18T04:05:00Z',
+      '2026-04-18T04:05:00Z',
+      '2026-04-18T04:05:00Z'
+    )`,
+    `INSERT INTO deposit_events (
+      tenant_id,
+      order_id,
+      deposit_id,
+      source,
+      external_status,
+      raw_payload
+    ) VALUES (
+      'alpha',
+      'order_legacy_duplicate_001',
+      'legacy_duplicate_pending_001',
+      'webhook',
+      'pending',
+      '{"status":"pending","duplicate":true}'
+    )`,
   ];
 
   await env.DB.batch(legacyStatements.map((statement) => env.DB.prepare(statement)));
 
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const migratedDepositByEntryId = await getDepositByDepositEntryId(db, "alpha", "legacy_deposit_001");
   const migratedDepositByQrId = await getDepositByQrId(db, "alpha", "legacy_deposit_001");
   const migratedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "legacy_deposit_001");
+  const duplicateActiveDeposit = await getDepositByDepositEntryId(db, "alpha", "legacy_duplicate_paid_001");
+  const duplicatePendingDeposit = await getDepositByDepositEntryId(db, "alpha", "legacy_duplicate_pending_001");
+  const duplicateActiveCount = await env.DB
+    .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+    .bind("alpha", "order_legacy_duplicate_001")
+    .first();
+  const duplicateQuarantine = await env.DB
+    .prepare(`SELECT deposit_entry_id AS depositEntryId, canonical_deposit_entry_id AS canonicalDepositEntryId, quarantine_reason AS quarantineReason
+      FROM deposit_order_duplicate_quarantine
+      WHERE tenant_id = ? AND order_id = ? LIMIT 1`)
+    .bind("alpha", "order_legacy_duplicate_001")
+    .first();
+  const duplicateEventQuarantine = await env.DB
+    .prepare(`SELECT deposit_entry_id AS depositEntryId, canonical_deposit_entry_id AS canonicalDepositEntryId, raw_payload AS rawPayload
+      FROM deposit_order_duplicate_event_quarantine
+      WHERE tenant_id = ? AND order_id = ? LIMIT 1`)
+    .bind("alpha", "order_legacy_duplicate_001")
+    .first();
 
   expect(migratedDepositByEntryId?.depositEntryId).toBe("legacy_deposit_001");
   expect(migratedDepositByEntryId?.qrId).toBe("legacy_deposit_001");
@@ -459,6 +616,292 @@ async function assertLegacyMigrationBackfill() {
   expect(migratedEvents).toHaveLength(1);
   expect(migratedEvents[0]?.depositEntryId).toBe("legacy_deposit_001");
   expect(migratedEvents[0]?.qrId).toBe("legacy_deposit_001");
+  expect(duplicateActiveDeposit?.externalStatus).toBe("depix_sent");
+  expect(duplicatePendingDeposit).toBeNull();
+  expect(duplicateActiveCount?.count).toBe(1);
+  expect(duplicateQuarantine).toEqual({
+    depositEntryId: "legacy_duplicate_pending_001",
+    canonicalDepositEntryId: "legacy_duplicate_paid_001",
+    quarantineReason: "tenant_order_duplicate_before_unique_index",
+  });
+  expect(duplicateEventQuarantine).toEqual({
+    depositEntryId: "legacy_duplicate_pending_001",
+    canonicalDepositEntryId: "legacy_duplicate_paid_001",
+    rawPayload: '{"status":"pending","duplicate":true}',
+  });
+
+  await expect(createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "legacy_deposit_002",
+    qrId: "legacy_qr_002",
+    orderId: "order_legacy_001",
+    nonce: "nonce_legacy_002",
+    qrCopyPaste: "pix-copy-paste-2",
+    qrImageUrl: "https://example.com/qr/legacy-2.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:05:00Z",
+  })).rejects.toBeInstanceOf(DepositOrderUniquenessError);
+}
+
+async function assertDepositOrderUniquenessMigrationQuarantinesLegacyDuplicates() {
+  await resetLegacyDatabaseSchema();
+
+  const duplicateFixtureStatements = [
+    `INSERT INTO orders (
+      tenant_id,
+      order_id,
+      user_id,
+      channel,
+      product_type,
+      amount_in_cents,
+      current_step,
+      status
+    ) VALUES ('alpha', 'order_duplicate_legacy_001', 'telegram_duplicate_legacy_001', 'telegram', 'depix', 2500, 'awaiting_payment', 'pending')`,
+    `INSERT INTO deposits (
+      tenant_id,
+      deposit_id,
+      order_id,
+      nonce,
+      qr_copy_paste,
+      qr_image_url,
+      external_status,
+      expiration,
+      created_at,
+      updated_at
+    ) VALUES (
+      'alpha',
+      'legacy_duplicate_pending',
+      'order_duplicate_legacy_001',
+      'nonce_legacy_duplicate_pending',
+      'pix-pending',
+      'https://example.com/qr/pending.png',
+      'pending',
+      '2026-04-18T04:00:00Z',
+      '2026-04-18T04:00:00Z',
+      '2026-04-18T04:00:00Z'
+    )`,
+    `INSERT INTO deposits (
+      tenant_id,
+      deposit_id,
+      order_id,
+      nonce,
+      qr_copy_paste,
+      qr_image_url,
+      external_status,
+      expiration,
+      created_at,
+      updated_at
+    ) VALUES (
+      'alpha',
+      'legacy_duplicate_paid',
+      'order_duplicate_legacy_001',
+      'nonce_legacy_duplicate_paid',
+      'pix-paid',
+      'https://example.com/qr/paid.png',
+      'depix_sent',
+      '2026-04-18T04:05:00Z',
+      '2026-04-18T04:01:00Z',
+      '2026-04-18T04:01:00Z'
+    )`,
+    `INSERT INTO deposit_events (
+      tenant_id,
+      order_id,
+      deposit_id,
+      source,
+      external_status,
+      raw_payload
+    ) VALUES (
+      'alpha',
+      'order_duplicate_legacy_001',
+      'legacy_duplicate_pending',
+      'webhook',
+      'pending',
+      '{"status":"pending"}'
+    )`,
+  ];
+
+  await env.DB.batch(duplicateFixtureStatements.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+
+  const db = getDatabase(env);
+  const activeDeposits = await db
+    .prepare("SELECT deposit_entry_id AS depositEntryId FROM deposits WHERE tenant_id = ? AND order_id = ? ORDER BY deposit_entry_id")
+    .bind("alpha", "order_duplicate_legacy_001")
+    .all();
+  const quarantinedDeposit = await db
+    .prepare(`SELECT deposit_entry_id AS depositEntryId, canonical_deposit_entry_id AS canonicalDepositEntryId, quarantine_reason AS quarantineReason
+      FROM deposit_order_duplicate_quarantine
+      WHERE tenant_id = ? AND order_id = ? LIMIT 1`)
+    .bind("alpha", "order_duplicate_legacy_001")
+    .first();
+  const quarantinedEvent = await db
+    .prepare(`SELECT deposit_entry_id AS depositEntryId, canonical_deposit_entry_id AS canonicalDepositEntryId, quarantine_reason AS quarantineReason
+      FROM deposit_order_duplicate_event_quarantine
+      WHERE tenant_id = ? AND order_id = ? LIMIT 1`)
+    .bind("alpha", "order_duplicate_legacy_001")
+    .first();
+
+  expect(activeDeposits.results).toEqual([
+    {
+      depositEntryId: "legacy_duplicate_paid",
+    },
+  ]);
+  expect(quarantinedDeposit).toEqual({
+    depositEntryId: "legacy_duplicate_pending",
+    canonicalDepositEntryId: "legacy_duplicate_paid",
+    quarantineReason: "tenant_order_duplicate_before_unique_index",
+  });
+  expect(quarantinedEvent).toEqual({
+    depositEntryId: "legacy_duplicate_pending",
+    canonicalDepositEntryId: "legacy_duplicate_paid",
+    quarantineReason: "tenant_order_duplicate_before_unique_index",
+  });
+
+  await expect(createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "legacy_duplicate_after_migration",
+    qrId: "legacy_duplicate_qr_after_migration",
+    orderId: "order_duplicate_legacy_001",
+    nonce: "nonce_legacy_duplicate_after_migration",
+    qrCopyPaste: "pix-after-migration",
+    qrImageUrl: "https://example.com/qr/after-migration.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:10:00Z",
+  })).rejects.toBeInstanceOf(DepositOrderUniquenessError);
+}
+
+async function assertOneDepositPerOrderConstraint() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_unique_deposit_001",
+    userId: "telegram_unique_deposit_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "awaiting_payment",
+    status: "pending",
+  });
+
+  const firstDeposit = await createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_unique_order_001",
+    qrId: "qr_unique_order_001",
+    orderId: "order_unique_deposit_001",
+    nonce: "nonce_unique_order_001",
+    qrCopyPaste: "0002010102122688pix-unique-order-001",
+    qrImageUrl: "https://example.com/qr/unique-order-001.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:00:00Z",
+  });
+  const secondWrite = createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_unique_order_002",
+    qrId: "qr_unique_order_002",
+    orderId: "order_unique_deposit_001",
+    nonce: "nonce_unique_order_002",
+    qrCopyPaste: "0002010102122688pix-unique-order-002",
+    qrImageUrl: "https://example.com/qr/unique-order-002.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:05:00Z",
+  });
+
+  await expect(secondWrite).rejects.toMatchObject({
+    code: "deposit_order_already_has_deposit",
+    tenantId: "alpha",
+    orderId: "order_unique_deposit_001",
+    existingDeposit: expect.objectContaining({
+      depositEntryId: "deposit_unique_order_001",
+    }),
+  });
+
+  const persistedDeposits = await db
+    .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+    .bind("alpha", "order_unique_deposit_001")
+    .first();
+
+  expect(firstDeposit?.depositEntryId).toBe("deposit_unique_order_001");
+  expect(persistedDeposits?.count).toBe(1);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_concurrent_deposit_001",
+    userId: "telegram_concurrent_deposit_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "awaiting_payment",
+    status: "pending",
+  });
+
+  const concurrentWrites = await Promise.allSettled([
+    createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_concurrent_order_001",
+      qrId: "qr_concurrent_order_001",
+      orderId: "order_concurrent_deposit_001",
+      nonce: "nonce_concurrent_order_001",
+      qrCopyPaste: "0002010102122688pix-concurrent-order-001",
+      qrImageUrl: "https://example.com/qr/concurrent-order-001.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:10:00Z",
+    }),
+    createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_concurrent_order_002",
+      qrId: "qr_concurrent_order_002",
+      orderId: "order_concurrent_deposit_001",
+      nonce: "nonce_concurrent_order_002",
+      qrCopyPaste: "0002010102122688pix-concurrent-order-002",
+      qrImageUrl: "https://example.com/qr/concurrent-order-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:11:00Z",
+    }),
+  ]);
+  const concurrentDepositCount = await db
+    .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+    .bind("alpha", "order_concurrent_deposit_001")
+    .first();
+
+  expect(concurrentWrites.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  expect(concurrentWrites.filter((result) => result.status === "rejected" && result.reason instanceof DepositOrderUniquenessError)).toHaveLength(1);
+  expect(concurrentDepositCount?.count).toBe(1);
+}
+
+async function assertDepositOrderUniquenessErrorSurvivesMissingWinnerRead() {
+  const failingDb = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            first: async () => null,
+          };
+        },
+      };
+    },
+    batch: async () => {
+      throw new Error("UNIQUE constraint failed: deposits.tenant_id, deposits.order_id");
+    },
+  };
+
+  await expect(createDeposit(failingDb, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_missing_winner_001",
+    qrId: "qr_missing_winner_001",
+    orderId: "order_missing_winner_001",
+    nonce: "nonce_missing_winner_001",
+    qrCopyPaste: "0002010102122688pix-missing-winner-001",
+    qrImageUrl: "https://example.com/qr/missing-winner-001.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:00:00Z",
+  })).rejects.toMatchObject({
+    code: "deposit_order_already_has_deposit",
+    tenantId: "alpha",
+    orderId: "order_missing_winner_001",
+    existingDeposit: null,
+  });
 }
 
 async function assertGuardedOrderTransitionWrite() {
@@ -681,6 +1124,9 @@ async function assertTelegramChatHydrationContract() {
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
+  it("quarantines duplicate legacy deposits before adding the tenant/order uniqueness index", assertDepositOrderUniquenessMigrationQuarantinesLegacyDuplicates);
+  it("enforces one local deposit per tenant order", assertOneDepositPerOrderConstraint);
+  it("keeps uniqueness errors structured even when the winning deposit cannot be reread", assertDepositOrderUniquenessErrorSurvivesMissingWinnerRead);
   it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
   it("finds the latest open order for a tenant user without reviving terminal orders", assertLatestOpenOrderLookup);
   it("finds the latest terminal order only through the read-only latest-order lookup", assertLatestOrderLookupIncludesTerminalRowsForReadOnlyStatus);

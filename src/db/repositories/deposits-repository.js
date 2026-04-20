@@ -10,6 +10,87 @@
  */
 import { getAllowedPatchEntries } from "../client.js";
 
+/**
+ * Nome estavel do indice que materializa a invariavel financeira do MVP.
+ *
+ * A regra deliberada e mais estrita que "um deposito ativo": enquanto o produto
+ * nao tiver refund, split de cobranca ou nova cobranca dentro do mesmo pedido,
+ * um pedido local deve apontar para exatamente uma intencao Pix/DePix. Essa
+ * constante evita que migration, testes e heuristica de erro passem a falar
+ * nomes diferentes para a mesma barreira.
+ */
+export const DEPOSITS_TENANT_ORDER_UNIQUE_INDEX = "deposits_tenant_order_unique_idx";
+
+/**
+ * Erro estruturado para tentativa de criar mais de um deposito no mesmo pedido.
+ *
+ * O repositorio transforma a falha local em erro de dominio para que services
+ * possam tratar retry/concorrencia sem depender exclusivamente do texto do
+ * SQLite/D1. `existingDeposit` e anexado quando a leitura local consegue
+ * encontrar a cobranca que venceu a corrida.
+ */
+export class DepositOrderUniquenessError extends Error {
+  /**
+   * @param {{ tenantId: string, orderId: string, existingDeposit?: Record<string, unknown> | null, cause?: unknown }} input Contexto seguro.
+   */
+  constructor(input) {
+    super("A deposit already exists for this tenant/order pair.", {
+      cause: input.cause,
+    });
+
+    this.name = "DepositOrderUniquenessError";
+    this.code = "deposit_order_already_has_deposit";
+    this.tenantId = input.tenantId;
+    this.orderId = input.orderId;
+    this.existingDeposit = input.existingDeposit ?? null;
+    this.details = {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+      existingDepositEntryId: input.existingDeposit?.depositEntryId ?? null,
+      indexName: DEPOSITS_TENANT_ORDER_UNIQUE_INDEX,
+    };
+  }
+}
+
+/**
+ * Reconhece a familia de falhas unicas exposta pelo D1/SQLite.
+ *
+ * O runtime de Workers nao fornece hoje um `constraintName` estruturado para
+ * todos os erros D1. Este predicado fica restrito a falhas de unicidade para
+ * impedir que problemas de transporte, sintaxe SQL ou permissao sejam tratados
+ * como idempotencia segura apenas porque o pedido ja tem deposito local.
+ *
+ * @param {unknown} error Erro vindo do D1/SQLite.
+ * @returns {boolean} Verdadeiro quando a falha pertence a uma constraint unica.
+ */
+function isUniqueConstraintViolation(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+
+  return message.includes("unique constraint")
+    || message.includes("constraint_unique")
+    || message.includes("sqlite_constraint_unique")
+    || message.includes(DEPOSITS_TENANT_ORDER_UNIQUE_INDEX);
+}
+
+/**
+ * Reconhece mensagens conhecidas da barreira `tenant_id + order_id`.
+ *
+ * Esta funcao e uma segunda linha de defesa. O caminho principal de
+ * `createDeposit()` primeiro rele o pedido: se ja existe deposito local para o
+ * par `tenant/order`, o erro vira `DepositOrderUniquenessError` mesmo que a
+ * mensagem concreta do banco mude. A heuristica abaixo so cobre o caso raro em
+ * que o banco acusa a constraint mas a releitura ainda nao encontra a linha.
+ *
+ * @param {unknown} error Erro vindo do D1/SQLite.
+ * @returns {boolean} Verdadeiro quando a constraint atingida e a de pedido.
+ */
+function isDepositOrderUniquenessViolation(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+
+  return message.includes(DEPOSITS_TENANT_ORDER_UNIQUE_INDEX)
+    || message.includes("deposits.tenant_id, deposits.order_id");
+}
+
 const DEPOSIT_SELECT_SQL = `
   SELECT
     tenant_id AS tenantId,
@@ -116,9 +197,26 @@ export async function createDeposit(db, input) {
     deposit.tenantId,
     deposit.depositEntryId,
   );
-  const [, selectResult] = await db.batch([insertStatement, selectStatement]);
+  try {
+    const [, selectResult] = await db.batch([insertStatement, selectStatement]);
 
-  return selectResult.results[0];
+    return selectResult.results[0];
+  } catch (error) {
+    const existingDeposit = isUniqueConstraintViolation(error)
+      ? await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId)
+      : null;
+
+    if (existingDeposit || isDepositOrderUniquenessViolation(error)) {
+      throw new DepositOrderUniquenessError({
+        tenantId: deposit.tenantId,
+        orderId: deposit.orderId,
+        existingDeposit,
+        cause: error,
+      });
+    }
+
+    throw error;
+  }
 }
 
 /**
