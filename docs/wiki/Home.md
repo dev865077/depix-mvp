@@ -28,8 +28,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o fallback por janela via `POST /ops/:tenantId/reconcile/deposits` ja reconcilia linhas compactas da Eulen por `qrId`
 - a conciliacao de pagamento agora pode disparar notificacao assincrona no Telegram quando o estado visivel do pedido muda para confirmacao
 - a notificacao assincrona do Telegram foi desenhada para ser idempotente e nao repetir a mesma mensagem em webhook, recheck ou fallback
-- a triagem de issues com impacto medio ou alto agora pode abrir uma Discussion de planning review antes da implementacao
-- a planning review roda quatro papeis especializados e exige aprovacao unanime para tratar a issue como pronta
+- a triagem de issues agora publica rota canonica na issue sem criar Discussion prematura
+- quando a rota exigir planning, a planning review cria ou reutiliza uma unica Discussion via API, roda quatro papeis especializados e so libera Codex com `ready_for_codex: true`
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar
 - o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa

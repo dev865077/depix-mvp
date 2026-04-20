@@ -6,22 +6,29 @@ import { describe, expect, it } from "vitest";
 import {
   buildDiscussionHistoryContext,
   buildIssueCommentContext,
+  buildIssuePlanningDiscussionBody,
   buildIssuePlanningCompletionComment,
+  buildIssuePlanningStatusComment,
   buildIssuePlanningReviewComments,
   buildIssuePlanningUserPrompt,
   buildModelFailureMemo,
   evaluateIssuePlanningRecommendation,
+  extractIssueTriageRouteFromComment,
+  extractIssueTriageRouteFromComments,
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  findMatchingIssuePlanningDiscussionNumber,
   isAutomatedIssueMetaComment,
   isAutomatedIssueMetaCommentBody,
   isAutomatedPlanningComment,
   isAutomatedPlanningCommentBody,
   isAutomationDiscussionCommentEvent,
+  isIssuePlanningHandoffCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
   resolvePlanningConcurrencyTarget,
+  selectPlanningDiscussionCategory,
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
@@ -45,6 +52,40 @@ describe("ai issue planning review", () => {
         comment: { author: { login: "dev865077" } },
       }),
     ).toBe(false);
+  });
+
+  it("only treats automated triage issue comments as planning handoffs", () => {
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
+      issue: { number: 213 },
+      comment: {
+        user: { login: "github-actions[bot]" },
+        body: [
+          "<!-- ai-issue-triage:openai -->",
+          "Rota canonica: `discussion_before_pr`",
+        ].join("\n"),
+      },
+    })).toBe(true);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
+      issue: { number: 213 },
+      comment: { user: { login: "github-actions[bot]" }, body: "comentario humano comum" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
+      issue: { number: 215, pull_request: {} },
+      comment: { user: { login: "github-actions[bot]" }, body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "edited",
+      issue: { number: 213 },
+      comment: { user: { login: "github-actions[bot]" }, body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
+      issue: { number: 213 },
+      comment: { user: { login: "dev865077" }, body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
   });
 
   it("drops stale automated planning comments while keeping human replies", () => {
@@ -167,6 +208,55 @@ describe("ai issue planning review", () => {
     expect(resolvePlanningConcurrencyTarget({})).toBeNull();
   });
 
+  it("reads triage handoff routes and selects a planning category", () => {
+    const triageBody = [
+      "<!-- ai-issue-triage:openai -->",
+      "## AI Issue Triage",
+      "Rota canonica: `discussion_before_pr`",
+    ].join("\n");
+    const legacyDirectBody = "Fluxo recomendado: `PR direta`";
+    const legacyDiscussionBody = "Fluxo recomendado: `Discussion antes da PR`";
+    const categories = [
+      { id: "1", name: "General", isAnswerable: false },
+      { id: "2", name: "Ideas", isAnswerable: false },
+      { id: "3", name: "Q&A", isAnswerable: true },
+    ];
+
+    expect(extractIssueTriageRouteFromComment(triageBody)).toBe("discussion_before_pr");
+    expect(extractIssueTriageRouteFromComment(legacyDirectBody)).toBe("direct_pr");
+    expect(extractIssueTriageRouteFromComment(legacyDiscussionBody)).toBe("discussion_before_pr");
+    expect(extractIssueTriageRouteFromComments([
+      { user: { login: "github-actions[bot]" }, body: triageBody },
+    ])).toBe("discussion_before_pr");
+    expect(selectPlanningDiscussionCategory(categories, "Ideas").id).toBe("2");
+    expect(selectPlanningDiscussionCategory(categories, "Missing").id).toBe("2");
+  });
+
+  it("builds the API-owned planning discussion body", () => {
+    const body = buildIssuePlanningDiscussionBody({
+      number: 213,
+      title: "Automatizar fluxo",
+      html_url: "https://github.com/dev865077/depix-mvp/issues/213",
+      body: "Issue detalhada.",
+    }, "Rota canonica: `discussion_before_pr`");
+
+    expect(body).toContain("Issue origem: #213");
+    expect(body).toContain("Discussion canonica de planning");
+    expect(body).toContain("canonical_state: `issue_planning_in_progress`");
+    expect(body).toContain("ready_for_codex: `false`");
+    expect(body).toContain("Rota canonica: `discussion_before_pr`");
+  });
+
+  it("finds an existing canonical planning discussion before creating a new one", () => {
+    expect(findMatchingIssuePlanningDiscussionNumber(213, [
+      { number: 210, title: "[PR #209] Improve Telegram QR payment guidance" },
+      { number: 216, title: "[Issue #213] Automatizar fluxo canonico" },
+    ])).toBe(216);
+    expect(findMatchingIssuePlanningDiscussionNumber(214, [
+      { number: 216, title: "[Issue #213] Automatizar fluxo canonico" },
+    ])).toBeNull();
+  });
+
   it("parses referenced child issues from the root issue body", () => {
     const issueNumbers = parseReferencedIssueNumbers(
       [
@@ -241,16 +331,35 @@ describe("ai issue planning review", () => {
     const blockedCompletion = buildIssuePlanningCompletionComment("Blocked", ["scrum"]);
     const completion = buildIssuePlanningCompletionComment("Request changes", ["scrum", "risk"]);
     const followUpApproved = buildIssuePlanningCompletionComment("Approve", [], { isFollowUpRound: true });
+    const issueReadyStatus = buildIssuePlanningStatusComment(
+      "Approve",
+      "https://github.com/dev865077/depix-mvp/discussions/212",
+      [],
+    );
+    const issueBlockedStatus = buildIssuePlanningStatusComment(
+      "Blocked",
+      "https://github.com/dev865077/depix-mvp/discussions/212",
+      ["technical"],
+    );
 
     expect(comments).toHaveLength(4);
     expect(comments[2].body).toContain("<!-- ai-issue-planning-role:scrum -->");
     expect(blockedCompletion).toContain("well specified, but execution is still blocked");
     expect(blockedCompletion).toContain("`Blocked`");
+    expect(blockedCompletion).toContain("canonical_state: `issue_planning_blocked`");
+    expect(blockedCompletion).toContain("ready_for_codex: `false`");
     expect(completion).toContain("Execution readiness requires unanimous `Approve`");
     expect(completion).toContain("`scrum`");
     expect(completion).toContain("`risk`");
     expect(followUpApproved).toContain("Why this passed now");
     expect(followUpApproved).toContain("resolved the previous planning blockers");
+    expect(followUpApproved).toContain("canonical_state: `issue_ready_for_codex`");
+    expect(followUpApproved).toContain("next_actor: `codex`");
+    expect(issueReadyStatus).toContain("<!-- ai-issue-planning-status:openai -->");
+    expect(issueReadyStatus).toContain("ready_for_codex: `true`");
+    expect(issueReadyStatus).toContain("next_action: `open_branch_and_pr`");
+    expect(issueBlockedStatus).toContain("blocked_by_dependencies: `true`");
+    expect(issueBlockedStatus).toContain("blocking_roles: `technical`");
   });
 
   it("builds prompt context with child issues and discussion history", () => {

@@ -448,10 +448,14 @@ describe("ai pr review discussion rendering", () => {
     expect(approved).toContain("all specialist reviewer roles returned `Approve`");
     expect(approved).toContain("`synthesis` is summary-only");
     expect(approved).toContain("newest final-status comment supersedes earlier automated final-status comments");
+    expect(approved).toContain("canonical_state: `pr_ready_to_merge`");
+    expect(approved).toContain("ready_for_merge: `true`");
     expect(blocked).toContain("Final recommendation: `Request changes`");
     expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
     expect(blocked).toContain("`risk`");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
+    expect(blocked).toContain("canonical_state: `pr_review_request_changes`");
+    expect(blocked).toContain("ready_for_merge: `false`");
     expect(followUpApproved).toContain("Why this passed now");
     expect(followUpApproved).toContain("resolved the prior blockers");
   });

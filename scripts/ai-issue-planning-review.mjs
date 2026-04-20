@@ -17,8 +17,11 @@ import { fileURLToPath } from "node:url";
  */
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-issue-planning-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-issue-planning-final:openai -->";
+const ISSUE_PLANNING_STATUS_MARKER = "<!-- ai-issue-planning-status:openai -->";
 const ISSUE_TRIAGE_COMMENT_MARKER = "<!-- ai-issue-triage:openai -->";
 const ISSUE_TITLE_PREFIX = "[Issue #";
+const ROUTE_DIRECT_PR = "direct_pr";
+const ROUTE_DISCUSSION_BEFORE_PR = "discussion_before_pr";
 
 /**
  * Prompt-budget limits for issue and Discussion context.
@@ -310,6 +313,115 @@ async function fetchRecentDiscussions(owner, name) {
   const data = await githubGraphqlRequest(query, { owner, name });
 
   return data?.repository?.discussions?.nodes ?? [];
+}
+
+/**
+ * Fetch repository metadata needed to create an issue-planning Discussion.
+ *
+ * @param {string} owner Repository owner.
+ * @param {string} name Repository name.
+ * @returns {Promise<{
+ *   id: string,
+ *   hasDiscussionsEnabled: boolean,
+ *   discussionCategories: { nodes: Array<{ id: string, name: string, isAnswerable: boolean }> },
+ * }>} Repository metadata.
+ */
+async function fetchRepositoryDiscussionMetadata(owner, name) {
+  const query = `
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        id
+        hasDiscussionsEnabled
+        discussionCategories(first: 20) {
+          nodes {
+            id
+            name
+            isAnswerable
+          }
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, { owner, name });
+  const repository = data?.repository;
+
+  if (!repository) {
+    throw new Error("GitHub GraphQL response did not include repository metadata.");
+  }
+
+  if (repository.hasDiscussionsEnabled !== true) {
+    throw new Error("GitHub Discussions is not enabled for this repository.");
+  }
+
+  return repository;
+}
+
+/**
+ * Choose a stable category for automated issue-planning Discussions.
+ *
+ * Selection order is configured category, `Ideas`, `General`, first
+ * non-answerable category, then first category. This keeps the API-only
+ * planning lane deterministic without requiring manual category setup.
+ *
+ * @param {Array<{ id: string, name: string, isAnswerable: boolean }>} categories Repository categories.
+ * @param {string} [preferredName] Configured category name.
+ * @returns {{ id: string, name: string, isAnswerable: boolean }} Selected category.
+ */
+export function selectPlanningDiscussionCategory(categories, preferredName = "") {
+  if (!Array.isArray(categories) || categories.length === 0) {
+    throw new Error("No GitHub Discussion categories are available in this repository.");
+  }
+
+  const normalizedPreferredName = preferredName.trim().toLowerCase();
+
+  if (normalizedPreferredName) {
+    const preferredCategory = categories.find((category) => category.name.toLowerCase() === normalizedPreferredName);
+
+    if (preferredCategory) {
+      return preferredCategory;
+    }
+  }
+
+  return categories.find((category) => category.name.toLowerCase() === "ideas")
+    ?? categories.find((category) => category.name.toLowerCase() === "general")
+    ?? categories.find((category) => category.isAnswerable !== true)
+    ?? categories[0];
+}
+
+/**
+ * Create one GitHub Discussion for issue planning.
+ *
+ * @param {string} repositoryId Repository GraphQL node id.
+ * @param {string} categoryId Discussion category node id.
+ * @param {string} title Discussion title.
+ * @param {string} body Discussion body.
+ * @returns {Promise<{ id: string, number: number, url: string }>} Created discussion metadata.
+ */
+async function createPlanningDiscussion(repositoryId, categoryId, title, body) {
+  const mutation = `
+    mutation($repositoryId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
+      createDiscussion(input: {
+        repositoryId: $repositoryId,
+        categoryId: $categoryId,
+        title: $title,
+        body: $body
+      }) {
+        discussion {
+          id
+          number
+          url
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(mutation, { repositoryId, categoryId, title, body });
+  const discussion = data?.createDiscussion?.discussion;
+
+  if (!discussion?.number || !discussion?.url) {
+    throw new Error("GitHub GraphQL response did not include the created issue-planning Discussion.");
+  }
+
+  return discussion;
 }
 
 /**
@@ -805,6 +917,7 @@ export function isAutomatedIssueMetaCommentBody(body) {
   const trimmedBody = body.trimStart();
 
   return trimmedBody.startsWith(ISSUE_TRIAGE_COMMENT_MARKER)
+    || trimmedBody.startsWith(ISSUE_PLANNING_STATUS_MARKER)
     || trimmedBody.startsWith(DISCUSSION_COMMENT_MARKER)
     || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
 }
@@ -823,6 +936,138 @@ export function isAutomatedIssueMetaComment(comment) {
 
   return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
     && isAutomatedIssueMetaCommentBody(comment?.body);
+}
+
+/**
+ * Find the newest automated triage comment on an issue.
+ *
+ * @param {any[]} comments REST issue comments.
+ * @returns {any | null} Latest triage comment or null.
+ */
+function findLatestTriageComment(comments) {
+  return [...comments]
+    .reverse()
+    .find((comment) => {
+      const authorLogin = comment?.user?.login;
+
+      return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+        && typeof comment?.body === "string"
+        && comment.body.trimStart().startsWith(ISSUE_TRIAGE_COMMENT_MARKER);
+    }) ?? null;
+}
+
+/**
+ * Extract the canonical triage route from the sticky triage comment.
+ *
+ * The parser accepts the new raw route line and older Portuguese labels so
+ * planning reruns remain compatible with issues triaged before this contract.
+ *
+ * @param {string | null | undefined} body Triage comment body.
+ * @returns {"direct_pr" | "discussion_before_pr" | null} Parsed route.
+ */
+export function extractIssueTriageRouteFromComment(body) {
+  if (typeof body !== "string" || body.trim().length === 0) {
+    return null;
+  }
+
+  const rawRouteMatch = body.match(/(?:Rota canonica|route)\s*:\s*`?(direct_pr|discussion_before_pr)`?/i);
+
+  if (rawRouteMatch?.[1] === ROUTE_DIRECT_PR || rawRouteMatch?.[1] === ROUTE_DISCUSSION_BEFORE_PR) {
+    return rawRouteMatch[1];
+  }
+
+  if (/Fluxo recomendado:\s*`?Discussion antes da PR`?/i.test(body)) {
+    return ROUTE_DISCUSSION_BEFORE_PR;
+  }
+
+  if (/Fluxo recomendado:\s*`?PR direta`?/i.test(body)) {
+    return ROUTE_DIRECT_PR;
+  }
+
+  return null;
+}
+
+/**
+ * Extract the current triage route from issue comments.
+ *
+ * @param {any[]} comments REST issue comments.
+ * @returns {"direct_pr" | "discussion_before_pr" | null} Parsed route.
+ */
+export function extractIssueTriageRouteFromComments(comments) {
+  const triageComment = findLatestTriageComment(comments);
+
+  return triageComment ? extractIssueTriageRouteFromComment(triageComment.body) : null;
+}
+
+/**
+ * Build the root body for an issue-planning Discussion.
+ *
+ * @param {any} issue GitHub issue payload.
+ * @param {string | null} triageCommentBody Latest triage comment body.
+ * @returns {string} Markdown Discussion body.
+ */
+export function buildIssuePlanningDiscussionBody(issue, triageCommentBody = null) {
+  return [
+    `Issue origem: #${issue.number} - [${issue.title}](${issue.html_url ?? issue.url})`,
+    "",
+    "## Contrato",
+    "Esta e a Discussion canonica de planning desta issue. Ela e criada e evoluida somente pela automacao via GitHub API ate produzir um estado canônico final.",
+    "",
+    "## Estado canonico inicial",
+    "canonical_state: `issue_planning_in_progress`",
+    "next_actor: `ai_issue_planning_review`",
+    "next_action: `run_four_specialist_review`",
+    "ready_for_codex: `false`",
+    "ready_for_branch: `false`",
+    "ready_for_pr: `false`",
+    "",
+    "## Contexto da issue",
+    truncateText(issue.body ?? "[sem descricao]", MAX_ISSUE_BODY_CHARS),
+    "",
+    "## Triage",
+    truncateText(triageCommentBody ?? "[sem triage automatica encontrada]", MAX_ISSUE_COMMENT_CHARS),
+  ].join("\n");
+}
+
+/**
+ * Build the issue-visible planning status comment consumed by Codex.
+ *
+ * @param {"Approve" | "Blocked" | "Request changes"} recommendation Final recommendation.
+ * @param {string} discussionUrl Planning Discussion URL.
+ * @param {string[]} [blockingRoles] Specialist roles still blocking.
+ * @returns {string} Markdown issue status body.
+ */
+export function buildIssuePlanningStatusComment(recommendation, discussionUrl, blockingRoles = []) {
+  const isApproved = recommendation === "Approve";
+  const isBlocked = recommendation === "Blocked";
+  const canonicalState = isApproved
+    ? "issue_ready_for_codex"
+    : isBlocked
+      ? "issue_planning_blocked"
+      : "issue_planning_request_changes";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
+  const blockerLine = !isApproved && blockingRoles.length > 0
+    ? `blocking_roles: \`${blockingRoles.join(",")}\``
+    : "blocking_roles: ``";
+
+  return [
+    ISSUE_PLANNING_STATUS_MARKER,
+    "## AI Issue Planning Status",
+    "",
+    `Planning Discussion: ${discussionUrl}`,
+    `Final recommendation: \`${recommendation}\``,
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${canonicalState}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_codex: \`${String(isApproved)}\``,
+    `ready_for_branch: \`${String(isApproved)}\``,
+    `ready_for_pr: \`${String(isApproved)}\``,
+    `blocked_by_dependencies: \`${String(isBlocked)}\``,
+    blockerLine,
+  ].join("\n");
 }
 
 /**
@@ -996,6 +1241,13 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
+  const canonicalState = isApproved
+    ? "issue_ready_for_codex"
+    : isBlocked
+      ? "issue_planning_blocked"
+      : "issue_planning_request_changes";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
   const policyLine =
     "Execution readiness requires unanimous `Approve` from `product`, `technical`, `scrum`, and `risk`.";
   const canonicalLine =
@@ -1011,6 +1263,15 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
     ...(blockerLine ? [blockerLine] : []),
     policyLine,
     canonicalLine,
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${canonicalState}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_codex: \`${String(isApproved)}\``,
+    `ready_for_branch: \`${String(isApproved)}\``,
+    `ready_for_pr: \`${String(isApproved)}\``,
+    `blocked_by_dependencies: \`${String(isBlocked)}\``,
     "",
     `Final recommendation: \`${recommendation}\``,
   ].join("\n");
@@ -1040,6 +1301,45 @@ async function createDiscussionComment(discussionId, body, replyToId = null) {
     }
   `;
   await githubGraphqlRequest(mutation, { discussionId, body, replyToId });
+}
+
+/**
+ * Create or update the issue-visible planning status comment.
+ *
+ * The issue comment is the handoff consumed by Codex after the API-only issue
+ * planning lane finishes. It is sticky to avoid making Codex infer state from
+ * a long Discussion history.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber Issue number.
+ * @param {string} body Markdown body.
+ * @returns {Promise<void>} Resolves when the status is persisted.
+ */
+async function upsertIssuePlanningStatusComment(repoFullName, issueNumber, body) {
+  const comments = await fetchIssueComments(repoFullName, issueNumber);
+  const existingComment = comments.find((comment) => {
+    const authorLogin = comment?.user?.login;
+
+    return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+      && typeof comment?.body === "string"
+      && comment.body.trimStart().startsWith(ISSUE_PLANNING_STATUS_MARKER);
+  });
+
+  if (existingComment) {
+    await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/comments/${existingComment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    });
+
+    return;
+  }
+
+  await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/${issueNumber}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
 }
 
 /**
@@ -1118,6 +1418,23 @@ function extractDiscussionNumberFromUrl(url) {
 }
 
 /**
+ * Find an existing issue-planning Discussion by canonical issue title marker.
+ *
+ * This pure matcher is the dedupe contract used before creating a Discussion.
+ * It keeps manual backfill and reruns from opening duplicate planning threads.
+ *
+ * @param {number} issueNumber Issue number.
+ * @param {Array<{ number?: number, title?: string | null }>} discussions Recent Discussions.
+ * @returns {number | null} Existing Discussion number when found.
+ */
+export function findMatchingIssuePlanningDiscussionNumber(issueNumber, discussions) {
+  const matchingDiscussion = discussions.find((discussion) =>
+    typeof discussion.title === "string" && discussion.title.includes(`${ISSUE_TITLE_PREFIX}${issueNumber}]`));
+
+  return matchingDiscussion?.number ?? null;
+}
+
+/**
  * Detect whether the current event comment came from the automation bot.
  *
  * This guard prevents append-only comments published by the workflow from
@@ -1133,6 +1450,36 @@ export function isAutomationDiscussionCommentEvent(event) {
 
   const commentAuthor = event.comment.user?.login || event.comment.author?.login;
   return commentAuthor === "github-actions[bot]";
+}
+
+/**
+ * Detect the only issue-comment event that is allowed to start planning.
+ *
+ * The workflow-level `if` uses the same marker, and this script-level guard is
+ * the fail-closed backup. Plain issue comments, planning status comments, and
+ * PR comments must not create or rerun issue-planning Discussions.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {boolean} True only for automated triage handoff comments on issues.
+ */
+export function isIssuePlanningHandoffCommentEvent(event) {
+  if (!event?.comment || !event?.issue || event.issue.pull_request) {
+    return false;
+  }
+
+  if (event.action && event.action !== "created") {
+    return false;
+  }
+
+  const commentAuthor = event.comment.user?.login || event.comment.author?.login;
+
+  if (commentAuthor !== "github-actions[bot]" && commentAuthor !== "github-actions") {
+    return false;
+  }
+
+  const body = typeof event.comment.body === "string" ? event.comment.body : "";
+
+  return body.includes(ISSUE_TRIAGE_COMMENT_MARKER);
 }
 
 /**
@@ -1203,10 +1550,47 @@ async function findIssueDiscussionNumber(owner, name, issueNumber, comments) {
   }
 
   const discussions = await fetchRecentDiscussions(owner, name);
-  const matchingDiscussion = discussions.find((discussion) =>
-    typeof discussion.title === "string" && discussion.title.includes(`${ISSUE_TITLE_PREFIX}${issueNumber}]`));
 
-  return matchingDiscussion?.number ?? null;
+  return findMatchingIssuePlanningDiscussionNumber(issueNumber, discussions);
+}
+
+/**
+ * Create or reuse the canonical planning Discussion for one issue.
+ *
+ * Triage no longer creates Discussions. This function centralizes the API-only
+ * planning lane so direct issues stay in issue comments, while complex issues
+ * get exactly one four-specialist Discussion.
+ *
+ * @param {string} owner Repository owner.
+ * @param {string} name Repository name.
+ * @param {any} issue GitHub issue payload.
+ * @param {any[]} issueComments Current issue comments.
+ * @returns {Promise<any>} Full Discussion payload.
+ */
+async function resolveIssuePlanningDiscussion(owner, name, issue, issueComments) {
+  const existingDiscussionNumber = await findIssueDiscussionNumber(owner, name, issue.number, issueComments);
+
+  if (existingDiscussionNumber) {
+    return fetchDiscussionByNumber(owner, name, existingDiscussionNumber);
+  }
+
+  const repositoryMetadata = await fetchRepositoryDiscussionMetadata(owner, name);
+  const preferredCategory = process.env.AI_ISSUE_PLANNING_DISCUSSION_CATEGORY?.trim()
+    || process.env.AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY?.trim()
+    || "Ideas";
+  const category = selectPlanningDiscussionCategory(repositoryMetadata.discussionCategories.nodes, preferredCategory);
+  const triageComment = findLatestTriageComment(issueComments);
+  const title = `${ISSUE_TITLE_PREFIX}${issue.number}] ${issue.title}`;
+  const body = buildIssuePlanningDiscussionBody(issue, triageComment?.body ?? null);
+  const createdDiscussion = await createPlanningDiscussion(repositoryMetadata.id, category.id, title, body);
+
+  logOperationalEvent("ai_issue_planning_review.discussion.created", {
+    issueNumber: issue.number,
+    discussionNumber: createdDiscussion.number,
+    discussionUrl: createdDiscussion.url,
+  });
+
+  return fetchDiscussionByNumber(owner, name, createdDiscussion.number);
 }
 
 /**
@@ -1259,19 +1643,28 @@ async function resolvePlanningContext(event, owner, name, repository) {
     }
 
     const issueComments = await fetchIssueComments(repository, issue.number);
-    const discussionNumber = await findIssueDiscussionNumber(owner, name, issue.number, issueComments);
-
-    if (!discussionNumber) {
-      throw new Error(`Manual planning rerun for issue #${issue.number} could not find a linked Discussion.`);
-    }
-
-    const discussion = await fetchDiscussionByNumber(owner, name, discussionNumber);
+    const discussion = await resolveIssuePlanningDiscussion(owner, name, issue, issueComments);
     return { issue, discussion };
   }
 
-  // Issue-triggered runs first try to locate the triage Discussion that owns
-  // planning for this issue. If triage has not opened it yet, the workflow
-  // exits quietly and waits for the Discussion-side trigger.
+  if (event.comment && event.issue?.pull_request) {
+    logOperationalEvent("ai_issue_planning_review.skip", {
+      reason: "issue_comment_on_pull_request",
+      issueNumber: event.issue.number,
+    });
+    return null;
+  }
+
+  if (event.comment && event.issue && !isIssuePlanningHandoffCommentEvent(event)) {
+    logOperationalEvent("ai_issue_planning_review.skip", {
+      reason: "issue_comment_not_triage_handoff",
+      issueNumber: event.issue.number,
+    });
+    return null;
+  }
+
+  // Issue-triggered and triage-comment-triggered runs only enter the planning
+  // lane when the sticky triage contract explicitly routes to planning.
   if (event.issue && !event.issue.pull_request) {
     if (event.issue.state !== "open") {
       logOperationalEvent("ai_issue_planning_review.skip", {
@@ -1282,17 +1675,18 @@ async function resolvePlanningContext(event, owner, name, repository) {
     }
 
     const issueComments = await fetchIssueComments(repository, event.issue.number);
-    const discussionNumber = await findIssueDiscussionNumber(owner, name, event.issue.number, issueComments);
+    const triageRoute = extractIssueTriageRouteFromComments(issueComments);
 
-    if (!discussionNumber) {
+    if (triageRoute !== ROUTE_DISCUSSION_BEFORE_PR) {
       logOperationalEvent("ai_issue_planning_review.skip", {
-        reason: "no_discussion_for_issue",
+        reason: "issue_not_routed_to_planning",
         issueNumber: event.issue.number,
+        triageRoute,
       });
       return null;
     }
 
-    const discussion = await fetchDiscussionByNumber(owner, name, discussionNumber);
+    const discussion = await resolveIssuePlanningDiscussion(owner, name, event.issue, issueComments);
     return { issue: event.issue, discussion };
   }
 
@@ -1461,6 +1855,12 @@ async function main() {
       { isFollowUpRound: Boolean(latestFinalComment) },
     ),
     latestFinalComment?.id ?? null,
+  );
+
+  await upsertIssuePlanningStatusComment(
+    repository,
+    context.issue.number,
+    buildIssuePlanningStatusComment(evaluation.recommendation, context.discussion.url, evaluation.blockingRoles),
   );
 
   const lifecycleState = await syncDiscussionLifecycle(context.discussion.id, evaluation.recommendation);
