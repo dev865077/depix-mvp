@@ -87,37 +87,12 @@ Essa opcao nao e compromisso de implementacao no MVP. Ela so deve ser considerad
 
 - volume operacional
 - liquidez
-- compliance
-- custodia ou emissao
-- integracao com rails externos
-- governanca financeira
-- risco de contraparte
+- cobertura regulatoria
+- desenho de compliance
+- arquitetura de custodia e liquidacao
 
-Enquanto isso nao existir, a documentacao deve tratar stablecoin propria como direcao possivel, nao como requisito atual.
+## Como ler esta pagina
 
-## Fora do MVP atual
+Leia esta visao como direcao de produto e plataforma, nao como requisito escondido do MVP atual.
 
-Esta visao futura nao autoriza misturar escopos no MVP.
-
-Continuam fora do MVP atual:
-
-- marketplace generico
-- painel administrativo completo
-- checkout multi-moeda
-- emissao de stablecoin
-- suporte operacional internacional completo
-- automacao de entrega para todos os tipos de produto
-- integracoes de pagamento alem da vertical DePix/Eulen
-
-Esses itens podem virar backlog futuro, mas devem passar por issues, planning review e PRs proprias.
-
-## Regra de documentacao
-
-Quando uma pagina falar do estado atual, ela deve usar linguagem de MVP.
-
-Quando uma pagina falar da direcao futura, ela deve deixar explicito que se trata de visao de plataforma.
-
-Essa separacao evita duas falhas:
-
-- vender o MVP atual como plataforma completa
-- documentar o produto como se a vertical DePix fosse o limite final
+Quando um item daqui virar prioridade real, ele deve entrar em issue propria, passar pela triagem e aparecer no roadmap com escopo explicito.
