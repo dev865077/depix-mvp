@@ -336,6 +336,11 @@ export async function handleDepositsFallback(c) {
       requestId: c.get("requestId"),
     });
 
+    /**
+     * Cada linha reparada ganha seu proprio task de background. Isso evita um
+     * task unico e longo demais e garante que uma falha outbound nao impeça o
+     * agendamento das demais notificacoes desta janela.
+     */
     for (const entry of result.details.results ?? []) {
       await dispatchNonBlockingTask(c, notifyTelegramOrderTransitionSafely({
         env: c.env,
