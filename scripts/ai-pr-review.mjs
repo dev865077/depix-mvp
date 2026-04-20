@@ -1484,8 +1484,7 @@ function buildLatestConclusionThreadContext(finalComment) {
       })),
   ];
   const latestAutomatedEntry = automatedEntries.at(-1);
-  const humanReplies = (finalComment.replies?.nodes ?? [])
-    .filter((reply) => !isAutomatedDiscussionReply(reply))
+  const humanReplies = getLatestHumanConclusionThreadReplies(finalComment.replies?.nodes ?? [])
     .filter((reply) => typeof reply?.body === "string" && reply.body.trim().length > 0)
     .map((reply) => [
       `#### reply by ${reply.author?.login ?? "unknown"} @ ${reply.createdAt ?? "unknown time"}`,
@@ -1612,7 +1611,7 @@ export function extractFollowUpTestableBlockers(finalCommentBody) {
 export function extractConclusionThreadTestFileCitations(replies) {
   const citedPaths = [];
 
-  for (const reply of Array.isArray(replies) ? replies : []) {
+  for (const reply of getLatestHumanConclusionThreadReplies(replies)) {
     if (isAutomatedDiscussionReply(reply)) {
       continue;
     }
@@ -1625,6 +1624,48 @@ export function extractConclusionThreadTestFileCitations(replies) {
   }
 
   return citedPaths;
+}
+
+/**
+ * Select only the latest human-authored handoff replies from one conclusion
+ * thread.
+ *
+ * Root final comments stay append-only, so later rounds coexist in the same
+ * reply list. The canonical current handoff is the contiguous human-authored
+ * suffix that appears after the last automated reply in that thread.
+ *
+ * @param {Array<{ body?: string, author?: { login?: string } }>} replies Discussion reply payloads.
+ * @returns {Array<any>} Latest human handoff replies in original order.
+ */
+function getLatestHumanConclusionThreadReplies(replies) {
+  const allReplies = Array.isArray(replies) ? replies : [];
+  const latestAutomatedReplyIndex = allReplies.findLastIndex((reply) => isAutomatedDiscussionReply(reply));
+  const latestRoundReplies = latestAutomatedReplyIndex >= 0
+    ? allReplies.slice(latestAutomatedReplyIndex + 1)
+    : allReplies;
+
+  return latestRoundReplies.filter((reply) => !isAutomatedDiscussionReply(reply));
+}
+
+/**
+ * Collapse human conclusion-thread replies into one comparable evidence blob.
+ *
+ * Follow-up rounds often clear a blocker by explicitly citing the validation
+ * scenario they ran on the current PR, even when the changed file itself is a
+ * config file whose patch cannot contain the full runtime assertion text. The
+ * reconciler still requires the suggested file (or an explicit equivalent) plus
+ * green CI; this helper only lets the authored handoff text satisfy the
+ * remaining evidence marker when it quotes the requested scenario or condition.
+ *
+ * @param {Array<{ body?: string, author?: { login?: string } }>} replies Discussion reply payloads.
+ * @returns {string} Normalized human-authored evidence text.
+ */
+function extractConclusionThreadReplyEvidenceText(replies) {
+  const replyBodies = getLatestHumanConclusionThreadReplies(replies)
+    .map((reply) => (typeof reply?.body === "string" ? reply.body : ""))
+    .filter((body) => body.trim().length > 0);
+
+  return normalizeComparableText(replyBodies.join("\n"));
 }
 
 /**
@@ -1712,6 +1753,30 @@ function collectFollowUpDiffEvidence(files, candidatePaths, blockers) {
 }
 
 /**
+ * Check whether the authored conclusion-thread handoff quotes any canonical
+ * validation marker for a blocker.
+ *
+ * @param {string} replyEvidenceText Normalized human-reply evidence corpus.
+ * @param {{
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string
+ * }} blocker Blocker being evaluated.
+ * @returns {boolean} True when the reply text carries usable evidence.
+ */
+function hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker) {
+  const evidenceNeedles = [
+    ...blocker.essentialAssertions.flatMap(extractDiffEvidenceNeedles),
+    ...extractDiffEvidenceNeedles(blocker.behaviorProtected),
+    ...extractDiffEvidenceNeedles(blocker.minimumScenario),
+    ...extractDiffEvidenceNeedles(blocker.resolutionCondition),
+  ];
+
+  return evidenceNeedles.some((needle) => replyEvidenceText.includes(normalizeComparableText(needle)));
+}
+
+/**
  * Reconcile previous testable blockers against the current PR diff, reply
  * thread, and CI status.
  *
@@ -1737,6 +1802,7 @@ export function reconcileFollowUpTestableBlockers(finalComment, files, statusChe
   }
 
   const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
+  const replyEvidenceText = extractConclusionThreadReplyEvidenceText(finalComment?.replies?.nodes ?? []);
   const ciTestGreen = isCiTestCheckGreen(statusCheckContexts);
 
   return previousBlockers.flatMap((blocker) => blocker.roles.flatMap((role) => {
@@ -1748,9 +1814,10 @@ export function reconcileFollowUpTestableBlockers(finalComment, files, statusChe
       matchedTestFile: null,
       hasDiffEvidence: false,
     };
+    const hasReplyEvidence = hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker);
     const missingSignals = [
       ...(diffEvidence.matchedTestFile ? [] : ["suggested_test_file_or_explicit_equivalent"]),
-      ...(diffEvidence.hasDiffEvidence ? [] : ["essential_assertion_or_behavior_marker"]),
+      ...(diffEvidence.hasDiffEvidence || hasReplyEvidence ? [] : ["essential_assertion_or_behavior_marker"]),
       ...(ciTestGreen ? [] : ["ci_test_green"]),
     ];
 

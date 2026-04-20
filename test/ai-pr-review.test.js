@@ -1225,7 +1225,7 @@ describe("ai pr review discussion rendering", () => {
     expect(body.indexOf("## Existing Discussion context")).toBeLessThan(body.indexOf("## Changed files digest"));
   });
 
-  it("builds rerun context from the conclusion thread while dropping stale specialist bot output", () => {
+  it("builds rerun context from the latest conclusion-thread handoff while dropping stale specialist and reply history", () => {
     const discussionContext = buildDiscussionHistoryContext([
       {
         author: { login: "github-actions[bot]" },
@@ -1256,12 +1256,17 @@ describe("ai pr review discussion rendering", () => {
             {
               author: { login: "dev865077" },
               createdAt: "2026-04-18T22:16:00Z",
-              body: "Resolvido: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
+              body: "Resolvido antigo: agora existe teste cobrindo a regressao e o contrato ficou explicito.",
+            },
+            {
+              author: { login: "github-actions" },
+              createdAt: "2026-04-18T22:16:30Z",
+              body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Request changes`",
             },
             {
               author: { login: "dev865077" },
               createdAt: "2026-04-18T22:17:00Z",
-              body: "Estou citando <!-- ai-pr-discussion-final:openai --> para explicar o bug anterior.",
+              body: "Resolvido atual: `npm ci && npm run typecheck` passou nesta rodada.",
             },
           ],
         },
@@ -1275,11 +1280,11 @@ describe("ai pr review discussion rendering", () => {
     ]);
 
     expect(discussionContext).not.toContain("Old blocker");
+    expect(discussionContext).not.toContain("Resolvido antigo");
     expect(discussionContext).toContain("## Latest conclusion thread");
     expect(discussionContext).toContain("Previous automated conclusion");
     expect(discussionContext).toContain("Final recommendation: `Request changes`");
-    expect(discussionContext).toContain("Resolvido: agora existe teste cobrindo a regressao");
-    expect(discussionContext).toContain("citando <!-- ai-pr-discussion-final:openai -->");
+    expect(discussionContext).toContain("Resolvido atual: `npm ci && npm run typecheck` passou nesta rodada.");
     expect(discussionContext).toContain("Comentario humano solto fora da thread final");
   });
 
@@ -1664,15 +1669,19 @@ describe("ai pr review discussion rendering", () => {
     ]);
   });
 
-  it("extracts explicit test-file citations from human conclusion-thread replies", () => {
+  it("extracts explicit test-file citations from the latest human handoff replies", () => {
     const citations = extractConclusionThreadTestFileCitations([
       {
         author: { login: "dev865077" },
-        body: "Troquei para `test/follow-up-reconciliation.test.js` e também citei test/other.spec.js aqui.",
+        body: "Rodada antiga: usei `test/stale.spec.js`.",
       },
       {
         author: { login: "github-actions[bot]" },
         body: "<!-- ai-pr-discussion-final:openai --> bot noise",
+      },
+      {
+        author: { login: "dev865077" },
+        body: "Troquei para `test/follow-up-reconciliation.test.js` e também citei test/other.spec.js aqui.",
       },
     ]);
 
@@ -1800,6 +1809,82 @@ describe("ai pr review discussion rendering", () => {
     );
 
     expect(unresolved).toEqual([]);
+  });
+
+  it("clears a follow-up blocker when the suggested file changed and the conclusion reply cites the validated scenario", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `risk` -> `package.json`: protect `npm run typecheck` succeeds on a fresh install without relying on undeclared ambient Cloudflare globals.; minimum scenario: Run `npm ci && npm run typecheck` in a clean environment.; essential assertions: `tsc` resolves the `Cloudflare` namespace used by `worker-configuration.d.ts` and exits 0.; resolution condition: Add the missing Cloudflare worker type reference/package to the TS config or generated type inputs, then rerun the clean typecheck.",
+        ].join("\n"),
+        replies: {
+          nodes: [
+            {
+              author: { login: "dev865077" },
+              body: [
+                "Validated against the requested follow-up contract:",
+                "- `npm ci && npm run typecheck`",
+                "- current PR `CI / Test` is green",
+                "- `package.json` still contains the canonical `typecheck` command",
+              ].join("\n"),
+            },
+          ],
+        },
+      },
+      [
+        {
+          filename: "package.json",
+          patch: "@@\n+    \"typecheck\": \"tsc --noEmit\",",
+        },
+      ],
+      [{ __typename: "StatusContext", context: "CI / Test", state: "SUCCESS" }],
+    );
+
+    expect(unresolved).toEqual([]);
+  });
+
+  it("ignores stale conclusion-thread replies from older rounds when reconciling follow-up blockers", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `risk` -> `package.json`: protect `npm run typecheck` succeeds on a fresh install without relying on undeclared ambient Cloudflare globals.; minimum scenario: Run `npm ci && npm run typecheck` in a clean environment.; essential assertions: `tsc` resolves the `Cloudflare` namespace used by `worker-configuration.d.ts` and exits 0.; resolution condition: Add the missing Cloudflare worker type reference/package to the TS config or generated type inputs, then rerun the clean typecheck.",
+        ].join("\n"),
+        replies: {
+          nodes: [
+            {
+              author: { login: "dev865077" },
+              body: "Rodada antiga: `npm ci && npm run typecheck` estava verde.",
+            },
+            {
+              author: { login: "github-actions" },
+              body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Request changes`",
+            },
+            {
+              author: { login: "dev865077" },
+              body: "Rodada atual: apenas refatorei a explicacao, sem citar a validacao pedida.",
+            },
+          ],
+        },
+      },
+      [
+        {
+          filename: "package.json",
+          patch: "@@\n+    \"typecheck\": \"tsc --noEmit\",",
+        },
+      ],
+      [{ __typename: "StatusContext", context: "CI / Test", state: "SUCCESS" }],
+    );
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0].missingSignals).toContain("essential_assertion_or_behavior_marker");
   });
 
   it("turns unresolved follow-up blockers into deterministic request-changes memos", () => {
