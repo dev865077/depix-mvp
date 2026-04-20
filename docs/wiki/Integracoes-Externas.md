@@ -33,6 +33,7 @@ Estado atual:
 - alias legado terminal, como `paid`, tambem fica fora de lookup de pedido aberto
 - outbound do Telegram ja tem logs estruturados e mapeamento explicito de erro
 - apos conciliacao de pagamento, o sistema pode enviar uma mensagem assincrona de confirmacao ao chat original quando houver `telegram_chat_id` valido e transicao visivel relevante
+- a copy do QR pode informar a expiracao apenas quando a Eulen devolver esse dado; quando o Telegram nao aceitar a imagem do QR, o fluxo deve cair para texto simples sem perder a instrucoes de pagamento
 - essa notificacao assincrona e idempotente por transicao visivel: webhook, recheck e fallback nao devem repetir a mesma mensagem
 
 ## Eulen
@@ -65,6 +66,7 @@ Estado atual:
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
 - o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
 - a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
+- a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de criacao do deposito
 - a criacao de deposito persiste `orders` e `deposits` juntos para evitar duplicidade silenciosa
 - em falha da Eulen, o pedido e marcado como `failed` e o usuario recebe instrucoes para recomecar
 

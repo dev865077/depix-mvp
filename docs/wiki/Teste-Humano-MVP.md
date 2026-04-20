@@ -121,95 +121,41 @@ No bot correto do tenant:
 3. informe o endereco DePix/Liquid
 4. confirme com `sim`, `confirmar` ou `ok`
 5. aguarde QR/copia-e-cola
-6. envie `/status` para confirmar que o bot encontra o pedido correto sem criar outro pedido
-7. pague o QR
-8. aguarde a mensagem assincrona de confirmacao no Telegram quando o pagamento for conciliado
-9. acompanhe o estado final pelo webhook, por `/status` ou por recheck operacional se a confirmacao nao chegar
-10. use `/help` se precisar de orientacao contextual sem alterar o pedido
+6. verifique que a mensagem do QR orienta de forma clara o pagamento e o proximo passo
+7. se a Eulen devolver expiracao, confirme que ela aparece na copy; se nao devolver, a expiracao nao deve ser inventada
+8. se o Telegram rejeitar a imagem do QR, confirme que o fluxo cai para texto puro sem perder a instrucao de pagamento
+9. envie `/status` para confirmar que o bot encontra o pedido correto sem criar outro pedido
+10. pague o QR
+11. aguarde a mensagem assincrona de confirmacao no Telegram quando o pagamento for conciliado
+12. acompanhe o estado final pelo webhook, por `/status` ou por recheck operacional se a confirmacao nao chegar
+13. use `/help` se precisar de orientacao contextual sem alterar o pedido
 
 Registre screenshot ou transcricao do Telegram com horario absoluto.
 
 ## Evidencia depois do QR
 
-Depois de receber QR:
+Depois de gerar o QR, a evidencia deve deixar claro:
 
-```bash
-node scripts/collect-qr-flow-evidence.mjs --env test --tenant "$TENANT_ID" --since "$SINCE_ISO" --issue 124
-```
+- texto exibido ao usuario para pagamento
+- se a expiracao apareceu ou nao apareceu, conforme retorno da Eulen
+- se o fallback textual preservou as instrucoes quando a imagem foi rejeitada
+- resposta do usuario antes da conciliacao
+- mensagem final apos pagamento conciliado
 
-O comentario final deve incluir:
+## Rechecagem operacional
+
+Se o webhook nao chegar, use o recheck por `depositEntryId` apenas para o deposito especifico ja criado. Nao use o recheck para criar novo deposito, nem para substituir a prova do fluxo Telegram.
+
+## Fechamento da evidencia
+
+Antes de encerrar, confirme que a transcricao final deixa claro:
 
 - `orderId`
 - `depositEntryId`
-- `qrId` quando existir
-- `orders.status`
-- `orders.current_step`
-- `deposits.external_status`
-- horario absoluto da mensagem assincrona recebida no Telegram, ou a ausencia controlada dela
-- requestIds relevantes
-- logs ou erro observado
+- `qrId`
+- `status` final em `orders`
+- `status` final em `deposits`
+- se houve fallback de texto no Telegram
+- se a expiracao veio da Eulen ou ficou ausente por nao retorno upstream
 
-Quando #128 estiver pronto, inclua tambem `deposit_events`. Antes disso, trate `deposit_events` como melhoria de evidencia, nao como bloqueio do runbook inicial.
-
-## Recheck pontual
-
-Use somente para o deposito afetado:
-
-```bash
-curl --fail-with-body -sS -w "\nHTTP_STATUS=%{http_code}\n" \
-  -X POST \
-  -H "Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d "{\"depositEntryId\":\"<depositEntryId>\"}" \
-  "$BASE_URL/ops/$TENANT_ID/recheck/deposit"
-```
-
-Registre `requestId`, status HTTP, `depositEntryId`, `qrId`, `eventId` e resultado.
-
-## Fallback por janela
-
-Use quando o webhook atrasar ou faltar e houver janela operacional clara. A rota consulta uma janela de depositos remotos, entao ela tem blast radius maior que o recheck pontual.
-
-Em `production`, use este fallback apenas quando todos os itens forem verdadeiros:
-
-- #124 ja passou e #125 esta registrando a execucao atual
-- o recheck pontual do `depositEntryId` afetado nao resolveu
-- existe janela curta conhecida, com `start` e `end` em ate 24 horas
-- o operador responsavel pela execucao registrou no comentario da issue por que o fallback e necessario
-
-Payload minimo:
-
-```bash
-curl --fail-with-body -sS -w "\nHTTP_STATUS=%{http_code}\n" \
-  -X POST \
-  -H "Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d "{\"start\":\"2026-04-19T14:00:00Z\",\"end\":\"2026-04-19T14:30:00Z\",\"status\":\"depix_sent\"}" \
-  "$BASE_URL/ops/$TENANT_ID/reconcile/deposits"
-```
-
-Nao use como retry cego. Registre janela, `HTTP_STATUS`, linhas aplicadas, linhas ignoradas e conflitos.
-
-## Criterios de parada em test
-
-- o QR foi gerado e evidenciado
-- o pagamento foi conciliado ou o erro foi isolado de forma conclusiva
-- o estado final ficou consistente em `orders` e `deposits`
-- a mensagem assincrona foi observada ou a ausencia foi justificada com recheck e logs
-- a issue recebeu comentario com evidencia suficiente
-
-## Criterios de parada em production
-
-Production nao deve ser usada para improviso.
-
-Antes de executar:
-
-- conferir aprovacao da issue correspondente
-- conferir janela operacional combinada
-- conferir se o risco de recheck e fallback foi aceito
-- conferir se ha suporte responsavel online
-- conferir se a mensagem de smoke esta pronta para ser registrada no comentario da issue
-
-## Risco residual
-
-Se a conciliacao nao chegar, o operador nao deve repetir a compra no escuro. A ordem correta e registrar evidencia, rodar recheck pontual, e so depois considerar fallback por janela quando a janela e o impacto estiverem claros.
+Se algum desses pontos faltar, a validacao fica incompleta.
