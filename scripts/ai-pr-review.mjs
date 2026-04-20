@@ -837,6 +837,30 @@ function truncateText(value, maxLength) {
 }
 
 /**
+ * Redact likely credentials from GitHub Actions logs before they enter any
+ * model prompt.
+ *
+ * GitHub masks known secrets as `***`, but runtime logs can still contain
+ * ad-hoc bearer tokens, API keys, or copied Authorization headers. Keep the
+ * surrounding failure text readable while removing the secret literal.
+ *
+ * @param {string} logText Raw GitHub Actions log text.
+ * @returns {string} Redacted log text safe for prompt context.
+ */
+export function redactActionsLogSecrets(logText) {
+  return String(logText ?? "")
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{12,}/gi, "$1 [REDACTED]")
+    .replace(/\b(Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, "$1 [REDACTED]")
+    .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/g, "[REDACTED]")
+    .replace(
+      /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|AUTHORIZATION)[A-Z0-9_]*)\s*([:=])\s*(['"]?)[^\s'"]+/gi,
+      "$1$2$3[REDACTED]",
+    )
+    .replace(/\b(authorization\s*:\s*)(?:bearer|basic)?\s*[^\s]+/gi, "$1[REDACTED]")
+    .replace(/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/gi, "$1[REDACTED]@");
+}
+
+/**
  * Sanitize model-generated markdown before publishing it back to GitHub.
  *
  * Pull request titles, descriptions, and patches are untrusted model input. This
@@ -1116,14 +1140,17 @@ export function buildFailedActionsLogContext(checkRuns) {
 
   const sections = failedRuns.map((checkRun) => {
     const logBody = checkRun.logText
-      ? truncateText(checkRun.logText, MAX_FAILURE_LOG_CHARS_PER_CHECK)
+      ? truncateText(redactActionsLogSecrets(checkRun.logText), MAX_FAILURE_LOG_CHARS_PER_CHECK)
       : [
         checkRun.logFailureClass ? `Log fetch classification: ${checkRun.logFailureClass}` : "",
         checkRun.logFailureMessage ? `Log fetch failure: ${checkRun.logFailureMessage}` : "",
         checkRun.output?.title ? `Output title: ${checkRun.output.title}` : "",
         checkRun.output?.summary ? `Output summary: ${checkRun.output.summary}` : "",
         checkRun.output?.text ? `Output text: ${checkRun.output.text}` : "",
-      ].filter(Boolean).join("\n") || "[no log body available]";
+      ].filter(Boolean).join("\n");
+    const safeLogBody = logBody
+      ? truncateText(redactActionsLogSecrets(logBody), MAX_FAILURE_LOG_CHARS_PER_CHECK)
+      : "[no log body available]";
 
     return [
       `### ${checkRun.name ?? "Unnamed check"}`,
@@ -1132,7 +1159,7 @@ export function buildFailedActionsLogContext(checkRuns) {
       `details: ${checkRun.details_url ?? checkRun.html_url ?? "unknown"}`,
       "",
       "```text",
-      sanitizePublishedMarkdown(logBody),
+      sanitizePublishedMarkdown(safeLogBody),
       "```",
     ].join("\n");
   });
