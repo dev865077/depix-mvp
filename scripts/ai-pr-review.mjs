@@ -1582,6 +1582,194 @@ function buildFilesReviewPayload(files) {
 }
 
 /**
+ * Check whether the current PR touches one repository path.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @param {string} filename Repository-relative file path.
+ * @returns {boolean} True when the path is part of the current PR.
+ */
+function hasChangedFile(files, filename) {
+  const normalizedTarget = normalizeRepositoryPath(filename);
+
+  return files.some((file) => normalizeRepositoryPath(file?.filename) === normalizedTarget);
+}
+
+/**
+ * Build a concise evidence block for automation-contract PRs.
+ *
+ * Broad automation PRs can leave the model staring at a large diff without the
+ * one or two facts that prove the contract is wired end to end. This summary
+ * reads the current checked-out repository state and surfaces the exact
+ * workflow/script/test facts reviewers keep asking for.
+ *
+ * @param {{
+ *   files: any[],
+ *   prReviewWorkflow?: string,
+ *   planningWorkflow?: string,
+ *   prReviewScript?: string,
+ *   planningScript?: string,
+ *   triageScript?: string,
+ *   prReviewTests?: string,
+ *   planningTests?: string,
+ *   triageTests?: string,
+ * }} inputs Current repository evidence inputs.
+ * @returns {string} Markdown summary, or an empty string when nothing relevant changed.
+ */
+export function buildAutomationEvidenceContext(inputs) {
+  const {
+    files,
+    prReviewWorkflow = "",
+    planningWorkflow = "",
+    prReviewScript = "",
+    planningScript = "",
+    triageScript = "",
+    prReviewTests = "",
+    planningTests = "",
+    triageTests = "",
+  } = inputs;
+  const bullets = [];
+
+  if (
+    hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
+    && prReviewWorkflow.includes("discussion_comment:")
+    && prReviewWorkflow.includes("discussion-review:")
+    && prReviewWorkflow.includes("discussions: write")
+  ) {
+    bullets.push(
+      "- Current PR review workflow state: `pull_request` and `discussion_comment` both route into the same workflow, and the `discussion-review` job requests `discussions: write` for Discussion publication.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-pr-review.mjs")
+    && prReviewScript.includes("resolvePullRequestContext")
+    && prReviewScript.includes("replyToId")
+    && prReviewScript.includes("buildDiscussionHistoryContext")
+  ) {
+    bullets.push(
+      "- Current PR review runtime state: discussion-side reruns resolve the linked PR, read the latest conclusion thread as handoff, and publish follow-up final status as a Discussion reply.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, ".github/workflows/ai-issue-planning-review.yml")
+    && planningWorkflow.includes("planning_status")
+    && planningWorkflow.includes("blocking_roles")
+    && planningWorkflow.includes("blocked_by_dependencies")
+    && planningWorkflow.includes("$GITHUB_STEP_SUMMARY")
+  ) {
+    bullets.push(
+      "- Current planning workflow state: `planning_status`, `blocking_roles`, and `blocked_by_dependencies` are exposed as step outputs and mirrored into `$GITHUB_STEP_SUMMARY` for visible operator consumption.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-issue-planning-review.mjs")
+    && planningScript.includes("\"Blocked\"")
+    && planningScript.includes("writeGitHubOutput(\"planning_status\"")
+    && planningScript.includes("blocked_by_dependencies")
+  ) {
+    bullets.push(
+      "- Current planning runtime state: `Blocked` is a first-class planning outcome, exported through workflow outputs, and kept separate from the binary PR-review gate.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "scripts/ai-issue-triage.mjs")
+    && triageScript.includes("executionReadiness")
+    && triageScript.includes("needsDiscussion")
+  ) {
+    bullets.push(
+      "- Current issue triage state: routing now validates `executionReadiness` and `needsDiscussion`, so `impact` is descriptive and no longer the only route decision input.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-pr-review.test.js")
+    && prReviewTests.includes("keeps Blocked planning-only by rejecting it in PR review recommendations")
+    && prReviewTests.includes("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow")
+  ) {
+    bullets.push(
+      "- Current PR review regression tests: `test/ai-pr-review.test.js` explicitly pins the `discussion_comment` entrypoint, the `discussion-review` write permission, and the guard that rejects `Blocked` inside PR review recommendations.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-issue-planning-review.test.js")
+    && planningTests.includes("pins planning workflow outputs in the operator summary")
+  ) {
+    bullets.push(
+      "- Current planning regression tests: `test/ai-issue-planning-review.test.js` pins the workflow summary outputs so the new planning state contract stays visible and consumed.",
+    );
+  }
+
+  if (
+    hasChangedFile(files, "test/ai-issue-triage.test.js")
+    && triageTests.includes("still allows medium-impact issues to route directly when execution is already clear")
+    && triageTests.includes("still sends low-impact but ambiguous issues into discussion before PR")
+  ) {
+    bullets.push(
+      "- Current triage regression tests: `test/ai-issue-triage.test.js` explicitly covers `medio -> direct_pr` and `baixo -> discussion_before_pr` so the relaxed route policy stays intentional.",
+    );
+  }
+
+  if (bullets.length === 0) {
+    return "";
+  }
+
+  return truncateText([
+    "## Automation contract evidence",
+    "Use these repository-state facts when deciding whether older automation blockers are still true.",
+    "",
+    ...bullets,
+  ].join("\n"), 6000);
+}
+
+/**
+ * Read the current checked-out repository files that prove automation state.
+ *
+ * The PR review runs inside a checkout of the head commit, so it can inspect
+ * the exact workflow/script/test content that GitHub's changed-files API may
+ * truncate or omit from the diff patch.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @returns {Promise<string>} Markdown evidence block for the review payload.
+ */
+async function loadAutomationEvidenceContext(files) {
+  const wantedFiles = [
+    ".github/workflows/ai-pr-review.yml",
+    ".github/workflows/ai-issue-planning-review.yml",
+    "scripts/ai-pr-review.mjs",
+    "scripts/ai-issue-planning-review.mjs",
+    "scripts/ai-issue-triage.mjs",
+    "test/ai-pr-review.test.js",
+    "test/ai-issue-planning-review.test.js",
+    "test/ai-issue-triage.test.js",
+  ].filter((filename) => hasChangedFile(files, filename));
+  const uniqueFiles = [...new Set(wantedFiles)];
+  const fileEntries = await Promise.all(uniqueFiles.map(async (filename) => {
+    try {
+      return [filename, await fs.readFile(filename, "utf8")];
+    } catch {
+      return [filename, ""];
+    }
+  }));
+  const fileMap = Object.fromEntries(fileEntries);
+
+  return buildAutomationEvidenceContext({
+    files,
+    prReviewWorkflow: fileMap[".github/workflows/ai-pr-review.yml"],
+    planningWorkflow: fileMap[".github/workflows/ai-issue-planning-review.yml"],
+    prReviewScript: fileMap["scripts/ai-pr-review.mjs"],
+    planningScript: fileMap["scripts/ai-issue-planning-review.mjs"],
+    triageScript: fileMap["scripts/ai-issue-triage.mjs"],
+    prReviewTests: fileMap["test/ai-pr-review.test.js"],
+    planningTests: fileMap["test/ai-issue-planning-review.test.js"],
+    triageTests: fileMap["test/ai-issue-triage.test.js"],
+  });
+}
+
+/**
  * Build the shared user payload that every reviewer role receives.
  *
  * @param {string} repository Repository in owner/name form.
@@ -1589,9 +1777,17 @@ function buildFilesReviewPayload(files) {
  * @param {any[]} files Changed files from GitHub.
  * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
  * @param {string} [discussionContext] Prior Discussion context for append-only reruns.
+ * @param {string} [automationEvidence] Current repository-state evidence for automation contract changes.
  * @returns {string} Final user payload.
  */
-export function buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext = "") {
+export function buildPullRequestUserPrompt(
+  repository,
+  pullRequest,
+  files,
+  gate,
+  discussionContext = "",
+  automationEvidence = "",
+) {
   const boundedDiscussionContext = discussionContext.trim()
     ? [
       "## Existing Discussion context",
@@ -1620,6 +1816,7 @@ export function buildPullRequestUserPrompt(repository, pullRequest, files, gate,
     "## PR description",
     truncateText(pullRequest.body ?? "", MAX_PR_BODY_CHARS) || "[no description provided]",
     "",
+    ...(automationEvidence.trim() ? [automationEvidence.trim(), ""] : []),
     ...boundedDiscussionContext,
     "## Changed files digest",
     buildChangedFilesDigest(files) || "[no changed files reported]",
@@ -2512,6 +2709,7 @@ async function main() {
   let discussionUrl = null;
   let discussionPublicationFailure = null;
   let discussionContext = "";
+  const automationEvidence = await loadAutomationEvidenceContext(files);
 
   if (gate.requiresDiscussion) {
     if (discussion?.url) {
@@ -2530,7 +2728,14 @@ async function main() {
     });
   }
 
-  const userPrompt = buildPullRequestUserPrompt(repository, pullRequest, files, gate, discussionContext);
+  const userPrompt = buildPullRequestUserPrompt(
+    repository,
+    pullRequest,
+    files,
+    gate,
+    discussionContext,
+    automationEvidence,
+  );
 
   if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([

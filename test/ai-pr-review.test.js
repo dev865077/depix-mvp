@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidReviewRecommendation,
+  buildAutomationEvidenceContext,
   buildDiscussionCompletionComment,
   buildDiscussionDebateFailureSynthesis,
   buildDiscussionGateReview,
@@ -67,6 +68,20 @@ describe("ai pr review recommendation parser", () => {
     ].join("\n");
 
     expect(() => assertValidReviewRecommendation(review)).toThrow(/Forbidden recommendation/);
+  });
+
+  it("keeps Blocked planning-only by rejecting it in PR review recommendations", () => {
+    const review = [
+      "Blocked",
+      "",
+      "## Findings",
+      "- Waiting on another change.",
+      "",
+      "## Recommendation",
+      "Blocked",
+    ].join("\n");
+
+    expect(() => assertValidReviewRecommendation(review)).toThrow(/missing the ## Recommendation section|Invalid AI review recommendation/i);
   });
 
   it("turns Request changes into a failing GitHub check verdict", () => {
@@ -478,12 +493,18 @@ describe("ai pr review discussion rendering", () => {
         },
       ],
       gate,
+      "",
+      [
+        "## Automation contract evidence",
+        "- Current PR review workflow state: discussion-comment reruns are enabled.",
+      ].join("\n"),
     );
 
     expect(body).toContain("Repository: dev865077/depix-mvp");
     expect(body).toContain("PR: #60 - Automate review");
     expect(body).toContain("Base branch: main");
     expect(body).toContain("Head branch: codex/issue-57-multi-bot-debate");
+    expect(body).toContain("## Automation contract evidence");
     expect(body).toContain("scripts/ai-pr-review.mjs");
   });
 
@@ -939,5 +960,64 @@ describe("ai pr review discussion rendering", () => {
       "Risk, security, and operations",
       "Synthesis",
     ]);
+  });
+
+  it("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow", () => {
+    const evidence = buildAutomationEvidenceContext({
+      files: [
+        { filename: ".github/workflows/ai-pr-review.yml" },
+        { filename: ".github/workflows/ai-issue-planning-review.yml" },
+        { filename: "scripts/ai-pr-review.mjs" },
+        { filename: "scripts/ai-issue-planning-review.mjs" },
+        { filename: "scripts/ai-issue-triage.mjs" },
+        { filename: "test/ai-pr-review.test.js" },
+        { filename: "test/ai-issue-planning-review.test.js" },
+        { filename: "test/ai-issue-triage.test.js" },
+      ],
+      prReviewWorkflow: [
+        "on:",
+        "  discussion_comment:",
+        "jobs:",
+        "  discussion-review:",
+        "    permissions:",
+        "      discussions: write",
+      ].join("\n"),
+      planningWorkflow: [
+        "outputs:",
+        "  planning_status:",
+        "  blocking_roles:",
+        "  blocked_by_dependencies:",
+        ">> \"$GITHUB_STEP_SUMMARY\"",
+      ].join("\n"),
+      prReviewScript: [
+        "resolvePullRequestContext();",
+        "buildDiscussionHistoryContext();",
+        "replyToId: latestFinalComment?.id ?? null,",
+      ].join("\n"),
+      planningScript: [
+        "\"Blocked\"",
+        "writeGitHubOutput(\"planning_status\", value);",
+        "writeGitHubOutput(\"blocked_by_dependencies\", value);",
+      ].join("\n"),
+      triageScript: [
+        "executionReadiness",
+        "needsDiscussion",
+      ].join("\n"),
+      prReviewTests: [
+        "keeps Blocked planning-only by rejecting it in PR review recommendations",
+        "pins the discussion-comment entrypoint and discussion-review write permissions in the workflow",
+      ].join("\n"),
+      planningTests: "pins planning workflow outputs in the operator summary",
+      triageTests: [
+        "still allows medium-impact issues to route directly when execution is already clear",
+        "still sends low-impact but ambiguous issues into discussion before PR",
+      ].join("\n"),
+    });
+
+    expect(evidence).toContain("## Automation contract evidence");
+    expect(evidence).toContain("discussion-review");
+    expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
+    expect(evidence).toContain("Blocked");
+    expect(evidence).toContain("medio -> direct_pr");
   });
 });

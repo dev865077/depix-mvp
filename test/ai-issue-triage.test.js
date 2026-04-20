@@ -104,6 +104,47 @@ describe("ai issue triage validation", () => {
     expect(plan.discussionTitle).toContain("gate");
   });
 
+  it("still allows medium-impact issues to route directly when execution is already clear", () => {
+    const plan = assertValidIssueTriagePlan({
+      summary: "Ajuste medio, mas fechado.",
+      impact: "medio",
+      justification: "Escopo conhecido e pequeno.",
+      route: "direct_pr",
+      executionReadiness: "ready_now",
+      needsDiscussion: false,
+      reason: "Nao falta decisao compartilhada para implementar.",
+      productView: "Sem mudanca de contrato.",
+      technicalView: "Mudanca localizada.",
+      riskView: "Coberta por teste.",
+      decision: "Pode seguir direto para PR.",
+      nextSteps: ["abrir branch"],
+    });
+
+    expect(plan.route).toBe("direct_pr");
+    expect(plan.executionReadiness).toBe("ready_now");
+  });
+
+  it("still sends low-impact but ambiguous issues into discussion before PR", () => {
+    const plan = assertValidIssueTriagePlan({
+      summary: "Pequena, mas ambigua.",
+      impact: "baixo",
+      justification: "O tamanho e pequeno, mas a decisao ainda nao foi fechada.",
+      route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Ainda precisa alinhamento de contrato antes da execucao.",
+      productView: "Pode afetar o operador.",
+      technicalView: "Contrato em aberto.",
+      riskView: "Ambiguidade aumenta retrabalho.",
+      decision: "Abrir Discussion antes da PR.",
+      discussionTitle: "Fechar contrato antes da PR",
+      nextSteps: ["abrir discussion"],
+    });
+
+    expect(plan.route).toBe("discussion_before_pr");
+    expect(plan.needsDiscussion).toBe(true);
+  });
+
   it("selects category with configured preference and safe fallback", () => {
     const categories = [
       { id: "1", name: "General", isAnswerable: false },

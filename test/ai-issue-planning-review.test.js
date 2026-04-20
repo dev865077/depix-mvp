@@ -312,4 +312,5 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("Latest planning conclusion thread");
     expect(prompt).toContain("Final recommendation: `Request changes`");
   });
+
 });
