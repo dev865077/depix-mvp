@@ -1436,6 +1436,26 @@ export function isAutomationDiscussionCommentEvent(event) {
 }
 
 /**
+ * Detect the only issue-comment event that is allowed to start planning.
+ *
+ * The workflow-level `if` uses the same marker, and this script-level guard is
+ * the fail-closed backup. Plain issue comments, planning status comments, and
+ * PR comments must not create or rerun issue-planning Discussions.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {boolean} True only for automated triage handoff comments on issues.
+ */
+export function isIssuePlanningHandoffCommentEvent(event) {
+  if (!event?.comment || !event?.issue || event.issue.pull_request) {
+    return false;
+  }
+
+  const body = typeof event.comment.body === "string" ? event.comment.body : "";
+
+  return body.includes(ISSUE_TRIAGE_COMMENT_MARKER);
+}
+
+/**
  * Read manual rerun inputs from a `workflow_dispatch` event.
  *
  * Maintainers can use this path to backfill older issues/discussions or to
@@ -1610,6 +1630,14 @@ async function resolvePlanningContext(event, owner, name, repository) {
     return null;
   }
 
+  if (event.comment && event.issue && !isIssuePlanningHandoffCommentEvent(event)) {
+    logOperationalEvent("ai_issue_planning_review.skip", {
+      reason: "issue_comment_not_triage_handoff",
+      issueNumber: event.issue.number,
+    });
+    return null;
+  }
+
   // Issue-triggered and triage-comment-triggered runs only enter the planning
   // lane when the sticky triage contract explicitly routes to planning.
   if (event.issue && !event.issue.pull_request) {
@@ -1623,14 +1651,6 @@ async function resolvePlanningContext(event, owner, name, repository) {
 
     const issueComments = await fetchIssueComments(repository, event.issue.number);
     const triageRoute = extractIssueTriageRouteFromComments(issueComments);
-
-    if (event.comment && !event.comment.body?.includes(ISSUE_TRIAGE_COMMENT_MARKER)) {
-      logOperationalEvent("ai_issue_planning_review.skip", {
-        reason: "issue_comment_not_triage_handoff",
-        issueNumber: event.issue.number,
-      });
-      return null;
-    }
 
     if (triageRoute !== ROUTE_DISCUSSION_BEFORE_PR) {
       logOperationalEvent("ai_issue_planning_review.skip", {

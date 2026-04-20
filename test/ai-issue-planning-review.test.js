@@ -23,6 +23,7 @@ import {
   isAutomatedPlanningComment,
   isAutomatedPlanningCommentBody,
   isAutomationDiscussionCommentEvent,
+  isIssuePlanningHandoffCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
   resolvePlanningConcurrencyTarget,
@@ -50,6 +51,26 @@ describe("ai issue planning review", () => {
         comment: { author: { login: "dev865077" } },
       }),
     ).toBe(false);
+  });
+
+  it("only treats automated triage issue comments as planning handoffs", () => {
+    expect(isIssuePlanningHandoffCommentEvent({
+      issue: { number: 213 },
+      comment: {
+        body: [
+          "<!-- ai-issue-triage:openai -->",
+          "Rota canonica: `discussion_before_pr`",
+        ].join("\n"),
+      },
+    })).toBe(true);
+    expect(isIssuePlanningHandoffCommentEvent({
+      issue: { number: 213 },
+      comment: { body: "comentario humano comum" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      issue: { number: 215, pull_request: {} },
+      comment: { body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
   });
 
   it("drops stale automated planning comments while keeping human replies", () => {

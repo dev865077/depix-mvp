@@ -22,6 +22,7 @@
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` cria ou reutiliza uma unica Discussion canonica da issue via API
+- o trigger `issue_comment` do planning so aceita comentario com marcador automatizado da triage; comentarios humanos comuns nao podem iniciar ou rerodar planning
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - o planning review tem tres estados canonicos:
   - `Approve`: issue pronta para execucao
