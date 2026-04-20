@@ -27,6 +27,7 @@
 - `impact` e sinal descritivo; a rota depende de clareza, risco, dependencias e necessidade de decisao compartilhada
 - `direct_pr` segue direto para Codex quando a issue publicar `ready_for_codex: true`
 - `discussion_before_pr` nao cria Discussion na triagem; ele aciona a lane de planning review, que cria ou reutiliza uma unica Discussion canonica via API
+- quando a rota e `discussion_before_pr`, a triagem dispara explicitamente o workflow de planning por `workflow_dispatch`, em vez de depender de comentario criado pelo bot para acionar outro `issue_comment`
 - a planning review roda quatro papeis especializados: produto, technical, scrum e risk
 - a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa

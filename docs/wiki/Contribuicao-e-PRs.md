@@ -21,9 +21,9 @@
 - `discussion_before_pr` vale quando ainda falta decisao compartilhada sobre escopo, decomposicao, arquitetura, operacao, risco ou dependencias
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
-- quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` cria ou reutiliza uma unica Discussion canonica da issue via API
-- o trigger `issue_comment` do planning so aceita comentario novo do `github-actions[bot]` com marcador automatizado da triage; comentarios humanos, comentarios editados e comentarios em PR nao podem iniciar ou rerodar planning
-- para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao e `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
+- quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
+- o trigger `issue_comment` do planning continua restrito a comentarios novos do `github-actions[bot]` com marcador automatizado da triage; comentarios humanos, comentarios editados e comentarios em PR nao podem iniciar ou rerodar planning
+- para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
@@ -82,4 +82,4 @@ Explicitar:
 - `synthesis` continua obrigatoria para visibilidade e fechamento operacional da Discussion, mas e resumo: ela nao vira um quarto voto de bloqueio por drift de redacao
 - se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
 - se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` com erro operacional claro, sem esconder a falha
-- timeout do modelo publica sintese operacional curta e registro do erro, nao um falso `Approve`
+- timeout do modelo publica sintese e encerra a rodada com status explicito
