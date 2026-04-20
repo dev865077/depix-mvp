@@ -18,6 +18,7 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  fetchReferencedChildIssues,
   findMatchingIssuePlanningDiscussionNumber,
   isAutomatedIssueMetaComment,
   isAutomatedIssueMetaCommentBody,
@@ -27,8 +28,10 @@ import {
   isIssuePlanningHandoffCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
+  resolveReferencedIssueFetchSkipReason,
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
+  isIgnorableReferencedIssueFetchError,
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
@@ -263,11 +266,103 @@ describe("ai issue planning review", () => {
         "- [ ] #83",
         "- [x] #84",
         "Depende de #90 e #91, mas nao deve repetir #91.",
+        "Exemplo recente: o blocker no PR #209 nao deve virar dependencia.",
+        "Outro exemplo de pull request #210 tambem nao deve entrar.",
+        "Variacao comum: PR#211 tambem e texto, nao dependencia.",
+        "Outra variacao: PR: #212 segue sendo prose.",
+        "Outra ainda: pull request: #213 tambem nao entra.",
       ].join("\n"),
       91,
     );
 
     expect(issueNumbers).toEqual([83, 84, 90]);
+  });
+
+  it("only ignores referenced issue fetch failures when the child context is inaccessible", () => {
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (403): nope"))).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (404): nope"))).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError({ status: 403, message: "forbidden" })).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError({ response: { status: 404 }, message: "not found" })).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (500): nope"))).toBe(false);
+    expect(isIgnorableReferencedIssueFetchError(new Error("network timeout"))).toBe(false);
+  });
+
+  it("classifies inaccessible child issue skips with stable reasons", () => {
+    expect(resolveReferencedIssueFetchSkipReason({ status: 403 })).toBe("reference_forbidden");
+    expect(resolveReferencedIssueFetchSkipReason({ response: { status: 404 } })).toBe("reference_not_found");
+    expect(resolveReferencedIssueFetchSkipReason(new Error("opaque access problem"))).toBe("reference_not_accessible");
+  });
+
+  it("skips inaccessible referenced child issues while keeping accessible planning context", async () => {
+    const loggedEvents = [];
+    const warnings = [];
+    const childIssues = await fetchReferencedChildIssues(
+      "dev865077/depix-mvp",
+      [83, 209, 210],
+      {
+        fetchIssueFn: async (_repoFullName, issueNumber) => {
+          if (issueNumber === 83) {
+            return { number: 83, title: "Accessible child issue" };
+          }
+
+          if (issueNumber === 209) {
+            const error = new Error("GitHub API request failed (403): forbidden");
+            error.status = 403;
+            throw error;
+          }
+
+          const error = new Error("missing");
+          error.response = { status: 404 };
+          throw error;
+        },
+        logEventFn: (event, fields = {}) => {
+          loggedEvents.push({ event, fields });
+        },
+        emitWarningFn: (message) => {
+          warnings.push(message);
+        },
+      },
+    );
+
+    expect(childIssues).toEqual([{ number: 83, title: "Accessible child issue" }]);
+    expect(loggedEvents).toEqual([
+      {
+        event: "ai_issue_planning_review.child_issue.skipped",
+        fields: {
+          issueNumber: 209,
+          reason: "reference_forbidden",
+          status: 403,
+          message: "GitHub API request failed (403): forbidden",
+        },
+      },
+      {
+        event: "ai_issue_planning_review.child_issue.skipped",
+        fields: {
+          issueNumber: 210,
+          reason: "reference_not_found",
+          status: 404,
+          message: "missing",
+        },
+      },
+    ]);
+    expect(warnings).toEqual([
+      "Planning skipped optional referenced issue #209 (reference_forbidden) and will continue without that child context.",
+      "Planning skipped optional referenced issue #210 (reference_not_found) and will continue without that child context.",
+    ]);
+  });
+
+  it("still throws when referenced child issue fetching fails for a real runtime problem", async () => {
+    await expect(fetchReferencedChildIssues(
+      "dev865077/depix-mvp",
+      [83],
+      {
+        fetchIssueFn: async () => {
+          const error = new Error("GitHub API request failed (500): boom");
+          error.status = 500;
+          throw error;
+        },
+      },
+    )).rejects.toThrow("GitHub API request failed (500): boom");
   });
 
   it("reads the canonical recommendation contract", () => {

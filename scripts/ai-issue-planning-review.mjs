@@ -62,6 +62,19 @@ function logOperationalEvent(event, fields = {}) {
 }
 
 /**
+ * Emit one GitHub Actions warning annotation for operator-visible soft failures.
+ *
+ * Optional context skips should still be visible in the Actions UI so the
+ * operator can distinguish an intentional degraded run from a silent swallow.
+ *
+ * @param {string} message Warning body.
+ * @returns {void}
+ */
+function emitWorkflowWarning(message) {
+  console.warn(`::warning::${String(message).replace(/\r?\n/g, " ")}`);
+}
+
+/**
  * Write one GitHub Actions output when the workflow exposes GITHUB_OUTPUT.
  *
  * @param {string} key Output key.
@@ -730,18 +743,131 @@ export function parseReferencedIssueNumbers(body, rootIssueNumber) {
     return [];
   }
 
-  const matches = body.match(/#\d+/g) ?? [];
   const uniqueIssueNumbers = new Set();
+  const referencePattern = /#(\d+)/g;
+  let match = referencePattern.exec(body);
 
-  for (const match of matches) {
-    const issueNumber = Number.parseInt(match.slice(1), 10);
+  while (match) {
+    const issueNumber = Number.parseInt(match[1], 10);
+    const prefix = body.slice(Math.max(0, match.index - 32), match.index).toLowerCase();
+    const isPullRequestExample = /\b(?:pr|pull request)\b[\s:()\-]*$/.test(prefix);
 
-    if (Number.isInteger(issueNumber) && issueNumber > 0 && issueNumber !== rootIssueNumber) {
+    if (!isPullRequestExample && Number.isInteger(issueNumber) && issueNumber > 0 && issueNumber !== rootIssueNumber) {
       uniqueIssueNumbers.add(issueNumber);
     }
+
+    match = referencePattern.exec(body);
   }
 
   return [...uniqueIssueNumbers].sort((left, right) => left - right).slice(0, MAX_CHILD_ISSUES);
+}
+
+/**
+ * Decide whether a referenced issue fetch error is ignorable for planning.
+ *
+ * Referenced issues enrich the planning payload, but they are optional context.
+ * A prose example such as `PR #209` or an inaccessible historical issue should
+ * not abort the whole planning run for the root issue.
+ *
+ * @param {unknown} error Fetch failure.
+ * @returns {boolean} True when planning should skip that referenced issue.
+ */
+export function isIgnorableReferencedIssueFetchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const directStatus = typeof error === "object" && error !== null && "status" in error
+    ? Number(error.status)
+    : null;
+  const nestedStatus = typeof error === "object" && error !== null && "response" in error
+    && typeof error.response === "object" && error.response !== null && "status" in error.response
+    ? Number(error.response.status)
+    : null;
+  const status = Number.isInteger(directStatus) ? directStatus : nestedStatus;
+
+  if (status === 403 || status === 404) {
+    return true;
+  }
+
+  return /GitHub API request failed \((403|404)\):/i.test(message);
+}
+
+/**
+ * Resolve the skip reason for one inaccessible referenced issue fetch.
+ *
+ * @param {unknown} error Fetch failure.
+ * @returns {"reference_forbidden" | "reference_not_found" | "reference_not_accessible"} Stable reason label.
+ */
+export function resolveReferencedIssueFetchSkipReason(error) {
+  const directStatus = typeof error === "object" && error !== null && "status" in error
+    ? Number(error.status)
+    : null;
+  const nestedStatus = typeof error === "object" && error !== null && "response" in error
+    && typeof error.response === "object" && error.response !== null && "status" in error.response
+    ? Number(error.response.status)
+    : null;
+  const status = Number.isInteger(directStatus) ? directStatus : nestedStatus;
+
+  if (status === 403) {
+    return "reference_forbidden";
+  }
+
+  if (status === 404) {
+    return "reference_not_found";
+  }
+
+  return "reference_not_accessible";
+}
+
+/**
+ * Fetch referenced child issues while skipping inaccessible optional context.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number[]} issueNumbers Candidate referenced issue numbers.
+ * @param {{
+ *   fetchIssueFn?: (repoFullName: string, issueNumber: number) => Promise<any>,
+ *   logEventFn?: (event: string, fields?: Record<string, any>) => void,
+ *   emitWarningFn?: (message: string) => void
+ * }} [options] Test-friendly collaborators.
+ * @returns {Promise<any[]>} Accessible referenced issues.
+ */
+export async function fetchReferencedChildIssues(repoFullName, issueNumbers, options = {}) {
+  const fetchIssueFn = options.fetchIssueFn ?? fetchIssue;
+  const logEventFn = options.logEventFn ?? logOperationalEvent;
+  const emitWarningFn = options.emitWarningFn ?? emitWorkflowWarning;
+  const results = await Promise.allSettled(issueNumbers.map((issueNumber) => fetchIssueFn(repoFullName, issueNumber)));
+  const childIssues = [];
+
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") {
+      childIssues.push(result.value);
+      continue;
+    }
+
+    if (isIgnorableReferencedIssueFetchError(result.reason)) {
+      const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      const reason = resolveReferencedIssueFetchSkipReason(result.reason);
+      const status = typeof result.reason === "object" && result.reason !== null && "status" in result.reason
+        ? Number(result.reason.status)
+        : typeof result.reason === "object" && result.reason !== null && "response" in result.reason
+          && typeof result.reason.response === "object" && result.reason.response !== null && "status" in result.reason.response
+          ? Number(result.reason.response.status)
+          : null;
+
+      logEventFn("ai_issue_planning_review.child_issue.skipped", {
+        issueNumber: issueNumbers[index],
+        reason,
+        status: Number.isInteger(status) ? status : null,
+        message,
+      });
+      emitWarningFn(
+        `Planning skipped optional referenced issue #${issueNumbers[index]} (${reason}) and will continue without that child context.`,
+      );
+      continue;
+    }
+
+    throw result.reason;
+  }
+
+  return childIssues;
 }
 
 /**
@@ -1819,7 +1945,7 @@ async function main() {
   ]);
 
   const referencedIssueNumbers = parseReferencedIssueNumbers(context.issue.body ?? "", context.issue.number);
-  const childIssues = await Promise.all(referencedIssueNumbers.map((issueNumber) => fetchIssue(repository, issueNumber)));
+  const childIssues = await fetchReferencedChildIssues(repository, referencedIssueNumbers);
   const discussionContext = buildDiscussionHistoryContext(context.discussion);
 
   // Package root issue, referenced issues, issue comments, and Discussion
