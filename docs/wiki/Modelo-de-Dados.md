@@ -50,6 +50,8 @@
 - `nonce` representa a intencao da cobranca e deve ser reutilizado em retry controlado
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
+- cada par `tenant_id + order_id` pode ter no maximo um registro em `deposits`; esta e a invariavel financeira do MVP enquanto nao houver refund, chargeback, split em varias cobrancas ou recriacao explicita de cobranca dentro do mesmo pedido
+- retry de confirmacao deve reutilizar o deposito local existente do pedido em vez de chamar a Eulen novamente
 - o runtime do Telegram pode buscar o pedido aberto mais recente por `tenant_id`, `user_id` e `channel` para retomar a conversa sem duplicar contexto
 - `orders.telegram_chat_id` guarda o destino real do chat Telegram para notificacoes assincronas futuras; ele nao deve ser inferido a partir de `user_id`
 - a escrita de `telegram_chat_id` continua sendo o contrato de persistencia do destino; o envio assincrono pos-pagamento agora usa esse campo quando o estado financeiro confirmar pagamento

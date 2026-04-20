@@ -8,6 +8,7 @@ import { getDatabase } from "../src/db/client.js";
 import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import {
   createDeposit,
+  DepositOrderUniquenessError,
   getDepositByDepositEntryId,
   getDepositByQrId,
   updateDepositByDepositEntryId,
@@ -133,6 +134,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_id_idx ON deposits (tenant_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -287,6 +289,10 @@ const MIGRATION_0003_STATEMENTS = [
     IFNULL(blockchain_tx_id, ''),
     raw_payload
   )`,
+];
+
+const MIGRATION_0005_STATEMENTS = [
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
 ];
 
 export function readInitialMigrationSql() {
@@ -447,6 +453,7 @@ async function assertLegacyMigrationBackfill() {
   await env.DB.batch(legacyStatements.map((statement) => env.DB.prepare(statement)));
 
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const migratedDepositByEntryId = await getDepositByDepositEntryId(db, "alpha", "legacy_deposit_001");
@@ -459,6 +466,117 @@ async function assertLegacyMigrationBackfill() {
   expect(migratedEvents).toHaveLength(1);
   expect(migratedEvents[0]?.depositEntryId).toBe("legacy_deposit_001");
   expect(migratedEvents[0]?.qrId).toBe("legacy_deposit_001");
+
+  await expect(createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "legacy_deposit_002",
+    qrId: "legacy_qr_002",
+    orderId: "order_legacy_001",
+    nonce: "nonce_legacy_002",
+    qrCopyPaste: "pix-copy-paste-2",
+    qrImageUrl: "https://example.com/qr/legacy-2.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:05:00Z",
+  })).rejects.toBeInstanceOf(DepositOrderUniquenessError);
+}
+
+async function assertOneDepositPerOrderConstraint() {
+  await resetDatabaseSchema();
+
+  const db = getDatabase(env);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_unique_deposit_001",
+    userId: "telegram_unique_deposit_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "awaiting_payment",
+    status: "pending",
+  });
+
+  const firstDeposit = await createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_unique_order_001",
+    qrId: "qr_unique_order_001",
+    orderId: "order_unique_deposit_001",
+    nonce: "nonce_unique_order_001",
+    qrCopyPaste: "0002010102122688pix-unique-order-001",
+    qrImageUrl: "https://example.com/qr/unique-order-001.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:00:00Z",
+  });
+  const secondWrite = createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_unique_order_002",
+    qrId: "qr_unique_order_002",
+    orderId: "order_unique_deposit_001",
+    nonce: "nonce_unique_order_002",
+    qrCopyPaste: "0002010102122688pix-unique-order-002",
+    qrImageUrl: "https://example.com/qr/unique-order-002.png",
+    externalStatus: "pending",
+    expiration: "2026-04-18T04:05:00Z",
+  });
+
+  await expect(secondWrite).rejects.toMatchObject({
+    code: "deposit_order_already_has_deposit",
+    tenantId: "alpha",
+    orderId: "order_unique_deposit_001",
+    existingDeposit: expect.objectContaining({
+      depositEntryId: "deposit_unique_order_001",
+    }),
+  });
+
+  const persistedDeposits = await db
+    .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+    .bind("alpha", "order_unique_deposit_001")
+    .first();
+
+  expect(firstDeposit?.depositEntryId).toBe("deposit_unique_order_001");
+  expect(persistedDeposits?.count).toBe(1);
+
+  await createOrder(db, {
+    tenantId: "alpha",
+    orderId: "order_concurrent_deposit_001",
+    userId: "telegram_concurrent_deposit_001",
+    channel: "telegram",
+    productType: "depix",
+    currentStep: "awaiting_payment",
+    status: "pending",
+  });
+
+  const concurrentWrites = await Promise.allSettled([
+    createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_concurrent_order_001",
+      qrId: "qr_concurrent_order_001",
+      orderId: "order_concurrent_deposit_001",
+      nonce: "nonce_concurrent_order_001",
+      qrCopyPaste: "0002010102122688pix-concurrent-order-001",
+      qrImageUrl: "https://example.com/qr/concurrent-order-001.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:10:00Z",
+    }),
+    createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_concurrent_order_002",
+      qrId: "qr_concurrent_order_002",
+      orderId: "order_concurrent_deposit_001",
+      nonce: "nonce_concurrent_order_002",
+      qrCopyPaste: "0002010102122688pix-concurrent-order-002",
+      qrImageUrl: "https://example.com/qr/concurrent-order-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:11:00Z",
+    }),
+  ]);
+  const concurrentDepositCount = await db
+    .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+    .bind("alpha", "order_concurrent_deposit_001")
+    .first();
+
+  expect(concurrentWrites.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+  expect(concurrentWrites.filter((result) => result.status === "rejected" && result.reason instanceof DepositOrderUniquenessError)).toHaveLength(1);
+  expect(concurrentDepositCount?.count).toBe(1);
 }
 
 async function assertGuardedOrderTransitionWrite() {
@@ -681,6 +799,7 @@ async function assertTelegramChatHydrationContract() {
 describe("database repositories", () => {
   it("persists orders, deposits and deposit events with tenant isolation", assertPersistenceFlow);
   it("migrates legacy deposit_id data into depositEntryId and qrId without orphaning rows", assertLegacyMigrationBackfill);
+  it("enforces one local deposit per tenant order", assertOneDepositPerOrderConstraint);
   it("applies XState order patches with current_step stale-write protection", assertGuardedOrderTransitionWrite);
   it("finds the latest open order for a tenant user without reviving terminal orders", assertLatestOpenOrderLookup);
   it("finds the latest terminal order only through the read-only latest-order lookup", assertLatestOrderLookupIncludesTerminalRowsForReadOnlyStatus);

@@ -1941,6 +1941,113 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalled();
   });
 
+  it("reuses an existing local deposit for a confirmation retry without calling Eulen again", async function assertConfirmationRetryUsesExistingDeposit() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockExistingDepositRetry(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        throw new Error("retry with an existing local deposit must not call Eulen create-deposit");
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          url,
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: telegramCalls.length,
+            date: 1713434450,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id ?? 8707,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in existing deposit retry flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_confirmation_existing_deposit",
+      userId: "877",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8707",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_existing_retry_001",
+      qrId: null,
+      orderId: "order_confirmation_existing_deposit",
+      nonce: "nonce_existing_retry_001",
+      qrCopyPaste: "0002010102122688pix-existing-retry-001",
+      qrImageUrl: "https://example.com/qr/existing-retry-001.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T06:00:00Z",
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8707,
+          fromId: 877,
+          updateId: 71,
+        }),
+      },
+      workerEnv,
+    );
+
+    const savedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status, split_address AS splitAddress, split_fee AS splitFee FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_confirmation_existing_deposit")
+      .first();
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_confirmation_existing_deposit")
+      .first();
+    const eulenCalls = fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit");
+    const photoReply = telegramCalls.find((entry) => entry.url.includes("/sendPhoto"));
+    const copyPasteReply = telegramCalls.find((entry) => entry.payload.text?.includes("Pix copia e cola:"));
+
+    expect(eulenCalls).toHaveLength(0);
+    expect(savedOrder).toEqual({
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: SIDESWAP_LQ_ADDRESS,
+      splitFee: "1.00%",
+    });
+    expect(persistedDeposits?.count).toBe(1);
+    expect(photoReply?.payload.photo).toBe("https://example.com/qr/existing-retry-001.png");
+    expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-existing-retry-001");
+  });
+
   it("resolves async Eulen deposit creation before replying to the user", async function assertAsyncConfirmationFlow() {
     const app = createApp();
     const workerEnv = createWorkerEnv();

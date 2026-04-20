@@ -10,6 +10,65 @@
  */
 import { getAllowedPatchEntries } from "../client.js";
 
+/**
+ * Nome estavel do indice que materializa a invariavel financeira do MVP.
+ *
+ * A regra deliberada e mais estrita que "um deposito ativo": enquanto o produto
+ * nao tiver refund, split de cobranca ou nova cobranca dentro do mesmo pedido,
+ * um pedido local deve apontar para exatamente uma intencao Pix/DePix. Essa
+ * constante evita que migration, testes e heuristica de erro passem a falar
+ * nomes diferentes para a mesma barreira.
+ */
+export const DEPOSITS_TENANT_ORDER_UNIQUE_INDEX = "deposits_tenant_order_unique_idx";
+
+/**
+ * Erro estruturado para tentativa de criar mais de um deposito no mesmo pedido.
+ *
+ * O repositorio captura a mensagem bruta do SQLite/D1 e a transforma neste erro
+ * de dominio para que services possam tratar retry/concorrencia sem depender de
+ * texto especifico do banco. `existingDeposit` e anexado quando a leitura local
+ * consegue encontrar a cobranca que venceu a corrida.
+ */
+export class DepositOrderUniquenessError extends Error {
+  /**
+   * @param {{ tenantId: string, orderId: string, existingDeposit?: Record<string, unknown> | null, cause?: unknown }} input Contexto seguro.
+   */
+  constructor(input) {
+    super("A deposit already exists for this tenant/order pair.", {
+      cause: input.cause,
+    });
+
+    this.name = "DepositOrderUniquenessError";
+    this.code = "deposit_order_already_has_deposit";
+    this.tenantId = input.tenantId;
+    this.orderId = input.orderId;
+    this.existingDeposit = input.existingDeposit ?? null;
+    this.details = {
+      tenantId: input.tenantId,
+      orderId: input.orderId,
+      existingDepositEntryId: input.existingDeposit?.depositEntryId ?? null,
+      indexName: DEPOSITS_TENANT_ORDER_UNIQUE_INDEX,
+    };
+  }
+}
+
+/**
+ * Reconhece apenas a violacao da barreira `tenant_id + order_id`.
+ *
+ * Outros indices unicos, como `deposit_entry_id`, `qr_id` e `nonce`, continuam
+ * subindo como erro bruto porque representam problemas diferentes de correlacao
+ * e nao devem ser mascarados como retry seguro do pedido.
+ *
+ * @param {unknown} error Erro vindo do D1/SQLite.
+ * @returns {boolean} Verdadeiro quando a constraint atingida e a de pedido.
+ */
+function isDepositOrderUniquenessViolation(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+
+  return message.includes(DEPOSITS_TENANT_ORDER_UNIQUE_INDEX)
+    || message.includes("deposits.tenant_id, deposits.order_id");
+}
+
 const DEPOSIT_SELECT_SQL = `
   SELECT
     tenant_id AS tenantId,
@@ -116,9 +175,24 @@ export async function createDeposit(db, input) {
     deposit.tenantId,
     deposit.depositEntryId,
   );
-  const [, selectResult] = await db.batch([insertStatement, selectStatement]);
+  try {
+    const [, selectResult] = await db.batch([insertStatement, selectStatement]);
 
-  return selectResult.results[0];
+    return selectResult.results[0];
+  } catch (error) {
+    if (isDepositOrderUniquenessViolation(error)) {
+      const existingDeposit = await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId);
+
+      throw new DepositOrderUniquenessError({
+        tenantId: deposit.tenantId,
+        orderId: deposit.orderId,
+        existingDeposit,
+        cause: error,
+      });
+    }
+
+    throw error;
+  }
 }
 
 /**
