@@ -701,21 +701,68 @@ function buildTelegramChatBindingBlockedReply() {
 }
 
 /**
+ * Formata a expiracao do Pix para uma copy curta e deterministica.
+ *
+ * A copy precisa preservar o significado do timestamp upstream. Portanto, a
+ * funcao nao reinterpreta o fuso para "hora local do bot"; ela apenas formata
+ * a data/hora exatamente no offset informado pela Eulen. Se o valor vier num
+ * formato fora do ISO esperado, a funcao faz fallback para o texto bruto em
+ * vez de inventar uma conversao.
+ *
+ * @param {{ expiration?: unknown }} deposit Deposito criado na Eulen.
+ * @returns {string | null} Linha pronta para o usuario ou `null` quando ausente.
+ */
+function buildTelegramDepositExpirationLine(deposit) {
+  const expiration = typeof deposit?.expiration === "string"
+    ? deposit.expiration.trim()
+    : "";
+
+  if (expiration.length === 0) {
+    return null;
+  }
+
+  const isoMatch = expiration.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/u,
+  );
+
+  if (!isoMatch) {
+    return `Expiracao: ${expiration}.`;
+  }
+
+  const [, year, month, day, hour, minute, offset] = isoMatch;
+  const offsetLabel = offset === "Z" ? "UTC" : `UTC${offset}`;
+
+  return `Expiracao: ${day}/${month}/${year} ${hour}:${minute} (${offsetLabel}).`;
+}
+
+/**
  * Mensagem principal enviada quando o Pix foi criado com sucesso.
+ *
+ * O caption precisa resolver a UX minima da issue #135:
+ * - confirmar valor e contexto do pedido
+ * - orientar o uso do QR e do copia-e-cola
+ * - registrar expiracao apenas quando a Eulen devolver esse dado
+ * - indicar o proximo passo sem prometer um `/status` que ainda nao existe
  *
  * @param {{ displayName: string }} tenant Tenant atual.
  * @param {{ amountInCents?: unknown }} order Pedido confirmado.
+ * @param {{ expiration?: unknown }} deposit Deposito criado na Eulen.
  * @returns {string} Texto curto de orientacao.
  */
-function buildTelegramDepositReadyCaption(tenant, order) {
+function buildTelegramDepositReadyCaption(tenant, order, deposit) {
   const amountLine = Number.isSafeInteger(order?.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
     : "Valor: conforme pedido";
+  const expirationLine = buildTelegramDepositExpirationLine(deposit);
 
   return [
     `Pedido confirmado em ${tenant.displayName}.`,
     amountLine,
     "Seu Pix ja foi gerado.",
+    "Pague com o QR acima ou com o Pix copia e cola abaixo.",
+    ...(expirationLine ? [expirationLine] : []),
+    "Depois de pagar, aguarde a confirmacao do pedido.",
+    "Se precisar revisar o proximo passo, envie /help.",
   ].join("\n");
 }
 
@@ -742,11 +789,11 @@ function buildTelegramPixCopyPasteReply(deposit) {
  * @param {any} ctx Contexto atual do grammY.
  * @param {{ displayName: string }} tenant Tenant atual.
  * @param {{ amountInCents?: unknown }} order Pedido confirmado.
- * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown }} deposit Deposito criado.
+ * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown, expiration?: unknown }} deposit Deposito criado.
  * @returns {Promise<void>} Promessa resolvida apos os envios.
  */
 async function sendTelegramDepositReadyReply(ctx, tenant, order, deposit) {
-  const caption = buildTelegramDepositReadyCaption(tenant, order);
+  const caption = buildTelegramDepositReadyCaption(tenant, order, deposit);
   const copyPasteReply = buildTelegramPixCopyPasteReply(deposit);
 
   if (typeof deposit?.qrImageUrl === "string" && deposit.qrImageUrl.length > 0) {
