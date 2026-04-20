@@ -31,6 +31,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a triagem de issues agora publica rota canonica na issue sem criar Discussion prematura
 - quando a rota exigir planning, a planning review cria ou reutiliza uma unica Discussion via API, roda quatro papeis especializados e so libera Codex com `ready_for_codex: true`
 - a review de PR por IA agora reconcilia follow-up blockers contra o diff atual, evidencia explicita de arquivos de teste e `CI / Test` antes de descarregar bloqueios antigos
+- quando a thread final traz uma reply humana com cenario de validacao ou resolucao do bloqueio, essa evidencia pode ser usada no handoff do follow-up
 - quando restarem bloqueios de follow-up, a automacao publica memos deterministas de `Request changes` em vez de aprovacoes nao reconciliadas
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar

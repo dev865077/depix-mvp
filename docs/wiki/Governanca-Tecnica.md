@@ -38,6 +38,7 @@
 - quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`
 - a reconciliacao de follow-up blockers exige ler a ultima conclusao da Discussion, transformar a resposta final em blockers testaveis canonicos e manter os bloqueios anteriores ativos ate haver alinhamento entre diff atual, evidencia explicita de arquivo de teste e `CI / Test`
 - approvações de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
+- a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
 - contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
 - a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao
 
