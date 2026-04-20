@@ -31,6 +31,7 @@ Esta proposta se apoia em quatro referencias principais:
 - pagina nova de `Roadmap e Backlog`
 - linguagem mais consistente entre produto, arquitetura, engenharia e operacao
 - atualizacao automatica da pasta `docs/wiki` apos merge de PR, com publicacao da wiki real so quando ela estiver habilitada
+- a suite de review de PR passou a manter um matrix de regressao canonico para o contrato de blocker e para a reconciliacao de follow-up
 
 ## Paginas
 
