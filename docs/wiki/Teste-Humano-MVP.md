@@ -122,8 +122,9 @@ No bot correto do tenant:
 4. confirme com `sim`, `confirmar` ou `ok`
 5. aguarde QR/copia-e-cola
 6. pague o QR
-7. acompanhe estado final pelo webhook ou por recheck operacional
-8. use `/help` se precisar de orientacao contextual sem alterar o pedido
+7. aguarde a mensagem assincrona de confirmacao no Telegram quando o pagamento for conciliado
+8. acompanhe o estado final pelo webhook ou por recheck operacional se a confirmacao nao chegar
+9. use `/help` se precisar de orientacao contextual sem alterar o pedido
 
 Registre screenshot ou transcricao do Telegram com horario absoluto.
 
@@ -143,6 +144,7 @@ O comentario final deve incluir:
 - `orders.status`
 - `orders.current_step`
 - `deposits.external_status`
+- horario absoluto da mensagem assincrona recebida no Telegram, ou a ausencia controlada dela
 - requestIds relevantes
 - logs ou erro observado
 

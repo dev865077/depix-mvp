@@ -72,7 +72,7 @@ function createWorkerEnv() {
   };
 }
 
-async function seedDepositAggregate() {
+async function seedDepositAggregate(input = {}) {
   await resetDatabaseSchema();
 
   const db = getDatabase(env);
@@ -89,6 +89,7 @@ async function seedDepositAggregate() {
     status: "pending",
     splitAddress: "split_wallet_alpha",
     splitFee: "0.50",
+    telegramChatId: input.telegramChatId ?? "telegram_chat_alpha_001",
   });
 
   await createDeposit(db, {
@@ -150,8 +151,26 @@ describe("eulen deposit webhook", () => {
     });
   });
 
-  it("processes a valid webhook and applies payment truth", async function assertValidWebhookProcessing() {
+  it("processes a valid webhook, applies payment truth and notifies Telegram", async function assertValidWebhookProcessing() {
     await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramNotification(input, init) {
+      const url = String(input);
+
+      expect(url).toContain("https://api.telegram.org/botalpha-bot-token/sendMessage");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 501,
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
 
     const response = await requestEulenWebhook({
       authorizationHeader: "Basic alpha-eulen-secret",
@@ -173,6 +192,11 @@ describe("eulen deposit webhook", () => {
     expect(updatedDeposit?.externalStatus).toBe("depix_sent");
     expect(savedEvents).toHaveLength(1);
     expect(savedEvents[0]?.bankTxId).toBe("bank_tx_alpha_001");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({
+      chat_id: "telegram_chat_alpha_001",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).text).toContain("Pagamento confirmado");
   });
 
   it("rejects an invalid webhook secret at the boundary", async function assertInvalidSecretRejection() {
@@ -190,8 +214,22 @@ describe("eulen deposit webhook", () => {
     expect(savedEvents).toHaveLength(0);
   });
 
-  it("ignores repeated delivery without duplicating persistence", async function assertWebhookIdempotency() {
+  it("ignores repeated delivery without duplicating persistence or Telegram notification", async function assertWebhookIdempotency() {
     await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 502,
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
 
     const firstResponse = await requestEulenWebhook({
       authorizationHeader: "Basic alpha-eulen-secret",
@@ -206,6 +244,7 @@ describe("eulen deposit webhook", () => {
     expect(secondResponse.status).toBe(200);
     expect(secondBody.duplicate).toBe(true);
     expect(savedEvents).toHaveLength(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("repairs aggregate state when the latest duplicate event is retried", async function assertDuplicateRepair() {

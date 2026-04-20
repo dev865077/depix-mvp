@@ -31,6 +31,7 @@ import {
 } from "../services/ops-route-authorization.js";
 import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
+import { notifyTelegramOrderTransition } from "../services/telegram-payment-notifications.js";
 import {
   getTelegramWebhookOpsInfo,
   normalizeTelegramWebhookPublicBaseUrl,
@@ -266,6 +267,19 @@ export async function handleDepositRecheck(c) {
       requestId: c.get("requestId"),
     });
 
+    await notifyTelegramOrderTransition({
+      env: c.env,
+      db,
+      runtimeConfig,
+      tenant,
+      requestContext: {
+        requestId: c.get("requestId"),
+        method: c.req.method,
+        path: c.req.path,
+      },
+      ...result.details,
+    });
+
     return c.json(
       {
         ok: true,
@@ -320,6 +334,29 @@ export async function handleDepositsFallback(c) {
       rawBody: await c.req.text(),
       requestId: c.get("requestId"),
     });
+
+    for (const entry of result.details.results ?? []) {
+      await notifyTelegramOrderTransition({
+        env: c.env,
+        db,
+        runtimeConfig,
+        tenant,
+        requestContext: {
+          requestId: c.get("requestId"),
+          method: c.req.method,
+          path: c.req.path,
+        },
+        duplicate: entry.outcome === "duplicate",
+        externalStatus: entry.status,
+        orderId: entry.orderId,
+        depositEntryId: entry.depositEntryId,
+        orderStatus: entry.orderStatus,
+        orderCurrentStep: entry.orderCurrentStep,
+        previousExternalStatus: entry.previousExternalStatus,
+        previousOrderStatus: entry.previousOrderStatus,
+        previousOrderCurrentStep: entry.previousOrderCurrentStep,
+      });
+    }
 
     return c.json(
       {

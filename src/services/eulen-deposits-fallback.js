@@ -519,6 +519,9 @@ async function reconcileDepositsListRow(input) {
       status: input.remoteDeposit.status,
       eventId: savedEvent?.id,
       outcome: "processed",
+      previousExternalStatus: deposit.externalStatus,
+      previousOrderStatus: order.status,
+      previousOrderCurrentStep: order.currentStep,
       orderStatus: updatedOrder.status,
       orderCurrentStep: updatedOrder.currentStep,
     };
@@ -562,6 +565,9 @@ async function reconcileDepositsListRow(input) {
       eventId: duplicateEvent.id,
       outcome: "duplicate",
       repairedAggregate: shouldRepair,
+      previousExternalStatus: deposit.externalStatus,
+      previousOrderStatus: order.status,
+      previousOrderCurrentStep: order.currentStep,
       orderStatus: updatedOrder?.status ?? currentOrder.status,
       orderCurrentStep: updatedOrder?.currentStep ?? currentOrder.currentStep,
     };

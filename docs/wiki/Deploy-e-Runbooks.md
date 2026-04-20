@@ -96,6 +96,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - pedidos novos ou retomados pelo Telegram passam a gravar o `chat.id` real da conversa
 - pedidos abertos legados com `telegram_chat_id = NULL` so ganham destino seguro quando receberem novo update Telegram do mesmo tenant, usuario e canal
 - pedidos legados que nao receberem novo update permanecem sem destino assincrono seguro; a futura notificacao pos-pagamento deve registrar skip controlado e nunca usar `user_id` como fallback
+- pedidos com `telegram_chat_id` valido agora recebem notificacao assincrona quando o agregado financeiro muda para um estado terminal relevante; duplicatas de webhook, recheck e fallback nao devem repetir a mesma mensagem
 - se um update conversacional chegar sem `chat.id`, o Worker falha fechado com `400 telegram_order_registration_failed` e `reason=missing_telegram_chat_id`, sem criar pedido parcial
 - se um update chegar de chat diferente do persistido, o Worker nao sobrescreve `telegram_chat_id`, responde orientando usar a conversa original e registra `telegram.order.chat_divergence_detected`
 - superficie order-bearing suportada no MVP: `message`/`message:text`; callback query, mensagem editada, channel post e demais updates recebem tratamento unsupported e nao criam nem retomam pedido

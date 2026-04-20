@@ -125,6 +125,7 @@ async function seedDepositAggregate(input = {}) {
     status: input.status ?? "pending",
     splitAddress: "split_wallet_alpha",
     splitFee: "0.50",
+    telegramChatId: input.telegramChatId ?? `${tenantId}_telegram_chat_001`,
   });
 
   await createDeposit(db, {
@@ -177,20 +178,40 @@ describe("deposit recheck route", () => {
   it("reconciles deposit-status truth and records a recheck event", async function assertSuccessfulRecheck() {
     const { db } = await seedDepositAggregate();
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        response: {
-          qrId: "qr_alpha_001",
-          status: "depix_sent",
-          expiration: "2026-04-18T04:00:00Z",
-        },
-      }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      }),
-    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockRecheckAndTelegram(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_entry_alpha_001") {
+        return new Response(JSON.stringify({
+          response: {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            expiration: "2026-04-18T04:00:00Z",
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 601,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
 
     const response = await requestDepositRecheck();
     const body = await response.json();
@@ -208,6 +229,11 @@ describe("deposit recheck route", () => {
     expect(updatedOrder?.currentStep).toBe("completed");
     expect(savedEvents).toHaveLength(1);
     expect(savedEvents[0]?.source).toBe("recheck_deposit_status");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toMatchObject({
+      chat_id: "alpha_telegram_chat_001",
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).text).toContain("Pagamento confirmado");
   });
 
   it("hydrates qrId from deposit-status before applying the reconciled truth", async function assertQrIdHydration() {
@@ -215,17 +241,37 @@ describe("deposit recheck route", () => {
       qrId: null,
     });
 
-    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
-      return new Response(JSON.stringify({
-        qrId: "qr_alpha_001",
-        status: "depix_sent",
-        expiration: "2026-04-18T04:00:00Z",
-      }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus(input) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_entry_alpha_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_alpha_001",
+          status: "depix_sent",
+          expiration: "2026-04-18T04:00:00Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 602,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
     });
 
     const response = await requestDepositRecheck();
@@ -241,17 +287,37 @@ describe("deposit recheck route", () => {
   it("treats an identical repeated recheck as duplicate without duplicating event history", async function assertDuplicateRecheckHandling() {
     const { db } = await seedDepositAggregate();
 
-    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
-      return new Response(JSON.stringify({
-        qrId: "qr_alpha_001",
-        status: "depix_sent",
-        expiration: "2026-04-18T04:00:00Z",
-      }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus(input) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_entry_alpha_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_alpha_001",
+          status: "depix_sent",
+          expiration: "2026-04-18T04:00:00Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 603,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
     });
 
     await requestDepositRecheck();
@@ -548,23 +614,44 @@ describe("deposit recheck route", () => {
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(1);
   });
 
   it("proves sequential retry idempotency at the route without duplicating recheck events", async function assertRouteLevelSequentialRetryIdempotency() {
     const { db } = await seedDepositAggregate();
 
-    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus() {
-      return new Response(JSON.stringify({
-        qrId: "qr_alpha_001",
-        status: "depix_sent",
-        expiration: "2026-04-18T04:00:00Z",
-      }), {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-        },
-      });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositStatus(input) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_entry_alpha_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_alpha_001",
+          status: "depix_sent",
+          expiration: "2026-04-18T04:00:00Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 603,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
     });
 
     const firstResponse = await requestDepositRecheck();
@@ -576,6 +663,7 @@ describe("deposit recheck route", () => {
     expect(secondResponse.status).toBe(200);
     expect(secondBody.duplicate).toBe(true);
     expect(savedEvents).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(1);
   });
 
   it("proves route-level terminal aggregates reject regressive remote statuses", async function assertRouteLevelTerminalRegressionProtection() {
