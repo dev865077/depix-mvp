@@ -13,9 +13,12 @@ on:
       - edited
 
 permissions:
+  actions: read
+  checks: read
   contents: read
   pull-requests: read
   discussions: write
+  statuses: read
 
 concurrency:
   group: ai-pr-review-${{ github.event.pull_request.number || github.event.discussion.number }}
@@ -26,9 +29,12 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      checks: read
       contents: read
       pull-requests: read
       discussions: read
+      statuses: read
     outputs:
       requires_discussion: ${{ steps.gate.outputs.requires_discussion }}
       route: ${{ steps.gate.outputs.route }}
@@ -55,9 +61,12 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'false'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      checks: read
       contents: read
       issues: write
       pull-requests: write
+      statuses: read
 
     steps:
       - name: Checkout repository
@@ -82,10 +91,13 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      checks: read
       contents: read
       discussions: write
       issues: write
       pull-requests: write
+      statuses: read
 
     steps:
       - name: Checkout repository
