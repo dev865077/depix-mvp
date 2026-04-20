@@ -701,21 +701,96 @@ function buildTelegramChatBindingBlockedReply() {
 }
 
 /**
+ * Timezone canonico da copy operacional do Telegram.
+ *
+ * A Eulen pode devolver `expiration` em UTC ou com offset. Para nao deixar o
+ * usuario fazer conta mental, o bot normaliza a exibicao para horario de
+ * Brasilia, que e o contexto operacional padrao deste MVP.
+ */
+const TELEGRAM_DEPOSIT_EXPIRATION_TIME_ZONE = "America/Sao_Paulo";
+
+/**
+ * Label curta do timezone exibido ao usuario final.
+ */
+const TELEGRAM_DEPOSIT_EXPIRATION_LABEL = "horario de Brasilia";
+
+/**
+ * Formata a expiracao do Pix para uma copy curta e deterministica.
+ *
+ * A mensagem final nao pode inventar expiracao nem ecoar ISO bruto
+ * desnecessariamente. Quando a Eulen nao devolver um timestamp valido, o
+ * caption simplesmente omite a linha de expiracao.
+ *
+ * @param {{ expiration?: unknown }} deposit Deposito criado na Eulen.
+ * @returns {string | null} Linha pronta para o usuario ou `null` quando ausente.
+ */
+function buildTelegramDepositExpirationLine(deposit) {
+  const expiration = typeof deposit?.expiration === "string"
+    ? deposit.expiration.trim()
+    : "";
+
+  if (expiration.length === 0) {
+    return null;
+  }
+
+  const parsedExpiration = new Date(expiration);
+
+  if (Number.isNaN(parsedExpiration.getTime())) {
+    return null;
+  }
+
+  const formattedParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: TELEGRAM_DEPOSIT_EXPIRATION_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(parsedExpiration);
+  const partMap = Object.create(null);
+
+  for (const part of formattedParts) {
+    if (part.type !== "literal") {
+      partMap[part.type] = part.value;
+    }
+  }
+
+  if (!partMap.day || !partMap.month || !partMap.year || !partMap.hour || !partMap.minute) {
+    return null;
+  }
+
+  return `Expiracao: ${partMap.day}/${partMap.month}/${partMap.year} ${partMap.hour}:${partMap.minute} (${TELEGRAM_DEPOSIT_EXPIRATION_LABEL}).`;
+}
+
+/**
  * Mensagem principal enviada quando o Pix foi criado com sucesso.
+ *
+ * O caption precisa resolver a UX minima da issue #135:
+ * - confirmar valor e contexto do pedido
+ * - orientar o uso do QR e do copia-e-cola
+ * - registrar expiracao apenas quando a Eulen devolver esse dado
+ * - indicar o proximo passo sem prometer um `/status` que ainda nao existe
  *
  * @param {{ displayName: string }} tenant Tenant atual.
  * @param {{ amountInCents?: unknown }} order Pedido confirmado.
+ * @param {{ expiration?: unknown }} deposit Deposito criado na Eulen.
  * @returns {string} Texto curto de orientacao.
  */
-function buildTelegramDepositReadyCaption(tenant, order) {
+function buildTelegramDepositReadyCaption(tenant, order, deposit) {
   const amountLine = Number.isSafeInteger(order?.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
     : "Valor: conforme pedido";
+  const expirationLine = buildTelegramDepositExpirationLine(deposit);
 
   return [
     `Pedido confirmado em ${tenant.displayName}.`,
     amountLine,
     "Seu Pix ja foi gerado.",
+    "Pague com o QR acima ou com o Pix copia e cola abaixo.",
+    ...(expirationLine ? [expirationLine] : []),
+    "Depois de pagar, aguarde a confirmacao do pedido.",
+    "Se precisar revisar o proximo passo, envie /help.",
   ].join("\n");
 }
 
@@ -742,11 +817,11 @@ function buildTelegramPixCopyPasteReply(deposit) {
  * @param {any} ctx Contexto atual do grammY.
  * @param {{ displayName: string }} tenant Tenant atual.
  * @param {{ amountInCents?: unknown }} order Pedido confirmado.
- * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown }} deposit Deposito criado.
+ * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown, expiration?: unknown }} deposit Deposito criado.
  * @returns {Promise<void>} Promessa resolvida apos os envios.
  */
 async function sendTelegramDepositReadyReply(ctx, tenant, order, deposit) {
-  const caption = buildTelegramDepositReadyCaption(tenant, order);
+  const caption = buildTelegramDepositReadyCaption(tenant, order, deposit);
   const copyPasteReply = buildTelegramPixCopyPasteReply(deposit);
 
   if (typeof deposit?.qrImageUrl === "string" && deposit.qrImageUrl.length > 0) {

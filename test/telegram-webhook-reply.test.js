@@ -1938,6 +1938,9 @@ describe("telegram webhook reply flow", () => {
     expect(persistedDeposits?.count).toBe(1);
     expect(photoReply?.payload.photo).toBe("https://example.com/qr/alpha-001.png");
     expect(photoReply?.payload.caption).toContain("Pedido confirmado em Alpha.");
+    expect(photoReply?.payload.caption).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
+    expect(photoReply?.payload.caption).toContain("Se precisar revisar o proximo passo, envie /help.");
+    expect(photoReply?.payload.caption).not.toContain("Expiracao:");
     expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-alpha-001");
     expect(replayReply.payload.text).toContain("já está aguardando pagamento");
     expect(fetchSpy).toHaveBeenCalled();
@@ -2278,6 +2281,7 @@ describe("telegram webhook reply flow", () => {
       "content-type": "application/json",
       "x-telegram-bot-api-secret-token": "beta-telegram-secret",
     };
+    const telegramCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockAsyncConfirmFlow(input, init) {
       const url = String(input);
 
@@ -2312,6 +2316,10 @@ describe("telegram webhook reply flow", () => {
 
       if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
         const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          kind: url.includes("/sendPhoto") ? "photo" : "message",
+          payload,
+        });
 
         return new Response(JSON.stringify({
           ok: true,
@@ -2359,10 +2367,114 @@ describe("telegram webhook reply flow", () => {
 
     const finalOrder = await getLatestOpenOrderByUser(getDatabase(env), "beta", "866");
     const savedDeposit = await getLatestDepositByOrderId(getDatabase(env), "beta", finalOrder.orderId);
+    const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
 
     expect(fetchSpy.mock.calls.some(([url]) => String(url) === "https://example.com/eulen-async/beta-001")).toBe(true);
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
     expect(savedDeposit?.depositEntryId).toBe("deposit_entry_beta_001");
+    expect(photoReply?.payload.caption).toContain("Expiracao: 18/04/2026 09:00 (horario de Brasilia).");
+  });
+
+  it("falls back to plain text when Telegram rejects the QR photo without dropping the copy-paste instructions", async function assertDepositPhotoFallback() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositPhotoFallback(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_entry_alpha_002",
+            qrCopyPaste: "0002010102122688pix-alpha-002",
+            qrImageUrl: "https://example.com/qr/alpha-002.png",
+            expiration: "2026-04-18T12:00:00.000Z",
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto")) {
+        return new Response(JSON.stringify({
+          ok: false,
+          description: "photo rejected",
+        }), {
+          status: 500,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push(payload);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 50,
+            date: 1713434450,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in deposit photo fallback flow: ${url}`);
+    });
+
+    for (const [text, updateId] of [
+      ["/start", 71],
+      ["10,50", 72],
+      [SIDESWAP_LQ_ADDRESS, 73],
+      ["confirmar", 74],
+    ]) {
+      await app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text,
+            chatId: 8707,
+            fromId: 877,
+            updateId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    const pixReplies = telegramCalls.filter((payload) => (
+      payload.text?.includes("Pedido confirmado em Alpha.")
+      || payload.text?.includes("Pix copia e cola:")
+    ));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    expect(pixReplies).toHaveLength(2);
+    expect(pixReplies[0]?.text).toContain("Pedido confirmado em Alpha.");
+    expect(pixReplies[0]?.text).toContain("Expiracao: 18/04/2026 09:00 (horario de Brasilia).");
+    expect(pixReplies[0]?.text).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
+    expect(pixReplies[1]?.text).toContain("Pix copia e cola:");
+    expect(pixReplies[1]?.text).toContain("0002010102122688pix-alpha-002");
   });
 
   it("marks the order as failed and replies with a restart instruction when Eulen create-deposit fails", async function assertConfirmationFailureFlow() {

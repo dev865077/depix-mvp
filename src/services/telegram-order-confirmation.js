@@ -185,6 +185,11 @@ function assertTelegramSplitConfigReady(tenantId, splitConfig) {
 /**
  * Extrai os campos obrigatorios da resposta de create-deposit.
  *
+ * O client pode resolver uma resposta async para o shape:
+ * `{ response, async: false, resolvedFromAsync: true, originalAsync }`.
+ * Nessa situacao, a expiração ainda e valiosa para a UX do Telegram e pode
+ * existir apenas em `originalAsync.expiration`.
+ *
  * @param {unknown} responseData Envelope normalizado do client Eulen.
  * @returns {{ depositEntryId: string, qrCopyPaste: string, qrImageUrl: string, expiration: string | null }} Deposito pronto para persistencia.
  */
@@ -193,9 +198,14 @@ function extractCreatedDeposit(responseData) {
   const depositEntryId = typeof payload?.id === "string" ? payload.id.trim() : "";
   const qrCopyPaste = typeof payload?.qrCopyPaste === "string" ? payload.qrCopyPaste.trim() : "";
   const qrImageUrl = typeof payload?.qrImageUrl === "string" ? payload.qrImageUrl.trim() : "";
-  const expiration = typeof payload?.expiration === "string" && payload.expiration.trim().length > 0
+  const payloadExpiration = typeof payload?.expiration === "string" && payload.expiration.trim().length > 0
     ? payload.expiration.trim()
     : null;
+  const originalAsyncExpiration = typeof responseData?.originalAsync?.expiration === "string"
+    && responseData.originalAsync.expiration.trim().length > 0
+    ? responseData.originalAsync.expiration.trim()
+    : null;
+  const expiration = payloadExpiration ?? originalAsyncExpiration;
 
   if (!depositEntryId || !qrCopyPaste || !qrImageUrl) {
     throw new TelegramOrderConfirmationError(
