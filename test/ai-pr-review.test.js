@@ -10,8 +10,10 @@ import {
   buildDiscussionDebateFailureSynthesis,
   buildDiscussionGateReview,
   buildDiscussionHistoryContext,
+  buildDiscussionSynthesisContractAppendix,
   buildMalformedBlockerContractMemo,
   assessDiscussionGate,
+  augmentDiscussionSynthesis,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
   buildModelFailureMemo,
@@ -26,6 +28,7 @@ import {
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
   sortFilesForReview,
+  summarizeDiscussionBlockingContracts,
   summarizePullRequestScope,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -687,9 +690,273 @@ describe("ai pr review discussion rendering", () => {
     expect(roleComments.every((comment) => comment.body.includes("<!-- ai-pr-discussion-review:openai -->"))).toBe(true);
   });
 
+  it("consolidates testable blockers by behavior and suggested test file", () => {
+    const debate = {
+      product: [
+        "## Perspective",
+        "Needs a human call.",
+        "",
+        "## Findings",
+        "- Policy is unresolved.",
+        "",
+        "## Questions",
+        "- None.",
+        "",
+        "## Merge posture",
+        "Not ready.",
+        "",
+        "## Blocker contract",
+        "Testability: Not testable",
+        "Reason: The remaining blocker is a product policy decision.",
+        "Required human resolution: Maintainer must choose the supported policy.",
+        "",
+        "## Recommendation",
+        "Request changes",
+      ].join("\n"),
+      technical: [
+        "## Perspective",
+        "One deterministic blocker remains.",
+        "",
+        "## Findings",
+        "- Parser boundary needs proof.",
+        "",
+        "## Questions",
+        "- None.",
+        "",
+        "## Merge posture",
+        "Not ready.",
+        "",
+        "## Blocker contract",
+        "Testability: Testable",
+        "Behavior protected: Canonical blocker contracts remain scoped to the blocker section.",
+        "Suggested test file: test/ai-pr-review.test.js",
+        "Minimum scenario: Parse one blocking memo with labels outside the blocker section.",
+        "Essential assertions: parse returns malformed for labels outside the section.",
+        "Resolution rule: Reject blocking memos unless canonical fields live under the blocker section.",
+        "Why this test resolves the blocker: It proves section scoping is enforced.",
+        "",
+        "## Recommendation",
+        "Request changes",
+      ].join("\n"),
+      risk: [
+        "## Perspective",
+        "The same runtime proof is still required.",
+        "",
+        "## Findings",
+        "- One deterministic blocker remains.",
+        "",
+        "## Questions",
+        "- None.",
+        "",
+        "## Merge posture",
+        "Not ready.",
+        "",
+        "## Blocker contract",
+        "Testability: Testable",
+        "Behavior protected: Canonical blocker contracts remain scoped to the blocker section.",
+        "Suggested test file: test/ai-pr-review.test.js",
+        "Minimum scenario: Parse one blocking memo with labels outside the blocker section.",
+        "Essential assertions: parse returns malformed for labels outside the section.",
+        "Resolution rule: Reject blocking memos unless canonical fields live under the blocker section.",
+        "Why this test resolves the blocker: It proves section scoping is enforced.",
+        "",
+        "## Recommendation",
+        "Request changes",
+      ].join("\n"),
+      synthesis: "Request changes\n\n## Findings\n- One blocker remains.\n\n## Recommendation\nRequest changes",
+    };
+
+    expect(summarizeDiscussionBlockingContracts(debate)).toEqual({
+      testable: [
+        {
+          roles: ["technical", "risk"],
+          behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+          suggestedTestFile: "test/ai-pr-review.test.js",
+          minimumScenarios: ["Parse one blocking memo with labels outside the blocker section."],
+          essentialAssertions: ["parse returns malformed for labels outside the section."],
+          resolutionConditions: ["Reject blocking memos unless canonical fields live under the blocker section."],
+        },
+      ],
+      notTestable: [
+        {
+          role: "product",
+          reason: "The remaining blocker is a product policy decision.",
+          requiredHumanResolution: "Maintainer must choose the supported policy.",
+        },
+      ],
+      roleMap: [
+        {
+          role: "product",
+          expectedTest: null,
+          resolutionCondition: "Maintainer must choose the supported policy.",
+          behaviorProtected: null,
+          testability: "Not testable",
+          reason: "The remaining blocker is a product policy decision.",
+        },
+        {
+          role: "technical",
+          expectedTest: "test/ai-pr-review.test.js",
+          resolutionCondition: "Reject blocking memos unless canonical fields live under the blocker section.",
+          behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+          testability: "Testable",
+        },
+        {
+          role: "risk",
+          expectedTest: "test/ai-pr-review.test.js",
+          resolutionCondition: "Reject blocking memos unless canonical fields live under the blocker section.",
+          behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+          testability: "Testable",
+        },
+      ],
+    });
+  });
+
+  it("adds the canonical acceptance-test appendix to synthesis output", () => {
+    const blockerSummary = {
+      testable: [
+        {
+          roles: ["technical", "risk"],
+          behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+          suggestedTestFile: "test/ai-pr-review.test.js",
+          minimumScenarios: ["Parse one blocking memo with labels outside the blocker section."],
+          essentialAssertions: ["parse returns malformed for labels outside the section."],
+          resolutionConditions: ["Reject blocking memos unless canonical fields live under the blocker section."],
+        },
+      ],
+      notTestable: [
+        {
+          role: "product",
+          reason: "The remaining blocker is a product policy decision.",
+          requiredHumanResolution: "Maintainer must choose the supported policy.",
+        },
+      ],
+      roleMap: [],
+    };
+    const synthesis = augmentDiscussionSynthesis(
+      "Request changes\n\n## Findings\n- One blocker remains.\n\n## Recommendation\nRequest changes",
+      {
+        product: [
+          "## Perspective",
+          "Needs a human call.",
+          "",
+          "## Findings",
+          "- Policy is unresolved.",
+          "",
+          "## Questions",
+          "- None.",
+          "",
+          "## Merge posture",
+          "Not ready.",
+          "",
+          "## Blocker contract",
+          "Testability: Not testable",
+          "Reason: The remaining blocker is a product policy decision.",
+          "Required human resolution: Maintainer must choose the supported policy.",
+          "",
+          "## Recommendation",
+          "Request changes",
+        ].join("\n"),
+        technical: [
+          "## Perspective",
+          "One deterministic blocker remains.",
+          "",
+          "## Findings",
+          "- Parser boundary needs proof.",
+          "",
+          "## Questions",
+          "- None.",
+          "",
+          "## Merge posture",
+          "Not ready.",
+          "",
+          "## Blocker contract",
+          "Testability: Testable",
+          "Behavior protected: Canonical blocker contracts remain scoped to the blocker section.",
+          "Suggested test file: test/ai-pr-review.test.js",
+          "Minimum scenario: Parse one blocking memo with labels outside the blocker section.",
+          "Essential assertions: parse returns malformed for labels outside the section.",
+          "Resolution rule: Reject blocking memos unless canonical fields live under the blocker section.",
+          "Why this test resolves the blocker: It proves section scoping is enforced.",
+          "",
+          "## Recommendation",
+          "Request changes",
+        ].join("\n"),
+        risk: [
+          "## Perspective",
+          "The same runtime proof is still required.",
+          "",
+          "## Findings",
+          "- One deterministic blocker remains.",
+          "",
+          "## Questions",
+          "- None.",
+          "",
+          "## Merge posture",
+          "Not ready.",
+          "",
+          "## Blocker contract",
+          "Testability: Testable",
+          "Behavior protected: Canonical blocker contracts remain scoped to the blocker section.",
+          "Suggested test file: test/ai-pr-review.test.js",
+          "Minimum scenario: Parse one blocking memo with labels outside the blocker section.",
+          "Essential assertions: parse returns malformed for labels outside the section.",
+          "Resolution rule: Reject blocking memos unless canonical fields live under the blocker section.",
+          "Why this test resolves the blocker: It proves section scoping is enforced.",
+          "",
+          "## Recommendation",
+          "Request changes",
+        ].join("\n"),
+      },
+    );
+
+    expect(buildDiscussionSynthesisContractAppendix(blockerSummary)).toContain("## Acceptance tests requested");
+    expect(synthesis).toContain("## Acceptance tests requested");
+    expect(synthesis).toContain("Roles `technical`, `risk` -> `test/ai-pr-review.test.js`");
+    expect(synthesis).toContain("## Human resolution required");
+    expect(synthesis).toContain("required human resolution: Maintainer must choose the supported policy.");
+    expect(synthesis).toContain("## Recommendation\nRequest changes");
+  });
+
   it("builds a visible final discussion status comment", () => {
     const approved = buildDiscussionCompletionComment("Approve");
-    const blocked = buildDiscussionCompletionComment("Request changes", ["risk"]);
+    const blocked = buildDiscussionCompletionComment("Request changes", ["technical", "product"], {
+      blockerSummary: {
+        testable: [
+          {
+            roles: ["technical"],
+            behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+            suggestedTestFile: "test/ai-pr-review.test.js",
+            minimumScenarios: ["Parse one blocking memo with labels outside the blocker section."],
+            essentialAssertions: ["parse returns malformed for labels outside the section."],
+            resolutionConditions: ["Reject blocking memos unless canonical fields live under the blocker section."],
+          },
+        ],
+        notTestable: [
+          {
+            role: "product",
+            reason: "The remaining blocker is a product policy decision.",
+            requiredHumanResolution: "Maintainer must choose the supported policy.",
+          },
+        ],
+        roleMap: [
+          {
+            role: "technical",
+            expectedTest: "test/ai-pr-review.test.js",
+            resolutionCondition: "Reject blocking memos unless canonical fields live under the blocker section.",
+            behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+            testability: "Testable",
+          },
+          {
+            role: "product",
+            expectedTest: null,
+            resolutionCondition: "Maintainer must choose the supported policy.",
+            behaviorProtected: null,
+            testability: "Not testable",
+            reason: "The remaining blocker is a product policy decision.",
+          },
+        ],
+      },
+    });
     const followUpApproved = buildDiscussionCompletionComment("Approve", [], { isFollowUpRound: true });
 
     expect(approved).toContain("<!-- ai-pr-discussion-final:openai -->");
@@ -703,7 +970,13 @@ describe("ai pr review discussion rendering", () => {
     expect(approved).toContain("ready_for_merge: `true`");
     expect(blocked).toContain("Final recommendation: `Request changes`");
     expect(blocked).toContain("unanimous approval was not reached across the specialist reviewer roles");
-    expect(blocked).toContain("`risk`");
+    expect(blocked).toContain("`technical`");
+    expect(blocked).toContain("`product`");
+    expect(blocked).toContain("## Acceptance tests requested");
+    expect(blocked).toContain("## Human resolution required");
+    expect(blocked).toContain("## Blocking role map");
+    expect(blocked).toContain("`technical` -> `test/ai-pr-review.test.js` -> Reject blocking memos unless canonical fields live under the blocker section.");
+    expect(blocked).toContain("`product` -> human resolution -> Maintainer must choose the supported policy.");
     expect(blocked).toContain("newest final-status comment supersedes earlier automated final-status comments");
     expect(blocked).toContain("canonical_state: `pr_review_request_changes`");
     expect(blocked).toContain("ready_for_merge: `false`");

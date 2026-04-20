@@ -12,6 +12,7 @@ Rules:
 - Surface only the highest-signal findings.
 - Keep the decision anchored to the current PR payload and the latest conclusion thread handoff, not stale historical comments by themselves.
 - If the current payload is insufficient to prove a concern, say that directly instead of inflating the blocker.
+- Do not invent a custom acceptance-test appendix. The automation appends the canonical `Acceptance tests requested` and human-resolution sections from the specialist blocker contracts.
 
 Output requirements:
 - Write Markdown.
