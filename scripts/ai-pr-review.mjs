@@ -114,6 +114,12 @@ const DISCUSSION_ROLE_LABELS = {
   risk: "risk",
 };
 
+const DISCUSSION_ROLE_TITLES = {
+  product: "Product and scope",
+  technical: "Technical and architecture",
+  risk: "Risk, security, and operations",
+};
+
 /**
  * Emit a stable operational log line for GitHub Actions.
  *
@@ -478,6 +484,18 @@ function pushUniqueSummaryValue(values, value) {
 function collectDiscussionBlockingContracts(debate) {
   return DISCUSSION_SPECIALIST_ROLE_KEYS.flatMap((role) => {
     const parsed = parseBlockingRoleContract(debate[role]);
+
+    if (parsed.status === "malformed") {
+      return [{
+        role,
+        testability: "Not testable",
+        fields: {
+          Testability: "Not testable",
+          Reason: `Malformed blocker contract from ${DISCUSSION_ROLE_TITLES[role] ?? role}: ${parsed.reason}`,
+          "Required human resolution": "regenerate the review with the canonical blocker contract",
+        },
+      }];
+    }
 
     if (parsed.status !== "valid" || !parsed.testability || !parsed.fields) {
       return [];

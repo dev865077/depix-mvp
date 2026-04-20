@@ -918,6 +918,13 @@ describe("ai pr review discussion rendering", () => {
     expect(synthesis).toContain("## Human resolution required");
     expect(synthesis).toContain("required human resolution: Maintainer must choose the supported policy.");
     expect(synthesis).toContain("## Recommendation\nRequest changes");
+    const acceptanceSection = synthesis.slice(
+      synthesis.indexOf("## Acceptance tests requested"),
+      synthesis.indexOf("## Human resolution required"),
+    );
+    const humanResolutionSection = synthesis.slice(synthesis.indexOf("## Human resolution required"));
+    expect(acceptanceSection).not.toContain("`product`");
+    expect(humanResolutionSection).toContain("`product`");
   });
 
   it("keeps malformed specialist blockers visible in the synthesized blocker summary", () => {
@@ -948,6 +955,24 @@ describe("ai pr review discussion rendering", () => {
         behaviorProtected: null,
         testability: "Not testable",
         reason: "Malformed blocker contract from Technical and architecture: Missing required field: Testability.",
+      },
+    ]);
+  });
+
+  it("fails closed for raw malformed blocking memos in the aggregation path", () => {
+    const summary = summarizeDiscussionBlockingContracts({
+      product: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: "## Perspective\nBroken blocker.\n\n## Findings\n- Missing contract.\n\n## Questions\n- None.\n\n## Merge posture\nNot ready.\n\n## Recommendation\nRequest changes",
+      risk: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Request changes\n\n## Findings\n- One blocker remains.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(summary.testable).toEqual([]);
+    expect(summary.notTestable).toEqual([
+      {
+        role: "technical",
+        reason: "Malformed blocker contract from Technical and architecture: Missing required section: ## Blocker contract.",
+        requiredHumanResolution: "regenerate the review with the canonical blocker contract",
       },
     ]);
   });
