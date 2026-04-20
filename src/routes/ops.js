@@ -31,7 +31,7 @@ import {
 } from "../services/ops-route-authorization.js";
 import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
-import { notifyTelegramOrderTransition } from "../services/telegram-payment-notifications.js";
+import { notifyTelegramOrderTransitionSafely } from "../services/telegram-payment-notifications.js";
 import {
   getTelegramWebhookOpsInfo,
   normalizeTelegramWebhookPublicBaseUrl,
@@ -267,7 +267,7 @@ export async function handleDepositRecheck(c) {
       requestId: c.get("requestId"),
     });
 
-    await notifyTelegramOrderTransition({
+    await notifyTelegramOrderTransitionSafely({
       env: c.env,
       db,
       runtimeConfig,
@@ -335,28 +335,26 @@ export async function handleDepositsFallback(c) {
       requestId: c.get("requestId"),
     });
 
-    for (const entry of result.details.results ?? []) {
-      await notifyTelegramOrderTransition({
-        env: c.env,
-        db,
-        runtimeConfig,
-        tenant,
-        requestContext: {
-          requestId: c.get("requestId"),
-          method: c.req.method,
-          path: c.req.path,
-        },
-        duplicate: entry.outcome === "duplicate",
-        externalStatus: entry.status,
-        orderId: entry.orderId,
-        depositEntryId: entry.depositEntryId,
-        orderStatus: entry.orderStatus,
-        orderCurrentStep: entry.orderCurrentStep,
-        previousExternalStatus: entry.previousExternalStatus,
-        previousOrderStatus: entry.previousOrderStatus,
-        previousOrderCurrentStep: entry.previousOrderCurrentStep,
-      });
-    }
+    await Promise.all((result.details.results ?? []).map(async (entry) => notifyTelegramOrderTransitionSafely({
+      env: c.env,
+      db,
+      runtimeConfig,
+      tenant,
+      requestContext: {
+        requestId: c.get("requestId"),
+        method: c.req.method,
+        path: c.req.path,
+      },
+      duplicate: entry.outcome === "duplicate",
+      externalStatus: entry.status,
+      orderId: entry.orderId,
+      depositEntryId: entry.depositEntryId,
+      orderStatus: entry.orderStatus,
+      orderCurrentStep: entry.orderCurrentStep,
+      previousExternalStatus: entry.previousExternalStatus,
+      previousOrderStatus: entry.previousOrderStatus,
+      previousOrderCurrentStep: entry.previousOrderCurrentStep,
+    })));
 
     return c.json(
       {

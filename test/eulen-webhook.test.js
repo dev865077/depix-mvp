@@ -15,6 +15,7 @@ import {
 } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 import { reconcileOrderPatch } from "../src/services/eulen-deposit-webhook.js";
+import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -197,6 +198,35 @@ describe("eulen deposit webhook", () => {
       chat_id: "telegram_chat_alpha_001",
     });
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("keeps webhook reconciliation successful when the Telegram notification layer throws unexpectedly", async function assertWebhookNotificationFailureIsolation() {
+    await seedDepositAggregate();
+
+    const createBotSpy = vi.fn(() => {
+      throw new Error("synthetic telegram runtime failure");
+    });
+
+    vi.spyOn(telegramRuntimeModule, "getTelegramRuntime").mockReturnValue({
+      createBot: createBotSpy,
+    });
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+    const db = getDatabase(env);
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(savedEvents).toHaveLength(1);
+    expect(createBotSpy).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an invalid webhook secret at the boundary", async function assertInvalidSecretRejection() {

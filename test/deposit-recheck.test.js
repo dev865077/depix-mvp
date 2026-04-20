@@ -9,6 +9,7 @@ import { getDatabase } from "../src/db/client.js";
 import { listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import { createDeposit, getDepositByDepositEntryId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
+import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -234,6 +235,47 @@ describe("deposit recheck route", () => {
       chat_id: "alpha_telegram_chat_001",
     });
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("keeps deposit recheck successful when the Telegram notification layer throws unexpectedly", async function assertRecheckNotificationFailureIsolation() {
+    const { db } = await seedDepositAggregate();
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        response: {
+          qrId: "qr_alpha_001",
+          status: "depix_sent",
+          expiration: "2026-04-18T04:00:00Z",
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const createBotSpy = vi.fn(() => {
+      throw new Error("synthetic telegram runtime failure");
+    });
+
+    vi.spyOn(telegramRuntimeModule, "getTelegramRuntime").mockReturnValue({
+      createBot: createBotSpy,
+    });
+
+    const response = await requestDepositRecheck();
+    const body = await response.json();
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(savedEvents).toHaveLength(1);
+    expect(createBotSpy).toHaveBeenCalledTimes(1);
   });
 
   it("hydrates qrId from deposit-status before applying the reconciled truth", async function assertQrIdHydration() {

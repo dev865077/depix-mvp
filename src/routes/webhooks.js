@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
 import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
-import { notifyTelegramOrderTransition } from "../services/telegram-payment-notifications.js";
+import { notifyTelegramOrderTransitionSafely } from "../services/telegram-payment-notifications.js";
 
 export const webhooksRouter = new Hono();
 
@@ -67,7 +67,7 @@ export async function handleEulenDepositWebhook(c) {
     return jsonError(c, result.status, result.code, result.message, result.details);
   }
 
-  await notifyTelegramOrderTransition({
+  await notifyTelegramOrderTransitionSafely({
     env: c.env,
     db,
     runtimeConfig,

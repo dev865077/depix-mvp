@@ -448,3 +448,47 @@ export async function notifyTelegramOrderTransition(input) {
     };
   }
 }
+
+
+/**
+ * Executa a notificacao em modo fail-soft.
+ *
+ * Esta camada existe para proteger webhook, recheck e fallback de qualquer
+ * excecao inesperada acima do contrato normal de erro outbound. A regra aqui e
+ * simples: conciliacao persistida nunca volta para erro por causa do Telegram.
+ *
+ * @param {Parameters<typeof notifyTelegramOrderTransition>[0]} input Mesmo contrato da notificacao principal.
+ * @returns {Promise<Awaited<ReturnType<typeof notifyTelegramOrderTransition>>>} Resultado estruturado sem propagar excecao.
+ */
+export async function notifyTelegramOrderTransitionSafely(input) {
+  try {
+    return await notifyTelegramOrderTransition(input);
+  } catch (error) {
+    const summarizedError = summarizeTelegramNotificationError(error);
+
+    log(input.runtimeConfig, {
+      level: "error",
+      message: "telegram.payment_notification.failed",
+      tenantId: input.tenant.tenantId,
+      requestId: input.requestContext?.requestId,
+      details: {
+        orderId: typeof input.orderId === "string" ? input.orderId : null,
+        depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
+        externalStatus: input.externalStatus ?? null,
+        orderStatus: input.orderStatus ?? null,
+        orderCurrentStep: input.orderCurrentStep ?? null,
+        reason: "unexpected_notification_failure",
+        code: summarizedError.code,
+        ...summarizedError.details,
+      },
+    });
+
+    return {
+      delivered: false,
+      skipped: false,
+      failed: true,
+      reason: "unexpected_notification_failure",
+      kind: null,
+    };
+  }
+}

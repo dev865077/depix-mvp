@@ -9,6 +9,7 @@ import { getDatabase } from "../src/db/client.js";
 import { listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import { createDeposit, getDepositByDepositEntryId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
+import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./db.repositories.test.js";
 
 const TENANT_REGISTRY = JSON.stringify({
@@ -307,6 +308,90 @@ describe("deposits fallback route", () => {
       chat_id: "alpha_telegram_chat_001",
     });
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("keeps fallback reconciliation successful and attempts every notification even when the Telegram runtime throws", async function assertDepositsFallbackNotificationFailureIsolation() {
+    const { db } = await seedDepositAggregate();
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "alpha_telegram_user_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 45678,
+      walletAddress: "depix_wallet_alpha_002",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+      telegramChatId: "alpha_telegram_chat_002",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_alpha_002",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T05:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+          {
+            qrId: "qr_alpha_002",
+            status: "depix_sent",
+            bankTxId: "bank_tx_002",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const createBotSpy = vi.fn(() => {
+      throw new Error("synthetic telegram runtime failure");
+    });
+
+    vi.spyOn(telegramRuntimeModule, "getTelegramRuntime").mockReturnValue({
+      createBot: createBotSpy,
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const firstOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const secondOrder = await getOrderById(db, "alpha", "order_alpha_002");
+
+    expect(response.status).toBe(200);
+    expect(body.summary).toEqual({
+      remoteRows: 2,
+      processed: 2,
+      duplicate: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(firstOrder?.status).toBe("paid");
+    expect(firstOrder?.currentStep).toBe("completed");
+    expect(secondOrder?.status).toBe("paid");
+    expect(secondOrder?.currentStep).toBe("completed");
+    expect(createBotSpy).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when Eulen returns more rows than the supported fallback limit", async function assertDepositsFallbackRemoteRowLimit() {
