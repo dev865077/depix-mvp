@@ -424,6 +424,11 @@ export function buildMalformedBlockerContractMemo(role, reason) {
     "## Merge posture",
     "Request changes until the reviewer output follows the canonical blocker contract.",
     "",
+    "## Blocker contract",
+    "Testability: Not testable",
+    `Reason: Malformed blocker contract from ${role}: ${reason}`,
+    "Required human resolution: regenerate the review with the canonical blocker contract",
+    "",
     "## Recommendation",
     "Request changes",
   ].join("\n");

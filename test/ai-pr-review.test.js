@@ -385,6 +385,9 @@ describe("ai pr review recommendation parser", () => {
 
     expect(memo).toContain("Contract status: Malformed");
     expect(memo).toContain("Malformed reason: Missing required field: Testability.");
+    expect(memo).toContain("## Blocker contract");
+    expect(memo).toContain("Testability: Not testable");
+    expect(memo).toContain("Reason: Malformed blocker contract from Technical and architecture: Missing required field: Testability.");
     expect(memo).toContain("Required human resolution: regenerate the review with the canonical blocker contract");
     expect(memo).toContain("## Recommendation\nRequest changes");
   });
@@ -915,6 +918,38 @@ describe("ai pr review discussion rendering", () => {
     expect(synthesis).toContain("## Human resolution required");
     expect(synthesis).toContain("required human resolution: Maintainer must choose the supported policy.");
     expect(synthesis).toContain("## Recommendation\nRequest changes");
+  });
+
+  it("keeps malformed specialist blockers visible in the synthesized blocker summary", () => {
+    const malformedTechnicalMemo = buildMalformedBlockerContractMemo(
+      "Technical and architecture",
+      "Missing required field: Testability.",
+    );
+    const summary = summarizeDiscussionBlockingContracts({
+      product: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: malformedTechnicalMemo,
+      risk: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Request changes\n\n## Findings\n- One blocker remains.\n\n## Recommendation\nRequest changes",
+    });
+
+    expect(summary.testable).toEqual([]);
+    expect(summary.notTestable).toEqual([
+      {
+        role: "technical",
+        reason: "Malformed blocker contract from Technical and architecture: Missing required field: Testability.",
+        requiredHumanResolution: "regenerate the review with the canonical blocker contract",
+      },
+    ]);
+    expect(summary.roleMap).toEqual([
+      {
+        role: "technical",
+        expectedTest: null,
+        resolutionCondition: "regenerate the review with the canonical blocker contract",
+        behaviorProtected: null,
+        testability: "Not testable",
+        reason: "Malformed blocker contract from Technical and architecture: Missing required field: Testability.",
+      },
+    ]);
   });
 
   it("builds a visible final discussion status comment", () => {
