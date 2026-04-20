@@ -1,53 +1,31 @@
 # XState e Fluxo de Pedidos
 
-## Papel do XState no MVP
+## Papel da maquina
 
-`XState` e usado para tornar explicita a progressao valida de um pedido. Em vez
-de cada handler decidir informalmente qual e o proximo passo, a aplicacao
-converte entradas externas em eventos de dominio e deixa a maquina calcular a
-transicao.
+A maquina de estados e a fonte canonica da progressao do pedido. Ela define
+quais transicoes sao validas, quais eventos podem avancar o agregado e quais
+passos encerram a conversa editavel do usuario.
 
-Esta pagina descreve a fundacao da progressao inicial. Hoje o runtime do
-Telegram ja usa essa base para materializar e persistir o pedido inicial em
-`draft`; quando o mesmo usuario volta ao bot, o runtime retoma o pedido aberto
-mais recente em vez de criar uma duplicata sem contexto.
+## Estados e eventos
 
-## Regra arquitetural
+A implementacao atual concentra os contratos puros de dominio em
+`src/order-flow/order-progress-constants.js` e a maquina em
+`src/order-flow/order-progress-machine.js`.
 
-A maquina de pedidos deve permanecer pura:
+Os estados canonicos do fluxo sao:
 
-- nao acessa `env`
-- nao chama Telegram, Eulen ou Cloudflare APIs
-- nao le nem escreve no D1
-- nao guarda estado em memoria global do Worker
-- recebe contexto de negocio e evento de dominio
-- devolve `currentStep`, `status`, contexto atualizado e `orderPatch`
-- devolve `persistenceGuard` para updates condicionais no D1
+- `draft`
+- `amount`
+- `wallet`
+- `confirmation`
+- `creating_deposit`
+- `awaiting_payment`
+- `completed`
+- `failed`
+- `canceled`
+- `manual_review`
 
-Essa regra combina com Cloudflare Workers porque o isolate pode ser reutilizado.
-O estado real do fluxo deve ser persistido no D1 entre requests.
-
-## Estados iniciais implementados
-
-Estados atuais da progressao inicial:
-
-1. `draft`
-2. `amount`
-3. `wallet`
-4. `confirmation`
-5. `creating_deposit`
-6. `awaiting_payment`
-7. `completed`
-8. `failed`
-9. `canceled`
-10. `manual_review`
-
-`orders.current_step` guarda o estado da maquina. `orders.status` guarda o
-status operacional derivado do estado.
-
-## Eventos de dominio
-
-Eventos atuais:
+Os eventos canonicos sao:
 
 - `START_ORDER`
 - `AMOUNT_RECEIVED`
@@ -58,34 +36,24 @@ Eventos atuais:
 - `FAIL_ORDER`
 - `CANCEL_ORDER`
 
-Handlers de transporte devem mapear mensagens, webhooks ou jobs para esses
-eventos. A maquina nao deve receber payload bruto de Telegram, Hono ou Eulen.
+## Contrato de persistencia
 
-## Integracao esperada com Cloudflare
+Valores persistidos que nao pertencem ao vocabulario atual continuam sendo
+normalizados em codigo por `normalizePersistedOrderProgressStep()`. Alias legados
+conhecidos, como `paid`, seguem sendo aceitos na leitura, mas nao devem ser
+tratados como conversa editavel.
 
-Fluxo recomendado dentro do Worker:
+Passos terminalmente editaveis e estados finais da conversa do usuario sao:
 
-1. `Hono` resolve ambiente e tenant.
-2. O handler carrega o pedido atual no D1.
-3. O handler monta um evento de dominio.
-4. `advanceOrderProgression()` calcula a transicao.
-5. O service persiste `orderPatch` no D1 usando `persistenceGuard`.
-6. Side effects externos acontecem fora da maquina.
+- `completed`
+- `failed`
+- `canceled`
+- `manual_review`
 
-`persistenceGuard.expectedCurrentStep` deve entrar no `WHERE` do update junto
-com `tenantId` e `orderId`. Isso evita que uma request atrasada sobrescreva uma
-transicao mais nova do mesmo pedido.
+Para lookup conversacional, aliases legados que normalizam para terminal, como
+`paid`, tambem ficam fora de qualquer busca de pedido aberto.
 
-O repositorio de pedidos expoe `updateOrderByIdWithStepGuard()` para aplicar
-esse contrato no D1. Em caso de conflito, a funcao retorna `conflict: true` e o
-pedido atual, sem sobrescrever a linha.
-
-## Compatibilidade de dados
-
-A maquina aceita somente estados canonicos conhecidos. Linhas ja existentes que
-usem `draft`, `wallet`, `awaiting_payment` ou `completed` continuam dentro do
-vocabulario atual. Qualquer valor legado fora dessa lista deve ser normalizado
-por migracao ou tratado explicitamente antes de chamar `advanceOrderProgression()`.
+## Interpretacao de `manual_review`
 
 Estados operacionais vindos do webhook da Eulen, como revisao manual, entram no
 mesmo vocabulario canonico da maquina. `manual_review` e terminal para a
@@ -93,22 +61,21 @@ conversa editavel: o Telegram nao deve retomar esse agregado para alterar valor,
 endereco ou confirmacao; a continuidade passa a ser operacional, e uma nova
 compra precisa nascer em outro pedido.
 
-Para lookup conversacional, os passos terminais sao `completed`, `failed`,
-`canceled` e `manual_review`. Aliases legados que normalizam para terminal,
-como `paid`, tambem devem ficar fora de qualquer busca de pedido aberto.
+## Regra de evolucao
+
+A maquina continua sendo o ponto de referencia para regras de transicao. O
+runtime do Telegram, repositories SQL e services de webhook devem compartilhar o
+mesmo vocabulario para evitar divergencia entre estado persistido e retomada da
+conversa.
+
+## Aliases legados
 
 Aliases legados conhecidos sao normalizados em codigo por
 `normalizePersistedOrderProgressStep()`, mantendo o valor persistido original em
-`persistenceGuard.expectedCurrentStep` para que a escrita condicional continue
-protegida contra corrida.
+caso de auditoria.
 
-Para Telegram, a progressao atual usa a etapa `amount` como entrada validada de valor: quando o pedido esta em `amount`, um valor BRL valido aplica `AMOUNT_RECEIVED`, persiste `amountInCents` e avanca o pedido para `wallet`. Quando o pedido esta em `wallet`, um endereco DePix/Liquid valido aplica `WALLET_RECEIVED`, persiste `walletAddress` e avanca o pedido para `confirmation`. Em `confirmation`, a confirmacao do usuario aplica `CUSTOMER_CONFIRMED` e dispara a criacao do deposito real; `cancelar`, `/cancel` e `recomecar` aplicam `CANCEL_ORDER` e encerram ou reiniciam o pedido conforme o contexto aberto.
+## Leitura correta
 
-Para Durable Objects, a regra muda apenas se houver necessidade real de
-coordenacao stateful. No MVP, D1 continua sendo a fonte de verdade suficiente
-para a progressao do pedido.
-
-## Arquivos principais
-
-- `src/order-flow/order-progress-machine.js`
-- `test/order-progress-machine.test.js`
+Quando houver duvida entre estado de negocio e estado de conversa, o contrato
+terminal da maquina prevalece para impedir retomada indevida de pedidos
+encerrados.

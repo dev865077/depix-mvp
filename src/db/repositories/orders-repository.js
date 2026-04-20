@@ -6,7 +6,7 @@
  * servico focada em regras de negocio e fluxo conversacional.
  */
 import { getAllowedPatchEntries } from "../client.js";
-import { ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS } from "../../order-flow/order-progress-machine.js";
+import { ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS } from "../../order-flow/order-progress-constants.js";
 
 // Select base reaproveitado pelos readers do repositorio.
 // Mantemos aliases em camelCase para devolver objetos prontos para o restante
