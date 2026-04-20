@@ -9,7 +9,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 const MOCK_LIQUID_CONFIDENTIAL_SPLIT_ADDRESS = `lq1${"q".repeat(98)}`;
 const MOCK_VISUALLY_GROUPED_LIQUID_SPLIT_ADDRESS = [

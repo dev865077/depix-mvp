@@ -13,7 +13,7 @@ import {
   notifyTelegramOrderTransitionSafely,
   resolveTelegramNotificationKind,
 } from "../src/services/telegram-payment-notifications.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 afterEach(function restoreTelegramPaymentNotificationTestState() {
   vi.restoreAllMocks();
