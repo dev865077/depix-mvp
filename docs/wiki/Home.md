@@ -54,6 +54,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 ### Produto
 
 - [Visao Geral do Produto](Visao-Geral-do-Produto)
+- [Visao Futura da Plataforma](Visao-Futura-da-Plataforma)
 - [Escopo e Fluxo](Escopo-e-Fluxo)
 - [Roadmap e Backlog](Roadmap-e-Backlog)
 
@@ -90,3 +91,5 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 ## Leitura correta do projeto
 
 O projeto ja tem base tecnica suficiente para desenvolvimento incremental serio, mas ainda nao tem o fluxo funcional completo do MVP no `main`. A leitura correta nao e "sistema pronto"; e "fundacao operacional pronta para evolucao controlada".
+
+O MVP atual deve ser lido como a primeira vertical DePix/Telegram. A direcao futura de plataforma multi-oferta, internacional e orientada por chat esta documentada em [Visao Futura da Plataforma](Visao-Futura-da-Plataforma).

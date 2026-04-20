@@ -29,9 +29,10 @@ Use esta pagina para entrar no projeto sem depender de contexto oral.
 ## Se voce vai decidir prioridade
 
 1. [Visao Geral do Produto](Visao-Geral-do-Produto)
-2. [Escopo e Fluxo](Escopo-e-Fluxo)
-3. [Roadmap e Backlog](Roadmap-e-Backlog)
-4. [Governanca Tecnica](Governanca-Tecnica)
+2. [Visao Futura da Plataforma](Visao-Futura-da-Plataforma)
+3. [Escopo e Fluxo](Escopo-e-Fluxo)
+4. [Roadmap e Backlog](Roadmap-e-Backlog)
+5. [Governanca Tecnica](Governanca-Tecnica)
 
 ## Regra de interpretacao
 
