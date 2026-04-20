@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertValidIssueTriagePlan,
+  buildIssuePlanningDispatchInputs,
   buildIssueCommentBody,
   parseIssueTriageResponse,
+  shouldDispatchIssuePlanning,
 } from "../scripts/ai-issue-triage.mjs";
 
 describe("ai issue triage validation", () => {
@@ -188,5 +190,19 @@ describe("ai issue triage validation", () => {
     expect(body).toContain("next_actor: `codex`");
     expect(body).toContain("ready_for_codex: `true`");
     expect(body).not.toContain("## Planning automatico");
+  });
+
+  it("dispatches planning only for discussion-routed issues", () => {
+    const discussionPlan = {
+      route: "discussion_before_pr",
+    };
+    const directPlan = {
+      route: "direct_pr",
+    };
+
+    expect(shouldDispatchIssuePlanning(discussionPlan)).toBe(true);
+    expect(shouldDispatchIssuePlanning(directPlan)).toBe(false);
+    expect(buildIssuePlanningDispatchInputs(217)).toEqual({ issue_number: "217" });
+    expect(() => buildIssuePlanningDispatchInputs(0)).toThrow("Invalid issue number");
   });
 });

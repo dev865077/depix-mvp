@@ -21,6 +21,7 @@ const MAX_ISSUE_BODY_CHARS = 5000;
 const MAX_EXISTING_COMMENT_CHARS = 5000;
 const MAX_OUTPUT_TOKENS = 25000;
 const REASONING_EFFORT = "low";
+const ISSUE_PLANNING_WORKFLOW_FILE = "ai-issue-planning-review.yml";
 
 /**
  * @typedef {{
@@ -536,6 +537,61 @@ async function upsertIssueComment(repoFullName, issueNumber, body) {
 }
 
 /**
+ * Build the workflow_dispatch payload used to hand planning work to Actions.
+ *
+ * GitHub does not reliably trigger a second workflow from comments created by
+ * `GITHUB_TOKEN`, so triage must dispatch planning explicitly when the route
+ * requires a four-role planning Discussion.
+ *
+ * @param {number} issueNumber GitHub issue number.
+ * @returns {{ issue_number: string }} Workflow input payload.
+ */
+export function buildIssuePlanningDispatchInputs(issueNumber) {
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    throw new Error(`Invalid issue number for planning dispatch: ${String(issueNumber)}`);
+  }
+
+  return { issue_number: String(issueNumber) };
+}
+
+/**
+ * Decide whether the triage result must enqueue the planning workflow.
+ *
+ * @param {IssueTriagePlan} plan Safe triage plan.
+ * @returns {boolean} True when planning must run before Codex.
+ */
+export function shouldDispatchIssuePlanning(plan) {
+  return plan.route === ROUTE_DISCUSSION_BEFORE_PR;
+}
+
+/**
+ * Trigger the issue planning workflow through the GitHub Actions API.
+ *
+ * This is the reliable bridge from issue triage to API-owned planning. The
+ * workflow token needs `actions: write`, configured in the triage workflow.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber GitHub issue number.
+ * @param {string} ref Git ref to run the planning workflow on.
+ * @returns {Promise<void>} Resolves when GitHub accepts the dispatch.
+ */
+async function dispatchIssuePlanningWorkflow(repoFullName, issueNumber, ref) {
+  await githubRequest(
+    `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_PLANNING_WORKFLOW_FILE}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref,
+        inputs: buildIssuePlanningDispatchInputs(issueNumber),
+      }),
+    },
+  );
+}
+
+/**
  * Write a compact GitHub Actions summary when the runner exposes it.
  *
  * @param {IssueTriagePlan} plan Safe triage plan.
@@ -572,6 +628,7 @@ async function writeStepSummary(plan) {
 async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
+  const workflowRef = process.env.GITHUB_REF_NAME?.trim() || process.env.GITHUB_REF?.replace(/^refs\/heads\//, "") || "main";
   const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
   const model = readConfiguredModel();
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
@@ -618,6 +675,11 @@ async function main() {
 
   const commentBody = buildIssueCommentBody(plan, model);
   await upsertIssueComment(repository, issue.number, commentBody);
+
+  if (shouldDispatchIssuePlanning(plan)) {
+    await dispatchIssuePlanningWorkflow(repository, issue.number, workflowRef);
+  }
+
   await writeStepSummary(plan);
 }
 
