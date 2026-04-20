@@ -1418,6 +1418,23 @@ function extractDiscussionNumberFromUrl(url) {
 }
 
 /**
+ * Find an existing issue-planning Discussion by canonical issue title marker.
+ *
+ * This pure matcher is the dedupe contract used before creating a Discussion.
+ * It keeps manual backfill and reruns from opening duplicate planning threads.
+ *
+ * @param {number} issueNumber Issue number.
+ * @param {Array<{ number?: number, title?: string | null }>} discussions Recent Discussions.
+ * @returns {number | null} Existing Discussion number when found.
+ */
+export function findMatchingIssuePlanningDiscussionNumber(issueNumber, discussions) {
+  const matchingDiscussion = discussions.find((discussion) =>
+    typeof discussion.title === "string" && discussion.title.includes(`${ISSUE_TITLE_PREFIX}${issueNumber}]`));
+
+  return matchingDiscussion?.number ?? null;
+}
+
+/**
  * Detect whether the current event comment came from the automation bot.
  *
  * This guard prevents append-only comments published by the workflow from
@@ -1451,6 +1468,12 @@ export function isIssuePlanningHandoffCommentEvent(event) {
   }
 
   if (event.action && event.action !== "created") {
+    return false;
+  }
+
+  const commentAuthor = event.comment.user?.login || event.comment.author?.login;
+
+  if (commentAuthor !== "github-actions[bot]" && commentAuthor !== "github-actions") {
     return false;
   }
 
@@ -1527,10 +1550,8 @@ async function findIssueDiscussionNumber(owner, name, issueNumber, comments) {
   }
 
   const discussions = await fetchRecentDiscussions(owner, name);
-  const matchingDiscussion = discussions.find((discussion) =>
-    typeof discussion.title === "string" && discussion.title.includes(`${ISSUE_TITLE_PREFIX}${issueNumber}]`));
 
-  return matchingDiscussion?.number ?? null;
+  return findMatchingIssuePlanningDiscussionNumber(issueNumber, discussions);
 }
 
 /**

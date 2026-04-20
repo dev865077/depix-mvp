@@ -22,7 +22,7 @@
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` cria ou reutiliza uma unica Discussion canonica da issue via API
-- o trigger `issue_comment` do planning so aceita comentario novo com marcador automatizado da triage; comentarios editados, comentarios humanos comuns e comentarios em PR nao podem iniciar ou rerodar planning
+- o trigger `issue_comment` do planning so aceita comentario novo do `github-actions[bot]` com marcador automatizado da triage; comentarios humanos, comentarios editados e comentarios em PR nao podem iniciar ou rerodar planning
 - para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao e `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
 - o planning review tem tres estados canonicos:

@@ -18,6 +18,7 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  findMatchingIssuePlanningDiscussionNumber,
   isAutomatedIssueMetaComment,
   isAutomatedIssueMetaCommentBody,
   isAutomatedPlanningComment,
@@ -58,6 +59,7 @@ describe("ai issue planning review", () => {
       action: "created",
       issue: { number: 213 },
       comment: {
+        user: { login: "github-actions[bot]" },
         body: [
           "<!-- ai-issue-triage:openai -->",
           "Rota canonica: `discussion_before_pr`",
@@ -67,17 +69,22 @@ describe("ai issue planning review", () => {
     expect(isIssuePlanningHandoffCommentEvent({
       action: "created",
       issue: { number: 213 },
-      comment: { body: "comentario humano comum" },
+      comment: { user: { login: "github-actions[bot]" }, body: "comentario humano comum" },
     })).toBe(false);
     expect(isIssuePlanningHandoffCommentEvent({
       action: "created",
       issue: { number: 215, pull_request: {} },
-      comment: { body: "<!-- ai-issue-triage:openai -->" },
+      comment: { user: { login: "github-actions[bot]" }, body: "<!-- ai-issue-triage:openai -->" },
     })).toBe(false);
     expect(isIssuePlanningHandoffCommentEvent({
       action: "edited",
       issue: { number: 213 },
-      comment: { body: "<!-- ai-issue-triage:openai -->" },
+      comment: { user: { login: "github-actions[bot]" }, body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
+      issue: { number: 213 },
+      comment: { user: { login: "dev865077" }, body: "<!-- ai-issue-triage:openai -->" },
     })).toBe(false);
   });
 
@@ -238,6 +245,16 @@ describe("ai issue planning review", () => {
     expect(body).toContain("canonical_state: `issue_planning_in_progress`");
     expect(body).toContain("ready_for_codex: `false`");
     expect(body).toContain("Rota canonica: `discussion_before_pr`");
+  });
+
+  it("finds an existing canonical planning discussion before creating a new one", () => {
+    expect(findMatchingIssuePlanningDiscussionNumber(213, [
+      { number: 210, title: "[PR #209] Improve Telegram QR payment guidance" },
+      { number: 216, title: "[Issue #213] Automatizar fluxo canonico" },
+    ])).toBe(216);
+    expect(findMatchingIssuePlanningDiscussionNumber(214, [
+      { number: 216, title: "[Issue #213] Automatizar fluxo canonico" },
+    ])).toBeNull();
   });
 
   it("parses referenced child issues from the root issue body", () => {
