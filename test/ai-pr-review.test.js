@@ -235,7 +235,39 @@ describe("ai pr review recommendation parser", () => {
 
     expect(parseBlockingRoleContract(review)).toEqual({
       status: "malformed",
-      reason: "Missing required field: Testability.",
+      reason: "Missing required section: ## Blocker contract.",
+    });
+  });
+
+  it("rejects free-floating blocker labels outside the blocker section", () => {
+    const review = [
+      "## Perspective",
+      "Section missing even though the labels exist.",
+      "",
+      "## Findings",
+      "- One blocker.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "Testability: Testable",
+      "Behavior protected: Validation only accepts fields inside the blocker section.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Minimum scenario: Parse one memo without the blocker heading.",
+      "Essential assertions: parse returns malformed.",
+      "Resolution rule: Require the section heading.",
+      "Why this test resolves the blocker: It locks the contract boundary.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "malformed",
+      reason: "Missing required section: ## Blocker contract.",
     });
   });
 

@@ -215,15 +215,41 @@ function normalizeBlockerContractValue(value) {
 }
 
 /**
- * Collect canonical blocker-contract fields from one reviewer memo.
+ * Extract the canonical blocker-contract section from one reviewer memo.
  *
- * The parser accepts free ordering and multi-line field bodies. Unknown prose is
- * ignored unless it reuses one of the canonical field labels.
+ * The contract is only valid when the canonical fields live under the explicit
+ * `## Blocker contract` heading. Free-floating labels elsewhere in the memo do
+ * not count.
  *
  * @param {string} reviewText Reviewer memo markdown.
+ * @returns {{ ok: true, value: string } | { ok: false, reason: string }} Section body or malformed reason.
+ */
+function extractBlockerContractSection(reviewText) {
+  const headingMatch = reviewText.match(/^\s*##\s*Blocker contract\s*$/im);
+
+  if (!headingMatch || typeof headingMatch.index !== "number") {
+    return { ok: false, reason: "Missing required section: ## Blocker contract." };
+  }
+
+  const sectionStart = headingMatch.index + headingMatch[0].length;
+  const trailingText = reviewText.slice(sectionStart);
+  const nextHeadingMatch = trailingText.match(/^\s*##\s+/m);
+  const sectionBody = (nextHeadingMatch ? trailingText.slice(0, nextHeadingMatch.index) : trailingText).trim();
+
+  return { ok: true, value: sectionBody };
+}
+
+/**
+ * Collect canonical blocker-contract fields from one blocker-contract section.
+ *
+ * The parser accepts free ordering and multi-line field bodies inside the
+ * blocker section. Unknown prose is ignored unless it reuses one of the
+ * canonical field labels.
+ *
+ * @param {string} sectionText Reviewer memo blocker-contract section markdown.
  * @returns {Record<string, string[]>} Parsed raw field values grouped by label.
  */
-function collectBlockerContractFields(reviewText) {
+function collectBlockerContractFields(sectionText) {
   const fields = Object.fromEntries(BLOCKER_CONTRACT_FIELD_LABELS.map((label) => [label, []]));
   let currentLabel = null;
   let currentLines = [];
@@ -243,7 +269,7 @@ function collectBlockerContractFields(reviewText) {
     currentLines = [];
   };
 
-  for (const line of reviewText.split(/\r?\n/)) {
+  for (const line of sectionText.split(/\r?\n/)) {
     const labelMatch = line.match(/^\s*([^:]+):\s*(.*)$/);
     const label = labelMatch?.[1]?.trim() ?? null;
 
@@ -318,7 +344,13 @@ export function parseBlockingRoleContract(reviewText) {
     return { status: "not_applicable" };
   }
 
-  const fields = collectBlockerContractFields(reviewText);
+  const section = extractBlockerContractSection(reviewText);
+
+  if (!section.ok) {
+    return { status: "malformed", reason: section.reason };
+  }
+
+  const fields = collectBlockerContractFields(section.value);
   const testabilityField = resolveCanonicalBlockerField(fields, "Testability");
 
   if (!testabilityField.ok) {
