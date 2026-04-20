@@ -7,6 +7,7 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
     "test": "vitest --run",
     "obsidian:export": "node scripts/exportar-repositorio-para-obsidian-md.js",
     "cf:types": "wrangler types",
@@ -28,6 +29,8 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.14.6",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.3",
     "vitest": "4.1.4",
     "wrangler": "4.82.2"
   }
