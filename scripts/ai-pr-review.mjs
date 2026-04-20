@@ -119,6 +119,7 @@ const DISCUSSION_ROLE_TITLES = {
   technical: "Technical and architecture",
   risk: "Risk, security, and operations",
 };
+const TEST_FILE_REFERENCE_PATTERN = /(?:^|[^A-Za-z0-9_./-])((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:test|spec)\.[A-Za-z0-9]+)(?=$|[^A-Za-z0-9_./-])/g;
 
 /**
  * Emit a stable operational log line for GitHub Actions.
@@ -448,6 +449,68 @@ export function buildMalformedBlockerContractMemo(role, reason) {
  */
 function summarizeBlockerFieldValue(value) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Remove wrapping markdown code markers from one compact summary value.
+ *
+ * @param {string} value Raw value.
+ * @returns {string} Value without outer backticks.
+ */
+function stripWrappingCodeMarkers(value) {
+  return value.replace(/^`+/, "").replace(/`+$/, "").trim();
+}
+
+/**
+ * Normalize text for deterministic diff-evidence matching.
+ *
+ * @param {string} value Raw text.
+ * @returns {string} Lower-cased compact text.
+ */
+function normalizeComparableText(value) {
+  return stripWrappingCodeMarkers(String(value ?? ""))
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Split one pipe-joined summary field back into stable discrete values.
+ *
+ * @param {string} value Compact summary field.
+ * @returns {string[]} Stable non-empty values.
+ */
+function splitPipeJoinedSummaryValue(value) {
+  return summarizeBlockerFieldValue(value)
+    .split(/\s*\|\s*/)
+    .map((item) => stripWrappingCodeMarkers(item))
+    .filter((item) => item.length > 0);
+}
+
+/**
+ * Extract one markdown section body by heading.
+ *
+ * @param {string} markdown Markdown body.
+ * @param {string} heading Section heading without `##`.
+ * @returns {string} Section body or an empty string.
+ */
+function extractMarkdownSectionBody(markdown, heading) {
+  if (typeof markdown !== "string" || markdown.length === 0) {
+    return "";
+  }
+
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headingMatch = markdown.match(new RegExp(`^\\s*##\\s*${escapedHeading}\\s*$`, "im"));
+
+  if (!headingMatch || typeof headingMatch.index !== "number") {
+    return "";
+  }
+
+  const sectionStart = headingMatch.index + headingMatch[0].length;
+  const trailingText = markdown.slice(sectionStart);
+  const nextHeadingMatch = trailingText.match(/^\s*##\s+/m);
+
+  return (nextHeadingMatch ? trailingText.slice(0, nextHeadingMatch.index) : trailingText).trim();
 }
 
 /**
@@ -908,6 +971,51 @@ async function fetchPullRequestFiles(repoFullName, pullRequestNumber) {
  */
 async function fetchPullRequest(repoFullName, pullRequestNumber) {
   return githubRequest(`https://api.github.com/repos/${repoFullName}/pulls/${pullRequestNumber}`);
+}
+
+/**
+ * Fetch the current pull-request status-check rollup contexts.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} pullRequestNumber PR number.
+ * @returns {Promise<Array<any>>} Status-check contexts for the current head commit.
+ */
+async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber) {
+  const [owner, name] = repoFullName.split("/");
+  const query = `
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          commits(last: 1) {
+            nodes {
+              commit {
+                statusCheckRollup {
+                  contexts(first: 50) {
+                    nodes {
+                      __typename
+                      ... on CheckRun {
+                        name
+                        status
+                        conclusion
+                        workflowName
+                      }
+                      ... on StatusContext {
+                        context
+                        state
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const data = await githubGraphqlRequest(query, { owner, name, number: pullRequestNumber });
+
+  return data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
 }
 
 /**
@@ -1444,6 +1552,337 @@ export function buildDiscussionHistoryContext(comments) {
     [...sections, ...(conclusionThreadContext ? [conclusionThreadContext] : [])].join("\n\n"),
     MAX_DISCUSSION_CONTEXT_CHARS,
   );
+}
+
+/**
+ * Parse testable blockers from the latest final Discussion comment.
+ *
+ * This consumes the canonical `Acceptance tests requested` section introduced by
+ * the review automation itself. Items outside that section are ignored.
+ *
+ * @param {string} finalCommentBody Latest automated final-status comment body.
+ * @returns {Array<{
+ *   roles: string[],
+ *   suggestedTestFile: string,
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string
+ * }>} Parsed testable blockers in display order.
+ */
+export function extractFollowUpTestableBlockers(finalCommentBody) {
+  const sectionBody = extractMarkdownSectionBody(finalCommentBody, "Acceptance tests requested");
+
+  if (sectionBody.length === 0) {
+    return [];
+  }
+
+  return sectionBody
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .flatMap((line) => {
+      const match = line.match(/^- Roles (.+?) -> `+([^`]+)`+: protect (.+?); minimum scenario: (.+?); essential assertions: (.+?); resolution condition: (.+?)\.?$/);
+
+      if (!match) {
+        return [];
+      }
+
+      const roles = [...match[1].matchAll(/`([^`]+)`/g)]
+        .map((roleMatch) => roleMatch[1].trim())
+        .filter((role) => role.length > 0);
+
+      if (roles.length === 0) {
+        return [];
+      }
+
+      return [{
+        roles,
+        suggestedTestFile: stripWrappingCodeMarkers(match[2]),
+        behaviorProtected: summarizeBlockerFieldValue(match[3]),
+        minimumScenario: summarizeBlockerFieldValue(match[4]),
+        essentialAssertions: splitPipeJoinedSummaryValue(match[5]),
+        resolutionCondition: summarizeBlockerFieldValue(match[6]),
+      }];
+    });
+}
+
+/**
+ * Extract explicit test-file citations from human replies in the latest
+ * conclusion thread.
+ *
+ * @param {Array<{ body?: string, author?: { login?: string } }>} replies Discussion reply payloads.
+ * @returns {string[]} Unique cited test-file paths.
+ */
+export function extractConclusionThreadTestFileCitations(replies) {
+  const citedPaths = [];
+
+  for (const reply of Array.isArray(replies) ? replies : []) {
+    if (isAutomatedDiscussionReply(reply)) {
+      continue;
+    }
+
+    const replyBody = typeof reply?.body === "string" ? reply.body : "";
+
+    for (const match of replyBody.matchAll(TEST_FILE_REFERENCE_PATTERN)) {
+      pushUniqueSummaryValue(citedPaths, stripWrappingCodeMarkers(match[1]));
+    }
+  }
+
+  return citedPaths;
+}
+
+/**
+ * Decide whether the current PR reports a green `CI / Test` status.
+ *
+ * @param {Array<any>} statusCheckContexts Pull-request status-check contexts.
+ * @returns {boolean} True when the canonical CI test check is green.
+ */
+export function isCiTestCheckGreen(statusCheckContexts) {
+  return (Array.isArray(statusCheckContexts) ? statusCheckContexts : []).some((context) => (
+    context?.__typename === "CheckRun"
+      ? context.name === "Test" && context.workflowName === "CI" && String(context.conclusion).toUpperCase() === "SUCCESS"
+      : context?.__typename === "StatusContext"
+        && context.context === "CI / Test"
+        && String(context.state).toUpperCase() === "SUCCESS"
+  ));
+}
+
+/**
+ * Build stable diff-evidence needles from one blocker field.
+ *
+ * Full fields stay in play, but code-ish fragments inside backticks also count
+ * as explicit markers because specialist memos often reference assertions that
+ * appear verbatim in the changed test body.
+ *
+ * @param {string} value Raw blocker field.
+ * @returns {string[]} Unique comparison needles.
+ */
+function extractDiffEvidenceNeedles(value) {
+  const needles = [];
+  const normalizedValue = normalizeComparableText(value);
+
+  if (normalizedValue.length > 0) {
+    pushUniqueSummaryValue(needles, normalizedValue);
+  }
+
+  for (const match of String(value ?? "").matchAll(/`([^`]+)`/g)) {
+    const fragment = normalizeComparableText(match[1]);
+
+    if (fragment.length >= 3) {
+      pushUniqueSummaryValue(needles, fragment);
+    }
+  }
+
+  return needles;
+}
+
+/**
+ * Check whether a candidate changed test file carries at least one required
+ * assertion or behavior marker for one previous blocker.
+ *
+ * @param {any[]} files Current PR files.
+ * @param {string[]} candidatePaths Suggested or explicitly cited test files.
+ * @param {Array<{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string
+ * }>} blockers Blockers being evaluated.
+ * @returns {Map<string, { matchedTestFile: string | null, hasDiffEvidence: boolean }>} Per-role diff evidence result.
+ */
+function collectFollowUpDiffEvidence(files, candidatePaths, blockers) {
+  const normalizedCandidatePaths = candidatePaths.map((path) => normalizeRepositoryPath(path));
+  const candidateFiles = files.filter((file) => normalizedCandidatePaths.includes(normalizeRepositoryPath(file.filename)));
+  const candidatePatchText = normalizeComparableText(candidateFiles.flatMap(getChangedPatchLines).join("\n"));
+  const evidenceByRole = new Map();
+
+  for (const blocker of blockers) {
+    const matchedTestFile = candidateFiles[0]?.filename ?? null;
+    const evidenceNeedles = [
+      ...blocker.essentialAssertions.flatMap(extractDiffEvidenceNeedles),
+      ...extractDiffEvidenceNeedles(blocker.behaviorProtected),
+    ];
+    const hasDiffEvidence = evidenceNeedles.some((needle) => candidatePatchText.includes(normalizeComparableText(needle)));
+
+    evidenceByRole.set(blocker.role, {
+      matchedTestFile,
+      hasDiffEvidence,
+    });
+  }
+
+  return evidenceByRole;
+}
+
+/**
+ * Reconcile previous testable blockers against the current PR diff, reply
+ * thread, and CI status.
+ *
+ * @param {{ body?: string, replies?: { nodes?: any[] } }} finalComment Latest automated final-status comment.
+ * @param {any[]} files Current PR files.
+ * @param {Array<any>} statusCheckContexts Current PR status-check contexts.
+ * @returns {Array<{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string,
+ *   matchedTestFile: string | null,
+ *   missingSignals: string[]
+ * }>} Unresolved testable blockers that must remain active.
+ */
+export function reconcileFollowUpTestableBlockers(finalComment, files, statusCheckContexts) {
+  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+
+  if (previousBlockers.length === 0) {
+    return [];
+  }
+
+  const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
+  const ciTestGreen = isCiTestCheckGreen(statusCheckContexts);
+
+  return previousBlockers.flatMap((blocker) => blocker.roles.flatMap((role) => {
+    const candidatePaths = [
+      blocker.suggestedTestFile,
+      ...explicitTestFileCitations,
+    ];
+    const diffEvidence = collectFollowUpDiffEvidence(files, candidatePaths, [{ ...blocker, role }]).get(role) ?? {
+      matchedTestFile: null,
+      hasDiffEvidence: false,
+    };
+    const missingSignals = [
+      ...(diffEvidence.matchedTestFile ? [] : ["suggested_test_file_or_explicit_equivalent"]),
+      ...(diffEvidence.hasDiffEvidence ? [] : ["essential_assertion_or_behavior_marker"]),
+      ...(ciTestGreen ? [] : ["ci_test_green"]),
+    ];
+
+    if (missingSignals.length === 0) {
+      return [];
+    }
+
+    return [{
+      role,
+      suggestedTestFile: blocker.suggestedTestFile,
+      behaviorProtected: blocker.behaviorProtected,
+      minimumScenario: blocker.minimumScenario,
+      essentialAssertions: blocker.essentialAssertions,
+      resolutionCondition: blocker.resolutionCondition,
+      matchedTestFile: diffEvidence.matchedTestFile,
+      missingSignals,
+    }];
+  }));
+}
+
+/**
+ * Build a deterministic blocking memo when a previous testable blocker is still
+ * unresolved in the current follow-up round.
+ *
+ * @param {{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string,
+ *   matchedTestFile: string | null,
+ *   missingSignals: string[]
+ * }} blocker Unresolved follow-up blocker.
+ * @returns {string} Canonical request-changes memo.
+ */
+export function buildFollowUpBlockingMemo(blocker) {
+  const missingSignalLabels = blocker.missingSignals.map((signal) => ({
+    suggested_test_file_or_explicit_equivalent: "current diff does not include the suggested test file or an explicitly cited equivalent",
+    essential_assertion_or_behavior_marker: "current diff does not show an essential assertion or behavior marker",
+    ci_test_green: "`CI / Test` is not green on the current PR",
+  }[signal] ?? signal));
+
+  return [
+    "## Perspective",
+    "A previously-requested testable blocker from the latest conclusion thread is still unresolved in the current PR state.",
+    "",
+    "## Findings",
+    `- Missing follow-up signals: ${missingSignalLabels.join("; ")}.`,
+    `- The blocker cannot clear until the current PR changes \`${blocker.suggestedTestFile}\` or an explicitly cited equivalent, shows the required diff evidence, and has a green \`CI / Test\` check.`,
+    "",
+    "## Questions",
+    "- None.",
+    "",
+    "## Merge posture",
+    "Not ready yet. The previous testable blocker remains active under the follow-up reconciliation contract.",
+    "",
+    "## Blocker contract",
+    "Testability: Testable",
+    `Behavior protected: ${blocker.behaviorProtected}`,
+    `Suggested test file: ${blocker.suggestedTestFile}`,
+    `Minimum scenario: ${blocker.minimumScenario}`,
+    `Essential assertions: ${blocker.essentialAssertions.join(" | ")}`,
+    `Resolution rule: ${blocker.resolutionCondition}`,
+    "Why this test resolves the blocker: the previous blocker only clears when the current PR shows the required diff evidence and a green CI / Test result.",
+    "",
+    "## Recommendation",
+    "Request changes",
+  ].join("\n");
+}
+
+/**
+ * Build a deterministic synthesis when unresolved follow-up blockers remain.
+ *
+ * @param {Array<{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   missingSignals: string[]
+ * }>} blockers Unresolved follow-up blockers.
+ * @returns {string} Canonical request-changes synthesis.
+ */
+function buildFollowUpBlockingSynthesis(blockers) {
+  return [
+    "Request changes",
+    "",
+    "## Findings",
+    ...blockers.map((blocker) =>
+      `- \`${blocker.role}\` still lacks the follow-up evidence required to clear \`${blocker.suggestedTestFile}\`: ${blocker.missingSignals.join(", ")}.`),
+    "",
+    "## Recommendation",
+    "Request changes",
+  ].join("\n");
+}
+
+/**
+ * Apply deterministic follow-up blockers to one debate after the model run.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis: string }} debate Model debate output.
+ * @param {Array<{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   behaviorProtected: string,
+ *   minimumScenario: string,
+ *   essentialAssertions: string[],
+ *   resolutionCondition: string,
+ *   matchedTestFile: string | null,
+ *   missingSignals: string[]
+ * }>} unresolvedBlockers Unresolved follow-up blockers.
+ * @returns {{ product: string, technical: string, risk: string, synthesis: string }} Debate with deterministic blockers applied.
+ */
+export function applyFollowUpReconciliationToDebate(debate, unresolvedBlockers) {
+  if (!Array.isArray(unresolvedBlockers) || unresolvedBlockers.length === 0) {
+    return debate;
+  }
+
+  const nextDebate = { ...debate };
+
+  for (const blocker of unresolvedBlockers) {
+    nextDebate[blocker.role] = buildFollowUpBlockingMemo(blocker);
+  }
+
+  nextDebate.synthesis = augmentDiscussionSynthesis(
+    buildFollowUpBlockingSynthesis(unresolvedBlockers),
+    nextDebate,
+  );
+
+  return nextDebate;
 }
 
 /**
@@ -3251,6 +3690,7 @@ async function main() {
   let discussionUrl = null;
   let discussionPublicationFailure = null;
   let discussionContext = "";
+  let discussionThread = discussion;
   const automationEvidence = await loadAutomationEvidenceContext(files);
 
   if (gate.requiresDiscussion) {
@@ -3262,6 +3702,15 @@ async function main() {
 
       discussionUrl = existingDiscussionContext.discussionUrl;
       discussionContext = existingDiscussionContext.context;
+
+      if (discussionUrl) {
+        const [owner, name] = repository.split("/");
+        const discussionNumber = parseDiscussionNumberFromUrl(discussionUrl);
+
+        if (discussionNumber) {
+          discussionThread = await fetchDiscussionByNumber(owner, name, discussionNumber);
+        }
+      }
     }
 
     logOperationalEvent("ai_pr_review.discussion_context.loaded", {
@@ -3287,7 +3736,7 @@ async function main() {
       readPrompt(riskPromptPath),
       readPrompt(synthesisPromptPath),
     ]);
-    const debate = await generateDiscussionDebate(
+    let debate = await generateDiscussionDebate(
       {
         doctrine,
         productPrompt,
@@ -3298,6 +3747,29 @@ async function main() {
       userPrompt,
       model,
     );
+    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
+
+    if (latestFinalComment) {
+      const statusCheckContexts = await fetchPullRequestStatusCheckRollup(repository, pullRequest.number);
+      const unresolvedFollowUpBlockers = reconcileFollowUpTestableBlockers(
+        latestFinalComment,
+        files,
+        statusCheckContexts,
+      );
+
+      if (unresolvedFollowUpBlockers.length > 0) {
+        debate = applyFollowUpReconciliationToDebate(debate, unresolvedFollowUpBlockers);
+        logOperationalEvent("ai_pr_review.follow_up_blockers.applied", {
+          count: unresolvedFollowUpBlockers.length,
+          roles: unresolvedFollowUpBlockers.map((blocker) => blocker.role),
+        });
+      } else {
+        logOperationalEvent("ai_pr_review.follow_up_blockers.cleared", {
+          ciTestGreen: isCiTestCheckGreen(statusCheckContexts),
+        });
+      }
+    }
+
     const discussionEvaluation = evaluateDiscussionRecommendation(debate);
     const discussionPublication = await publishDiscussionOrFallback(
       repository,
