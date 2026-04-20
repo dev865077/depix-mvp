@@ -981,40 +981,25 @@ async function fetchPullRequest(repoFullName, pullRequestNumber) {
  * @returns {Promise<Array<any>>} Status-check contexts for the current head commit.
  */
 async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber) {
-  const [owner, name] = repoFullName.split("/");
-  const query = `
-    query($owner: String!, $name: String!, $number: Int!) {
-      repository(owner: $owner, name: $name) {
-        pullRequest(number: $number) {
-          commits(last: 1) {
-            nodes {
-              commit {
-                statusCheckRollup {
-                  contexts(first: 50) {
-                    nodes {
-                      __typename
-                      ... on CheckRun {
-                        name
-                        status
-                        conclusion
-                      }
-                      ... on StatusContext {
-                        context
-                        state
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-  let data;
+  const pullRequest = await githubRequest(`https://api.github.com/repos/${repoFullName}/pulls/${pullRequestNumber}`);
+  const headSha = pullRequest?.head?.sha;
+
+  if (!headSha) {
+    return [];
+  }
+
   try {
-    data = await githubGraphqlRequest(query, { owner, name, number: pullRequestNumber });
+    const data = await githubRequest(
+      `https://api.github.com/repos/${repoFullName}/actions/runs?head_sha=${headSha}&per_page=100`,
+    );
+
+    return (Array.isArray(data?.workflow_runs) ? data.workflow_runs : [])
+      .filter((workflowRun) => workflowRun?.name === "CI")
+      .map((workflowRun) => ({
+        __typename: "StatusContext",
+        context: "CI / Test",
+        state: workflowRun?.conclusion ?? workflowRun?.status ?? "",
+      }));
   } catch (error) {
     if (/Resource not accessible by integration/i.test(String(error?.message ?? error))) {
       logOperationalEvent("ai_pr_review.follow_up_status_rollup.unavailable", {
@@ -1026,8 +1011,6 @@ async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber
     }
     throw error;
   }
-
-  return data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
 }
 
 /**
@@ -1653,7 +1636,7 @@ export function extractConclusionThreadTestFileCitations(replies) {
 export function isCiTestCheckGreen(statusCheckContexts) {
   return (Array.isArray(statusCheckContexts) ? statusCheckContexts : []).some((context) => (
     context?.__typename === "CheckRun"
-      ? context.name === "Test" && String(context.conclusion).toUpperCase() === "SUCCESS"
+      ? context.name === "Test" && context.workflowName === "CI" && String(context.conclusion).toUpperCase() === "SUCCESS"
       : context?.__typename === "StatusContext"
         && context.context === "CI / Test"
         && String(context.state).toUpperCase() === "SUCCESS"

@@ -1687,7 +1687,10 @@ describe("ai pr review discussion rendering", () => {
       { __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" },
     ])).toBe(true);
     expect(isCiTestCheckGreen([
-      { __typename: "CheckRun", name: "Test", conclusion: "SUCCESS" },
+      { __typename: "CheckRun", name: "Test", workflowName: "other", conclusion: "SUCCESS" },
+    ])).toBe(false);
+    expect(isCiTestCheckGreen([
+      { __typename: "StatusContext", context: "CI / Test", state: "SUCCESS" },
     ])).toBe(true);
     expect(isCiTestCheckGreen([
       { __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" },
