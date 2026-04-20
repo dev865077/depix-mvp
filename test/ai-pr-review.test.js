@@ -16,15 +16,21 @@ import {
   augmentDiscussionSynthesis,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
+  buildFollowUpBlockingMemo,
   buildModelFailureMemo,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
+  applyFollowUpReconciliationToDebate,
   evaluateDiscussionRecommendation,
+  extractConclusionThreadTestFileCitations,
   extractDiscussionUrlFromComment,
+  extractFollowUpTestableBlockers,
   extractReviewRecommendation,
   getReviewGateFailure,
+  isCiTestCheckGreen,
   parseBlockingRoleContract,
+  reconcileFollowUpTestableBlockers,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
   sortFilesForReview,
@@ -1548,6 +1554,204 @@ describe("ai pr review discussion rendering", () => {
       "Risk, security, and operations",
       "Synthesis",
     ]);
+  });
+
+  it("parses canonical follow-up blockers from the latest final comment", () => {
+    const blockers = extractFollowUpTestableBlockers([
+      "## Discussion status",
+      "",
+      "## Acceptance tests requested",
+      "",
+      "- Roles `technical`, `risk` -> `test/ai-pr-review.test.js`: protect Canonical blocker contracts remain scoped to the blocker section.; minimum scenario: Parse one blocking memo with labels outside the blocker section.; essential assertions: parse returns malformed for labels outside the section. | no malformed fallback is hidden.; resolution condition: Reject blocking memos unless canonical fields live under the blocker section.",
+      "",
+      "## Blocking role map",
+      "",
+      "- `technical` -> `test/ai-pr-review.test.js` -> Reject blocking memos unless canonical fields live under the blocker section.",
+    ].join("\n"));
+
+    expect(blockers).toEqual([
+      {
+        roles: ["technical", "risk"],
+        suggestedTestFile: "test/ai-pr-review.test.js",
+        behaviorProtected: "Canonical blocker contracts remain scoped to the blocker section.",
+        minimumScenario: "Parse one blocking memo with labels outside the blocker section.",
+        essentialAssertions: [
+          "parse returns malformed for labels outside the section.",
+          "no malformed fallback is hidden.",
+        ],
+        resolutionCondition: "Reject blocking memos unless canonical fields live under the blocker section",
+      },
+    ]);
+  });
+
+  it("extracts explicit test-file citations from human conclusion-thread replies", () => {
+    const citations = extractConclusionThreadTestFileCitations([
+      {
+        author: { login: "dev865077" },
+        body: "Troquei para `test/follow-up-reconciliation.test.js` e também citei test/other.spec.js aqui.",
+      },
+      {
+        author: { login: "github-actions[bot]" },
+        body: "<!-- ai-pr-discussion-final:openai --> bot noise",
+      },
+    ]);
+
+    expect(citations).toEqual([
+      "test/follow-up-reconciliation.test.js",
+      "test/other.spec.js",
+    ]);
+  });
+
+  it("detects a green canonical CI / Test status", () => {
+    expect(isCiTestCheckGreen([
+      { __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" },
+    ])).toBe(true);
+    expect(isCiTestCheckGreen([
+      { __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" },
+    ])).toBe(false);
+  });
+
+  it("keeps a follow-up blocker when the suggested test file is not in the diff", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `technical` -> `test/ai-pr-review.test.js`: protect Follow-up blockers stay explicit until the suggested test lands.; minimum scenario: Change the current PR without touching the requested test file.; essential assertions: keeps the blocker visible in the final comment.; resolution condition: Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+        ].join("\n"),
+        replies: { nodes: [] },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          patch: "@@\n+keeps the blocker visible in the final comment.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    );
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0].missingSignals).toContain("suggested_test_file_or_explicit_equivalent");
+  });
+
+  it("keeps a follow-up blocker when CI is not green even if the test file changed", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `technical` -> `test/ai-pr-review.test.js`: protect Follow-up blockers stay explicit until the suggested test lands.; minimum scenario: Change the current PR with the requested test file but without green CI.; essential assertions: keeps the blocker visible in the final comment.; resolution condition: Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+        ].join("\n"),
+        replies: { nodes: [] },
+      },
+      [
+        {
+          filename: "test/ai-pr-review.test.js",
+          patch: "@@\n+keeps the blocker visible in the final comment.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" }],
+    );
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0].missingSignals).toContain("ci_test_green");
+  });
+
+  it("clears a follow-up blocker only when diff evidence and CI are both present", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `technical` -> `test/ai-pr-review.test.js`: protect Follow-up blockers stay explicit until the suggested test lands.; minimum scenario: Change the requested test file and keep CI green.; essential assertions: keeps the blocker visible in the final comment.; resolution condition: Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+        ].join("\n"),
+        replies: { nodes: [] },
+      },
+      [
+        {
+          filename: "test/ai-pr-review.test.js",
+          patch: "@@\n+keeps the blocker visible in the final comment.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    );
+
+    expect(unresolved).toEqual([]);
+  });
+
+  it("accepts an explicitly cited equivalent test file in the conclusion thread", () => {
+    const unresolved = reconcileFollowUpTestableBlockers(
+      {
+        body: [
+          "## Discussion status",
+          "",
+          "## Acceptance tests requested",
+          "",
+          "- Roles `technical` -> `test/ai-pr-review.test.js`: protect Follow-up blockers stay explicit until the suggested test lands.; minimum scenario: Change an explicitly cited replacement test file and keep CI green.; essential assertions: keeps the blocker visible in the final comment.; resolution condition: Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+        ].join("\n"),
+        replies: {
+          nodes: [
+            {
+              author: { login: "dev865077" },
+              body: "Usei `test/follow-up-reconciliation.test.js` como arquivo equivalente nesta rodada.",
+            },
+          ],
+        },
+      },
+      [
+        {
+          filename: "test/follow-up-reconciliation.test.js",
+          patch: "@@\n+keeps the blocker visible in the final comment.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    );
+
+    expect(unresolved).toEqual([]);
+  });
+
+  it("turns unresolved follow-up blockers into deterministic request-changes memos", () => {
+    const debate = applyFollowUpReconciliationToDebate(
+      {
+        product: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        technical: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        risk: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+        synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
+      },
+      [
+        {
+          role: "technical",
+          suggestedTestFile: "test/ai-pr-review.test.js",
+          behaviorProtected: "Follow-up blockers stay explicit until the suggested test lands.",
+          minimumScenario: "Change the requested test file and keep CI green.",
+          essentialAssertions: ["keeps the blocker visible in the final comment."],
+          resolutionCondition: "Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+          matchedTestFile: null,
+          missingSignals: ["ci_test_green"],
+        },
+      ],
+    );
+
+    expect(assertValidReviewRecommendation(debate.technical)).toBe("Request changes");
+    expect(debate.technical).toContain("Missing follow-up signals");
+    expect(assertValidReviewRecommendation(debate.synthesis)).toBe("Request changes");
+    expect(debate.synthesis).toContain("## Acceptance tests requested");
+    expect(buildFollowUpBlockingMemo({
+      role: "technical",
+      suggestedTestFile: "test/ai-pr-review.test.js",
+      behaviorProtected: "Follow-up blockers stay explicit until the suggested test lands.",
+      minimumScenario: "Change the requested test file and keep CI green.",
+      essentialAssertions: ["keeps the blocker visible in the final comment."],
+      resolutionCondition: "Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+      matchedTestFile: null,
+      missingSignals: ["ci_test_green"],
+    })).toContain("## Blocker contract");
   });
 
   it("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow", () => {
