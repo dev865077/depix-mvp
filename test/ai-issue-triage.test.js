@@ -10,6 +10,7 @@ import {
   buildIssueCommentBody,
   parseIssueTriageResponse,
   resolveIssuePlanningDispatchRef,
+  runIssueTriageWorkflow,
   shouldDispatchIssuePlanning,
 } from "../scripts/ai-issue-triage.mjs";
 
@@ -224,5 +225,107 @@ describe("ai issue triage validation", () => {
     });
     expect(() => buildIssuePlanningDispatchRequest("invalid", 217, "main")).toThrow("Invalid repository");
     expect(() => buildIssuePlanningDispatchRequest("dev865077/depix-mvp", 217, " ")).toThrow("Invalid ref");
+  });
+
+  it("posts the triage comment before dispatching planning from the orchestrated workflow path", async () => {
+    const calls = [];
+    const plan = {
+      summary: "Visao futura.",
+      impact: "baixo",
+      justification: "Docs estrategica.",
+      route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Precisa alinhamento antes da documentacao final.",
+      productView: "Define direcao de produto.",
+      technicalView: "Toca arquitetura futura.",
+      riskView: "Pode criar expectativa errada.",
+      decision: "Rodar planning antes da PR.",
+      discussionTitle: "Alinhar visao futura",
+      nextSteps: ["rodar planning"],
+    };
+    const runtime = {
+      readTriagePrompt: async () => "prompt",
+      fetchIssueComments: async () => [],
+      generateIssueTriage: async () => JSON.stringify(plan),
+      upsertIssueComment: async (repo, issueNumber, body) => {
+        calls.push(["upsert", repo, issueNumber, body.includes("canonical_state: `issue_needs_planning`")]);
+      },
+      dispatchIssuePlanningWorkflow: async (repo, issueNumber, ref) => {
+        calls.push(["dispatch", repo, issueNumber, ref]);
+      },
+      writeStepSummary: async () => {
+        calls.push(["summary"]);
+      },
+    };
+
+    await runIssueTriageWorkflow({
+      repository: "dev865077/depix-mvp",
+      issue: {
+        number: 217,
+        title: "Visao futura",
+        state: "open",
+        body: "Documentar visao futura.",
+        user: { login: "dev865077" },
+      },
+      event: { repository: { default_branch: "trunk" } },
+      promptPath: ".github/prompts/ai-issue-triage.md",
+      model: "gpt-test",
+    }, runtime);
+
+    expect(calls).toEqual([
+      ["upsert", "dev865077/depix-mvp", 217, true],
+      ["dispatch", "dev865077/depix-mvp", 217, "trunk"],
+      ["summary"],
+    ]);
+  });
+
+  it("keeps the workflow red when planning dispatch fails after the comment handoff", async () => {
+    const calls = [];
+    const runtime = {
+      readTriagePrompt: async () => "prompt",
+      fetchIssueComments: async () => [],
+      generateIssueTriage: async () => JSON.stringify({
+        summary: "Precisa debate.",
+        impact: "medio",
+        justification: "Contrato ainda em aberto.",
+        route: "discussion_before_pr",
+        executionReadiness: "needs_discussion",
+        needsDiscussion: true,
+        reason: "Planejamento precisa rodar.",
+        productView: "Produto precisa decidir.",
+        technicalView: "Tecnica precisa validar.",
+        riskView: "Risco precisa revisar.",
+        decision: "Rodar planning.",
+        discussionTitle: "Planejar visao futura",
+        nextSteps: ["rodar planning"],
+      }),
+      upsertIssueComment: async () => {
+        calls.push("upsert");
+      },
+      dispatchIssuePlanningWorkflow: async () => {
+        calls.push("dispatch");
+        throw new Error("dispatch rejected");
+      },
+      writeStepSummary: async () => {
+        calls.push("summary");
+      },
+    };
+
+    await expect(runIssueTriageWorkflow({
+      repository: "dev865077/depix-mvp",
+      issue: {
+        number: 217,
+        title: "Visao futura",
+        state: "open",
+        body: "Documentar visao futura.",
+        user: { login: "dev865077" },
+      },
+      event: { repository: { default_branch: "main" } },
+      promptPath: ".github/prompts/ai-issue-triage.md",
+      model: "gpt-test",
+    }, runtime)).rejects.toThrow("dispatch rejected");
+
+    expect(calls).toEqual(["upsert", "dispatch"]);
   });
 });
