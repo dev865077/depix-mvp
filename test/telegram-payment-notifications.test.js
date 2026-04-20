@@ -18,6 +18,14 @@ describe("telegram payment notifications", () => {
     })).toBe("payment_confirmed");
   });
 
+  it("returns null for non-payment states in this PR slice", function assertOnlyPaymentConfirmedKindIsExposed() {
+    expect(resolveTelegramNotificationKind({
+      externalStatus: "under_review",
+      orderStatus: "under_review",
+      orderCurrentStep: "manual_review",
+    })).toBeNull();
+  });
+
   it("skips notification when the visible state did not change", function assertVisibleStateUnchangedSkip() {
     expect(classifyTelegramOrderNotification({
       duplicate: false,

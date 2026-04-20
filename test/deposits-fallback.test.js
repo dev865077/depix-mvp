@@ -394,6 +394,112 @@ describe("deposits fallback route", () => {
     expect(createBotSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps later fallback notifications running when an earlier Telegram send returns 429", async function assertDepositsFallbackPerRowIsolation() {
+    const { db } = await seedDepositAggregate();
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_002",
+      userId: "alpha_telegram_user_002",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 45678,
+      walletAddress: "depix_wallet_alpha_002",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+      telegramChatId: "alpha_telegram_chat_002",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_002",
+      qrId: "qr_alpha_002",
+      orderId: "order_alpha_002",
+      nonce: "nonce_alpha_002",
+      qrCopyPaste: "0002010102122688qr-alpha-002",
+      qrImageUrl: "https://example.com/qr/alpha-002.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T05:00:00Z",
+    });
+
+    let telegramAttempts = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+          {
+            qrId: "qr_alpha_002",
+            status: "depix_sent",
+            bankTxId: "bank_tx_002",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        telegramAttempts += 1;
+
+        if (telegramAttempts === 1) {
+          return Promise.resolve(new Response(JSON.stringify({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests: retry later",
+          }), {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }));
+        }
+
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 702,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const firstOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const secondOrder = await getOrderById(db, "alpha", "order_alpha_002");
+
+    expect(response.status).toBe(200);
+    expect(body.summary).toEqual({
+      remoteRows: 2,
+      processed: 2,
+      duplicate: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(firstOrder?.status).toBe("paid");
+    expect(firstOrder?.currentStep).toBe("completed");
+    expect(secondOrder?.status).toBe("paid");
+    expect(secondOrder?.currentStep).toBe("completed");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(2);
+  });
+
   it("keeps fallback reconciliation successful when Telegram returns 429", async function assertDepositsFallbackTelegram429Isolation() {
     const { db, depositEntryId, orderId } = await seedDepositAggregate();
 

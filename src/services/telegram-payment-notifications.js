@@ -44,40 +44,12 @@ export function resolveTelegramNotificationKind(input) {
     ? input.orderCurrentStep
     : null;
 
-  switch (externalStatus) {
-    case "depix_sent":
-      return "payment_confirmed";
-    case "under_review":
-    case "error":
-      return "manual_review";
-    case "expired":
-      return "expired";
-    case "canceled":
-      return "canceled";
-    case "refunded":
-      return "refunded";
-    default:
-      break;
+  if (externalStatus === "depix_sent") {
+    return "payment_confirmed";
   }
 
   if (orderStatus === "paid" || orderCurrentStep === "completed") {
     return "payment_confirmed";
-  }
-
-  if (orderStatus === "under_review" || orderCurrentStep === "manual_review") {
-    return "manual_review";
-  }
-
-  if (orderStatus === "expired") {
-    return "expired";
-  }
-
-  if (orderStatus === "canceled" || orderCurrentStep === "canceled") {
-    return "canceled";
-  }
-
-  if (orderStatus === "refunded") {
-    return "refunded";
   }
 
   return null;
@@ -169,6 +141,9 @@ export function classifyTelegramOrderNotification(input) {
 /**
  * Monta a mensagem final ao usuario.
  *
+ * Esta PR envia apenas confirmacao de pagamento. Mantemos um fallback generico
+ * por defesa de contrato, mas nao expomos outras jornadas humanas aqui.
+ *
  * @param {{
  *   tenant: { displayName: string },
  *   order: { amountInCents?: unknown },
@@ -181,40 +156,18 @@ export function buildTelegramOrderNotificationMessage(input) {
     ? `Valor: ${formatBrlAmountInCents(input.order.amountInCents)}.`
     : null;
 
-  switch (input.kind) {
-    case "payment_confirmed":
-      return [
-        `Pagamento confirmado em ${input.tenant.displayName}.`,
-        amountLine,
-        "Seu pedido foi concluído com sucesso.",
-      ].filter(Boolean).join("\n\n");
-    case "manual_review":
-      return [
-        `Recebemos uma atualização do seu pedido em ${input.tenant.displayName}.`,
-        "O pagamento foi para revisão manual.",
-        "Se precisar, fale com o suporte antes de abrir um novo pedido.",
-      ].join("\n\n");
-    case "expired":
-      return [
-        `O QR do pedido em ${input.tenant.displayName} expirou.`,
-        "Envie /start para gerar um novo pedido.",
-      ].join("\n\n");
-    case "canceled":
-      return [
-        `O pedido em ${input.tenant.displayName} foi cancelado.`,
-        "Envie /start se quiser iniciar um novo pedido.",
-      ].join("\n\n");
-    case "refunded":
-      return [
-        `O pedido em ${input.tenant.displayName} foi marcado como reembolsado.`,
-        "Se precisar, fale com o suporte antes de gerar um novo pedido.",
-      ].join("\n\n");
-    default:
-      return [
-        `Recebemos uma atualização do seu pedido em ${input.tenant.displayName}.`,
-        "Fale com o suporte se precisar de ajuda.",
-      ].join("\n\n");
+  if (input.kind === "payment_confirmed") {
+    return [
+      `Pagamento confirmado em ${input.tenant.displayName}.`,
+      amountLine,
+      "Seu pedido foi concluído com sucesso.",
+    ].filter(Boolean).join("\n\n");
   }
+
+  return [
+    `Recebemos uma atualização do seu pedido em ${input.tenant.displayName}.`,
+    "Fale com o suporte se precisar de ajuda.",
+  ].join("\n\n");
 }
 
 /**
