@@ -1450,6 +1450,10 @@ export function isIssuePlanningHandoffCommentEvent(event) {
     return false;
   }
 
+  if (event.action && event.action !== "created") {
+    return false;
+  }
+
   const body = typeof event.comment.body === "string" ? event.comment.body : "";
 
   return body.includes(ISSUE_TRIAGE_COMMENT_MARKER);

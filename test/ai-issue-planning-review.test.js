@@ -55,6 +55,7 @@ describe("ai issue planning review", () => {
 
   it("only treats automated triage issue comments as planning handoffs", () => {
     expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
       issue: { number: 213 },
       comment: {
         body: [
@@ -64,11 +65,18 @@ describe("ai issue planning review", () => {
       },
     })).toBe(true);
     expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
       issue: { number: 213 },
       comment: { body: "comentario humano comum" },
     })).toBe(false);
     expect(isIssuePlanningHandoffCommentEvent({
+      action: "created",
       issue: { number: 215, pull_request: {} },
+      comment: { body: "<!-- ai-issue-triage:openai -->" },
+    })).toBe(false);
+    expect(isIssuePlanningHandoffCommentEvent({
+      action: "edited",
+      issue: { number: 213 },
       comment: { body: "<!-- ai-issue-triage:openai -->" },
     })).toBe(false);
   });

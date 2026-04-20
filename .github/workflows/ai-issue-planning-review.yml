@@ -28,7 +28,6 @@ on:
   issue_comment:
     types:
       - created
-      - edited
 
 permissions:
   contents: read
@@ -41,7 +40,7 @@ concurrency:
 
 jobs:
   review:
-    if: github.event_name != 'issue_comment' || (github.event.issue.pull_request == null && contains(github.event.comment.body, '<!-- ai-issue-triage:openai -->'))
+    if: github.event_name != 'issue_comment' || (github.event.action == 'created' && github.event.issue.pull_request == null && contains(github.event.comment.body, '<!-- ai-issue-triage:openai -->'))
     runs-on: ubuntu-latest
     outputs:
       planning_status: ${{ steps.review.outputs.planning_status }}
