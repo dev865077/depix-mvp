@@ -1012,7 +1012,20 @@ async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber
       }
     }
   `;
-  const data = await githubGraphqlRequest(query, { owner, name, number: pullRequestNumber });
+  let data;
+  try {
+    data = await githubGraphqlRequest(query, { owner, name, number: pullRequestNumber });
+  } catch (error) {
+    if (/Resource not accessible by integration/i.test(String(error?.message ?? error))) {
+      logOperationalEvent("ai_pr_review.follow_up_status_rollup.unavailable", {
+        repository: repoFullName,
+        pullRequestNumber,
+        reason: "resource_not_accessible_by_integration",
+      });
+      return [];
+    }
+    throw error;
+  }
 
   return data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes ?? [];
 }
