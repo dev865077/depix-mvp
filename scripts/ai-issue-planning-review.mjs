@@ -62,6 +62,19 @@ function logOperationalEvent(event, fields = {}) {
 }
 
 /**
+ * Emit one GitHub Actions warning annotation for operator-visible soft failures.
+ *
+ * Optional context skips should still be visible in the Actions UI so the
+ * operator can distinguish an intentional degraded run from a silent swallow.
+ *
+ * @param {string} message Warning body.
+ * @returns {void}
+ */
+function emitWorkflowWarning(message) {
+  console.warn(`::warning::${String(message).replace(/\r?\n/g, " ")}`);
+}
+
+/**
  * Write one GitHub Actions output when the workflow exposes GITHUB_OUTPUT.
  *
  * @param {string} key Output key.
@@ -736,8 +749,8 @@ export function parseReferencedIssueNumbers(body, rootIssueNumber) {
 
   while (match) {
     const issueNumber = Number.parseInt(match[1], 10);
-    const prefix = body.slice(Math.max(0, match.index - 24), match.index).toLowerCase();
-    const isPullRequestExample = /\b(?:pr|pull request)\s*$/.test(prefix);
+    const prefix = body.slice(Math.max(0, match.index - 32), match.index).toLowerCase();
+    const isPullRequestExample = /\b(?:pr|pull request)\b[\s:()\-]*$/.test(prefix);
 
     if (!isPullRequestExample && Number.isInteger(issueNumber) && issueNumber > 0 && issueNumber !== rootIssueNumber) {
       uniqueIssueNumbers.add(issueNumber);
@@ -778,19 +791,48 @@ export function isIgnorableReferencedIssueFetchError(error) {
 }
 
 /**
+ * Resolve the skip reason for one inaccessible referenced issue fetch.
+ *
+ * @param {unknown} error Fetch failure.
+ * @returns {"reference_forbidden" | "reference_not_found" | "reference_not_accessible"} Stable reason label.
+ */
+export function resolveReferencedIssueFetchSkipReason(error) {
+  const directStatus = typeof error === "object" && error !== null && "status" in error
+    ? Number(error.status)
+    : null;
+  const nestedStatus = typeof error === "object" && error !== null && "response" in error
+    && typeof error.response === "object" && error.response !== null && "status" in error.response
+    ? Number(error.response.status)
+    : null;
+  const status = Number.isInteger(directStatus) ? directStatus : nestedStatus;
+
+  if (status === 403) {
+    return "reference_forbidden";
+  }
+
+  if (status === 404) {
+    return "reference_not_found";
+  }
+
+  return "reference_not_accessible";
+}
+
+/**
  * Fetch referenced child issues while skipping inaccessible optional context.
  *
  * @param {string} repoFullName Repository in owner/name form.
  * @param {number[]} issueNumbers Candidate referenced issue numbers.
  * @param {{
  *   fetchIssueFn?: (repoFullName: string, issueNumber: number) => Promise<any>,
- *   logEventFn?: (event: string, fields?: Record<string, any>) => void
+ *   logEventFn?: (event: string, fields?: Record<string, any>) => void,
+ *   emitWarningFn?: (message: string) => void
  * }} [options] Test-friendly collaborators.
  * @returns {Promise<any[]>} Accessible referenced issues.
  */
 export async function fetchReferencedChildIssues(repoFullName, issueNumbers, options = {}) {
   const fetchIssueFn = options.fetchIssueFn ?? fetchIssue;
   const logEventFn = options.logEventFn ?? logOperationalEvent;
+  const emitWarningFn = options.emitWarningFn ?? emitWorkflowWarning;
   const results = await Promise.allSettled(issueNumbers.map((issueNumber) => fetchIssueFn(repoFullName, issueNumber)));
   const childIssues = [];
 
@@ -801,10 +843,24 @@ export async function fetchReferencedChildIssues(repoFullName, issueNumbers, opt
     }
 
     if (isIgnorableReferencedIssueFetchError(result.reason)) {
+      const message = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      const reason = resolveReferencedIssueFetchSkipReason(result.reason);
+      const status = typeof result.reason === "object" && result.reason !== null && "status" in result.reason
+        ? Number(result.reason.status)
+        : typeof result.reason === "object" && result.reason !== null && "response" in result.reason
+          && typeof result.reason.response === "object" && result.reason.response !== null && "status" in result.reason.response
+          ? Number(result.reason.response.status)
+          : null;
+
       logEventFn("ai_issue_planning_review.child_issue.skipped", {
         issueNumber: issueNumbers[index],
-        reason: "reference_not_accessible",
+        reason,
+        status: Number.isInteger(status) ? status : null,
+        message,
       });
+      emitWarningFn(
+        `Planning skipped optional referenced issue #${issueNumbers[index]} (${reason}) and will continue without that child context.`,
+      );
       continue;
     }
 

@@ -28,6 +28,7 @@ import {
   isIssuePlanningHandoffCommentEvent,
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
+  resolveReferencedIssueFetchSkipReason,
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
   isIgnorableReferencedIssueFetchError,
@@ -267,6 +268,9 @@ describe("ai issue planning review", () => {
         "Depende de #90 e #91, mas nao deve repetir #91.",
         "Exemplo recente: o blocker no PR #209 nao deve virar dependencia.",
         "Outro exemplo de pull request #210 tambem nao deve entrar.",
+        "Variacao comum: PR#211 tambem e texto, nao dependencia.",
+        "Outra variacao: PR: #212 segue sendo prose.",
+        "Outra ainda: pull request: #213 tambem nao entra.",
       ].join("\n"),
       91,
     );
@@ -283,8 +287,15 @@ describe("ai issue planning review", () => {
     expect(isIgnorableReferencedIssueFetchError(new Error("network timeout"))).toBe(false);
   });
 
+  it("classifies inaccessible child issue skips with stable reasons", () => {
+    expect(resolveReferencedIssueFetchSkipReason({ status: 403 })).toBe("reference_forbidden");
+    expect(resolveReferencedIssueFetchSkipReason({ response: { status: 404 } })).toBe("reference_not_found");
+    expect(resolveReferencedIssueFetchSkipReason(new Error("opaque access problem"))).toBe("reference_not_accessible");
+  });
+
   it("skips inaccessible referenced child issues while keeping accessible planning context", async () => {
     const loggedEvents = [];
+    const warnings = [];
     const childIssues = await fetchReferencedChildIssues(
       "dev865077/depix-mvp",
       [83, 209, 210],
@@ -307,6 +318,9 @@ describe("ai issue planning review", () => {
         logEventFn: (event, fields = {}) => {
           loggedEvents.push({ event, fields });
         },
+        emitWarningFn: (message) => {
+          warnings.push(message);
+        },
       },
     );
 
@@ -314,12 +328,26 @@ describe("ai issue planning review", () => {
     expect(loggedEvents).toEqual([
       {
         event: "ai_issue_planning_review.child_issue.skipped",
-        fields: { issueNumber: 209, reason: "reference_not_accessible" },
+        fields: {
+          issueNumber: 209,
+          reason: "reference_forbidden",
+          status: 403,
+          message: "GitHub API request failed (403): forbidden",
+        },
       },
       {
         event: "ai_issue_planning_review.child_issue.skipped",
-        fields: { issueNumber: 210, reason: "reference_not_accessible" },
+        fields: {
+          issueNumber: 210,
+          reason: "reference_not_found",
+          status: 404,
+          message: "missing",
+        },
       },
+    ]);
+    expect(warnings).toEqual([
+      "Planning skipped optional referenced issue #209 (reference_forbidden) and will continue without that child context.",
+      "Planning skipped optional referenced issue #210 (reference_not_found) and will continue without that child context.",
     ]);
   });
 
