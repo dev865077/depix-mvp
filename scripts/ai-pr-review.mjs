@@ -795,6 +795,47 @@ async function addDiscussionComment(discussionId, body) {
 }
 
 /**
+ * Close or reopen one Discussion so the GitHub UI reflects the current state.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @param {"Approve" | "Request changes"} recommendation Final recommendation.
+ * @returns {Promise<"closed" | "open">} Persisted lifecycle state.
+ */
+async function syncDiscussionLifecycle(discussionId, recommendation) {
+  if (recommendation === "Approve") {
+    const mutation = `
+      mutation($discussionId: ID!) {
+        closeDiscussion(input: {
+          discussionId: $discussionId
+        }) {
+          discussion {
+            id
+            closed
+          }
+        }
+      }
+    `;
+    await githubGraphqlRequest(mutation, { discussionId });
+    return "closed";
+  }
+
+  const mutation = `
+    mutation($discussionId: ID!) {
+      reopenDiscussion(input: {
+        discussionId: $discussionId
+      }) {
+        discussion {
+          id
+          closed
+        }
+      }
+    }
+  `;
+  await githubGraphqlRequest(mutation, { discussionId });
+  return "open";
+}
+
+/**
  * Classify one changed file into a repository-specific review category.
  *
  * @param {string} filename GitHub file path.
@@ -2037,11 +2078,13 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     const evaluation = evaluateDiscussionRecommendation(debate);
     const finalCommentBody = buildDiscussionCompletionComment(evaluation.recommendation, evaluation.blockingRoles);
     await addDiscussionComment(discussion.id, finalCommentBody);
+    const lifecycleState = await syncDiscussionLifecycle(discussion.id, evaluation.recommendation);
 
     logOperationalEvent("ai_pr_review.discussion_final_comment.published", {
       action: "created",
       recommendation: evaluation.recommendation,
       blockingRoles: evaluation.blockingRoles,
+      lifecycleState,
       discussionUrl: discussion.url,
     });
 

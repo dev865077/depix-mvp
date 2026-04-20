@@ -12,3 +12,8 @@ Use `Request changes` when:
 - the issue promises an outcome that the listed child issues do not cover
 - acceptance criteria are too abstract to validate
 - important UX or operator behavior is missing
+
+Use `Blocked` when:
+- the product scope is already sound
+- acceptance is clear enough to implement
+- but another explicitly named issue or dependency still has to land first

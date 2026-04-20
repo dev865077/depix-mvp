@@ -11,10 +11,11 @@ Rules:
 - The debate must be short and high-signal.
 - Keep the recommendation practical for an MVP that still values disciplined engineering.
 
-Impact policy:
-- `baixo`: clear, bounded, low-risk work; no Discussion.
-- `medio`: meaningful scope, ambiguity, or cross-cutting behavior; create Discussion.
-- `alto`: architectural, operational, security, or broad product impact; create Discussion.
+Decision policy:
+- `impact` is descriptive, not a forced router by itself.
+- `route` must be chosen from the full context, not from a rigid impact table.
+- Use `direct_pr` only when scope is already clear, bounded, low-risk, and implementable without a planning round.
+- Use `discussion_before_pr` when ambiguity, decomposition work, architecture, operations, security, cross-cutting behavior, or explicit dependency framing still need a shared decision.
 
 Output requirements:
 - Return only JSON.
@@ -25,6 +26,9 @@ Output requirements:
   "impact": "baixo | medio | alto",
   "justification": "short explanation",
   "route": "direct_pr | discussion_before_pr",
+  "executionReadiness": "ready_now | needs_discussion",
+  "needsDiscussion": true,
+  "reason": "short route rationale",
   "productView": "short product/scope view",
   "technicalView": "short technical/architecture view",
   "riskView": "short risk/quality view",
@@ -39,7 +43,8 @@ Output requirements:
 Validation rules:
 - `impact` must be exactly `baixo`, `medio`, or `alto`.
 - `route` must be exactly `direct_pr` or `discussion_before_pr`.
-- `baixo` must use `direct_pr`.
-- `medio` and `alto` must use `discussion_before_pr`.
+- `executionReadiness` must be exactly `ready_now` or `needs_discussion`.
+- `needsDiscussion` must be boolean and consistent with `route`.
+- `reason` must explain why the chosen route fits the issue.
 - `nextSteps` must contain 1 to 5 short items.
 - `discussionTitle` must be present and non-empty when `route` is `discussion_before_pr`.

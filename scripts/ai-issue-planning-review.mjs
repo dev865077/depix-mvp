@@ -38,12 +38,14 @@ const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
 
 /**
- * The planning gate is intentionally binary.
+ * The planning gate distinguishes real quality debt from normal dependency
+ * blocking.
  *
- * A backlog slice is either ready to implement or still blocked by at least
- * one reviewer role. This avoids ambiguous intermediate states.
+ * `Blocked` means the issue is well specified but cannot start yet because one
+ * or more explicit upstream dependencies still need to land. `Request changes`
+ * remains the red state for backlog quality debt.
  */
-const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
+const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Blocked", "Request changes"]);
 
 /**
  * Emit a stable JSON log line for GitHub Actions and later incident reading.
@@ -54,6 +56,23 @@ const ALLOWED_RECOMMENDATIONS = new Set(["Approve", "Request changes"]);
  */
 function logOperationalEvent(event, fields = {}) {
   console.log(JSON.stringify({ event, ...fields }));
+}
+
+/**
+ * Write one GitHub Actions output when the workflow exposes GITHUB_OUTPUT.
+ *
+ * @param {string} key Output key.
+ * @param {string} value Output value.
+ * @returns {Promise<void>} Resolves when written or skipped.
+ */
+async function writeGitHubOutput(key, value) {
+  const outputPath = process.env.GITHUB_OUTPUT;
+
+  if (!outputPath) {
+    return;
+  }
+
+  await fs.appendFile(outputPath, `${key}=${value}\n`, "utf8");
 }
 
 /**
@@ -470,6 +489,10 @@ function normalizeRecommendationCandidate(value) {
     return "Approve";
   }
 
+  if (cleanedValue === "blocked") {
+    return "Blocked";
+  }
+
   if (cleanedValue === "request changes" || cleanedValue === "request change") {
     return "Request changes";
   }
@@ -484,7 +507,7 @@ function normalizeRecommendationCandidate(value) {
  * @returns {string | null} Recommendation when found.
  */
 export function extractPlanningRecommendation(reviewText) {
-  const headingInlineMatch = reviewText.match(/^\s*#{1,6}\s*Recommendation\s*:?\s*(Approve|Request changes)\s*$/im);
+  const headingInlineMatch = reviewText.match(/^\s*#{1,6}\s*Recommendation\s*:?\s*(Approve|Blocked|Request changes)\s*$/im);
 
   if (headingInlineMatch) {
     return normalizeRecommendationCandidate(headingInlineMatch[1]);
@@ -516,7 +539,7 @@ function assertValidPlanningRecommendation(role, reviewText) {
   const recommendation = extractPlanningRecommendation(reviewText);
 
   if (!recommendation || !ALLOWED_RECOMMENDATIONS.has(recommendation)) {
-    throw new Error(`${role} issue-planning memo is missing the ## Recommendation section with Approve or Request changes.`);
+    throw new Error(`${role} issue-planning memo is missing the ## Recommendation section with Approve, Blocked, or Request changes.`);
   }
 
   return recommendation;
@@ -788,9 +811,11 @@ export function buildIssuePlanningUserPrompt(repository, issue, childIssues, iss
  *
  * @param {{ product: string, technical: string, scrum: string, risk: string }} debate Debate output.
  * @returns {{
- *   recommendation: "Approve" | "Request changes",
+ *   recommendation: "Approve" | "Blocked" | "Request changes",
  *   recommendations: Record<string, string>,
- *   blockingRoles: string[]
+ *   blockingRoles: string[],
+ *   blockedRoles: string[],
+ *   changeRequestRoles: string[]
  * }} Planning verdict.
  */
 export function evaluateIssuePlanningRecommendation(debate) {
@@ -800,14 +825,27 @@ export function evaluateIssuePlanningRecommendation(debate) {
     scrum: assertValidPlanningRecommendation("Scrum", debate.scrum),
     risk: assertValidPlanningRecommendation("Risk", debate.risk),
   };
-  const blockingRoles = Object.entries(recommendations)
-    .filter(([, recommendation]) => recommendation !== "Approve")
+  const blockedRoles = Object.entries(recommendations)
+    .filter(([, recommendation]) => recommendation === "Blocked")
     .map(([role]) => role);
+  const changeRequestRoles = Object.entries(recommendations)
+    .filter(([, recommendation]) => recommendation === "Request changes")
+    .map(([role]) => role);
+  const blockingRoles = [...new Set([...blockedRoles, ...changeRequestRoles])];
+  let recommendation = "Approve";
+
+  if (changeRequestRoles.length > 0) {
+    recommendation = "Request changes";
+  } else if (blockedRoles.length > 0) {
+    recommendation = "Blocked";
+  }
 
   return {
-    recommendation: blockingRoles.length === 0 ? "Approve" : "Request changes",
+    recommendation,
     recommendations,
     blockingRoles,
+    blockedRoles,
+    changeRequestRoles,
   };
 }
 
@@ -869,18 +907,23 @@ export function buildIssuePlanningReviewComments(debate) {
 /**
  * Build the final visible lifecycle comment for the planning Discussion.
  *
- * @param {"Approve" | "Request changes"} recommendation Final recommendation.
+ * @param {"Approve" | "Blocked" | "Request changes"} recommendation Final recommendation.
  * @param {string[]} [blockingRoles] Specialist roles still blocking.
  * @returns {string} Final status comment.
  */
 export function buildIssuePlanningCompletionComment(recommendation, blockingRoles = []) {
   const isApproved = recommendation === "Approve";
+  const isBlocked = recommendation === "Blocked";
   const statusLine = isApproved
     ? "Planning review concluded: all four specialist reviewer roles returned `Approve`."
-    : "Planning review concluded: unanimous approval was not reached across the specialist reviewer roles.";
+    : isBlocked
+      ? "Planning review concluded: the backlog artifact is well specified, but execution is still blocked by explicit upstream dependencies."
+      : "Planning review concluded: unanimous approval was not reached across the specialist reviewer roles.";
   const closeLine = isApproved
     ? "This append-only comment is the visible readiness marker before implementation starts."
-    : "The planning Discussion remains open because at least one specialist reviewer role still requests changes.";
+    : isBlocked
+      ? "The planning Discussion remains open because at least one specialist reviewer role marked the work as `Blocked`, not because the artifact itself is under-specified."
+      : "The planning Discussion remains open because at least one specialist reviewer role still requests changes.";
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
@@ -925,6 +968,50 @@ async function createDiscussionComment(discussionId, body) {
     }
   `;
   await githubGraphqlRequest(mutation, { discussionId, body });
+}
+
+/**
+ * Close or reopen one Discussion so the GitHub UI reflects the current state.
+ *
+ * Approve closes the thread. Blocked and Request changes reopen it so the
+ * next round can continue in-place.
+ *
+ * @param {string} discussionId Discussion node id.
+ * @param {"Approve" | "Blocked" | "Request changes"} recommendation Final recommendation.
+ * @returns {Promise<"closed" | "open">} Persisted lifecycle state.
+ */
+async function syncDiscussionLifecycle(discussionId, recommendation) {
+  if (recommendation === "Approve") {
+    const mutation = `
+      mutation($discussionId: ID!) {
+        closeDiscussion(input: {
+          discussionId: $discussionId
+        }) {
+          discussion {
+            id
+            closed
+          }
+        }
+      }
+    `;
+    await githubGraphqlRequest(mutation, { discussionId });
+    return "closed";
+  }
+
+  const mutation = `
+    mutation($discussionId: ID!) {
+      reopenDiscussion(input: {
+        discussionId: $discussionId
+      }) {
+        discussion {
+          id
+          closed
+        }
+      }
+    }
+  `;
+  await githubGraphqlRequest(mutation, { discussionId });
+  return "open";
 }
 
 /**
@@ -1000,6 +1087,34 @@ export function parseManualPlanningTarget(event) {
 }
 
 /**
+ * Resolve a stable target key for workflow concurrency and logging.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {string | null} Stable target key or null.
+ */
+export function resolvePlanningConcurrencyTarget(event) {
+  const manualTarget = parseManualPlanningTarget(event);
+
+  if (manualTarget.discussionNumber) {
+    return `manual-discussion-${manualTarget.discussionNumber}`;
+  }
+
+  if (manualTarget.issueNumber) {
+    return `manual-issue-${manualTarget.issueNumber}`;
+  }
+
+  if (event?.issue?.number) {
+    return `issue-${event.issue.number}`;
+  }
+
+  if (event?.discussion?.number) {
+    return `discussion-${event.discussion.number}`;
+  }
+
+  return null;
+}
+
+/**
  * Resolve the linked triage Discussion number for one issue.
  *
  * @param {string} owner Repository owner.
@@ -1033,6 +1148,10 @@ async function findIssueDiscussionNumber(owner, name, issueNumber, comments) {
  */
 async function resolvePlanningContext(event, owner, name, repository) {
   const manualTarget = parseManualPlanningTarget(event);
+
+  if (event?.inputs && !manualTarget.issueNumber && !manualTarget.discussionNumber) {
+    throw new Error("workflow_dispatch for issue planning review requires issue_number or discussion_number.");
+  }
 
   if (manualTarget.discussionNumber) {
     const discussion = await fetchDiscussionByNumber(owner, name, manualTarget.discussionNumber);
@@ -1206,10 +1325,17 @@ async function main() {
   };
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const [owner, name] = repository.split("/");
+  const concurrencyTarget = resolvePlanningConcurrencyTarget(event);
 
   if (!owner || !name) {
     throw new Error(`Invalid GITHUB_REPOSITORY value: ${repository}`);
   }
+
+  if (!concurrencyTarget) {
+    throw new Error("Unable to resolve a stable planning review target from the current event.");
+  }
+
+  logOperationalEvent("ai_issue_planning_review.target", { concurrencyTarget });
 
   const context = await resolvePlanningContext(event, owner, name, repository);
 
@@ -1250,23 +1376,27 @@ async function main() {
   // always points at review comments already visible in the Discussion.
   for (const comment of discussionComments) {
     await createDiscussionComment(context.discussion.id, comment.body);
-    logOperationalEvent("ai_issue_planning_review.discussion_comment.published", {
-      role: comment.role,
-      discussionUrl: context.discussion.url,
-    });
   }
 
   await createDiscussionComment(
     context.discussion.id,
     buildIssuePlanningCompletionComment(evaluation.recommendation, evaluation.blockingRoles),
   );
+
+  const lifecycleState = await syncDiscussionLifecycle(context.discussion.id, evaluation.recommendation);
+  await Promise.all([
+    writeGitHubOutput("planning_status", evaluation.recommendation.toLowerCase().replace(/\s+/g, "_")),
+    writeGitHubOutput("blocking_roles", evaluation.blockingRoles.join(",")),
+    writeGitHubOutput("blocked_by_dependencies", String(evaluation.recommendation === "Blocked")),
+  ]);
   logOperationalEvent("ai_issue_planning_review.final_comment.published", {
     recommendation: evaluation.recommendation,
     blockingRoles: evaluation.blockingRoles,
+    lifecycleState,
     discussionUrl: context.discussion.url,
   });
 
-  if (evaluation.recommendation !== "Approve") {
+  if (evaluation.recommendation === "Request changes") {
     throw new Error("AI issue planning review requested changes. The workflow failed because the final recommendation is blocking.");
   }
 }

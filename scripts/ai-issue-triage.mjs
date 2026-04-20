@@ -13,6 +13,7 @@ const IMPACT_LEVELS = new Set(["baixo", "medio", "alto"]);
 const ROUTE_DIRECT_PR = "direct_pr";
 const ROUTE_DISCUSSION_BEFORE_PR = "discussion_before_pr";
 const ROUTES = new Set([ROUTE_DIRECT_PR, ROUTE_DISCUSSION_BEFORE_PR]);
+const EXECUTION_READINESS_LEVELS = new Set(["ready_now", "needs_discussion"]);
 const MAX_ISSUE_BODY_CHARS = 5000;
 const MAX_EXISTING_COMMENT_CHARS = 5000;
 const MAX_OUTPUT_TOKENS = 25000;
@@ -35,6 +36,9 @@ const DISCUSSION_ACKNOWLEDGEMENT_BODY = [
  *   impact: "baixo" | "medio" | "alto",
  *   justification: string,
  *   route: "direct_pr" | "discussion_before_pr",
+ *   executionReadiness: "ready_now" | "needs_discussion",
+ *   needsDiscussion: boolean,
+ *   reason: string,
  *   productView: string,
  *   technicalView: string,
  *   riskView: string,
@@ -545,9 +549,15 @@ export function assertValidIssueTriagePlan(rawPlan) {
 
   const impact = typeof rawPlan.impact === "string" ? rawPlan.impact.trim().toLowerCase() : "";
   const route = typeof rawPlan.route === "string" ? rawPlan.route.trim() : "";
+  const executionReadiness =
+    typeof rawPlan.executionReadiness === "string"
+      ? rawPlan.executionReadiness.trim().toLowerCase()
+      : "";
+  const needsDiscussion = rawPlan.needsDiscussion;
   const textFields = {
     summary: rawPlan.summary,
     justification: rawPlan.justification,
+    reason: rawPlan.reason,
     productView: rawPlan.productView,
     technicalView: rawPlan.technicalView,
     riskView: rawPlan.riskView,
@@ -562,12 +572,23 @@ export function assertValidIssueTriagePlan(rawPlan) {
     throw new Error(`AI issue triage returned invalid route: ${String(rawPlan.route)}`);
   }
 
-  if (impact === "baixo" && route !== ROUTE_DIRECT_PR) {
-    throw new Error("Low impact issues must route directly to PR.");
+  if (!EXECUTION_READINESS_LEVELS.has(executionReadiness)) {
+    throw new Error(`AI issue triage returned invalid executionReadiness: ${String(rawPlan.executionReadiness)}`);
   }
 
-  if ((impact === "medio" || impact === "alto") && route !== ROUTE_DISCUSSION_BEFORE_PR) {
-    throw new Error("Medium/high impact issues must require Discussion before PR.");
+  if (typeof needsDiscussion !== "boolean") {
+    throw new Error("AI issue triage must return needsDiscussion as a boolean.");
+  }
+
+  if (needsDiscussion !== (route === ROUTE_DISCUSSION_BEFORE_PR)) {
+    throw new Error("AI issue triage returned inconsistent needsDiscussion and route.");
+  }
+
+  if (
+    (executionReadiness === "ready_now" && route !== ROUTE_DIRECT_PR)
+    || (executionReadiness === "needs_discussion" && route !== ROUTE_DISCUSSION_BEFORE_PR)
+  ) {
+    throw new Error("AI issue triage returned inconsistent executionReadiness and route.");
   }
 
   for (const [fieldName, value] of Object.entries(textFields)) {
@@ -591,7 +612,7 @@ export function assertValidIssueTriagePlan(rawPlan) {
   const discussionTitle = typeof rawPlan.discussionTitle === "string" ? rawPlan.discussionTitle.trim() : "";
 
   if (route === ROUTE_DISCUSSION_BEFORE_PR && discussionTitle.length === 0) {
-    throw new Error("AI issue triage must provide discussionTitle for medium/high impact issues.");
+    throw new Error("AI issue triage must provide discussionTitle when route requires discussion.");
   }
 
   return {
@@ -599,6 +620,9 @@ export function assertValidIssueTriagePlan(rawPlan) {
     impact,
     justification: rawPlan.justification.trim(),
     route,
+    executionReadiness,
+    needsDiscussion,
+    reason: rawPlan.reason.trim(),
     productView: rawPlan.productView.trim(),
     technicalView: rawPlan.technicalView.trim(),
     riskView: rawPlan.riskView.trim(),
@@ -671,9 +695,13 @@ export function buildIssueCommentBody(plan, model, discussionUrl) {
     `Model: \`${model}\``,
     `Impacto: \`${plan.impact}\``,
     `Fluxo recomendado: \`${routeLabel}\``,
+    `Prontidao de execucao: \`${plan.executionReadiness}\``,
     "",
     "## Justificativa",
     plan.justification,
+    "",
+    "## Racional de rota",
+    plan.reason,
     "",
     "## Debate",
     "",
@@ -717,6 +745,7 @@ export function buildDiscussionBody(issue, plan) {
     "## Classificacao",
     `- Impacto: \`${plan.impact}\``,
     `- Fluxo: \`${plan.route}\``,
+    `- Prontidao: \`${plan.executionReadiness}\``,
     "",
     "## Debate",
     "",
@@ -731,6 +760,9 @@ export function buildDiscussionBody(issue, plan) {
     "",
     "## Sintese final",
     plan.decision,
+    "",
+    "## Racional de rota",
+    plan.reason,
     "",
     DISCUSSION_ACKNOWLEDGEMENT_TITLE,
     DISCUSSION_ACKNOWLEDGEMENT_BODY,
