@@ -1435,6 +1435,130 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("does not resume terminal or manual-review orders as editable Telegram conversations", async function assertTerminalOrdersStayClosed() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: replies.length,
+          date: 1713434419,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_manual_review_closed",
+      userId: "901",
+      channel: "telegram",
+      productType: "depix",
+      currentStep: "manual_review",
+      status: "under_review",
+    });
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_completed_closed",
+      userId: "902",
+      channel: "telegram",
+      productType: "depix",
+      currentStep: "completed",
+      status: "paid",
+    });
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/cancel",
+          chatId: 9001,
+          fromId: 901,
+          updateId: 55,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "teste",
+          chatId: 9001,
+          fromId: 901,
+          updateId: 56,
+        }),
+      },
+      workerEnv,
+    );
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 9002,
+          fromId: 902,
+          updateId: 57,
+        }),
+      },
+      workerEnv,
+    );
+
+    const manualReviewOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_manual_review_closed")
+      .first();
+    const completedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_completed_closed")
+      .first();
+    const newManualReviewUserOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "901");
+    const newCompletedUserOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "902");
+
+    expect(manualReviewOrder).toEqual({
+      currentStep: "manual_review",
+      status: "under_review",
+    });
+    expect(completedOrder).toEqual({
+      currentStep: "completed",
+      status: "paid",
+    });
+    expect(newManualReviewUserOrder?.orderId).not.toBe("order_manual_review_closed");
+    expect(newManualReviewUserOrder?.currentStep).toBe("amount");
+    expect(newCompletedUserOrder?.orderId).not.toBe("order_completed_closed");
+    expect(newCompletedUserOrder?.currentStep).toBe("amount");
+    expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
+    expect(replies[1]).toContain("Não consegui entender esse valor.");
+    expect(replies[2]).toContain("envie o valor em BRL");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
   it("does not create a second Eulen deposit when confirmar is replayed after awaiting_payment", async function assertConfirmationReplayIdempotency() {
     const app = createApp();
     const workerEnv = createWorkerEnv();

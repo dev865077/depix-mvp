@@ -61,6 +61,36 @@ export const ORDER_PROGRESS_LEGACY_STEP_ALIASES = Object.freeze({
   paid: ORDER_PROGRESS_STATES.COMPLETED,
 });
 
+/**
+ * Passos canonicos que encerram a parte editavel do pedido.
+ *
+ * A lista e mantida no dominio para evitar divergencia entre SQL, Telegram,
+ * jobs de reconciliacao e documentacao. `manual_review` e terminal porque o
+ * proximo passo pertence ao operador, nao ao usuario no chat.
+ */
+export const ORDER_PROGRESS_TERMINAL_STATES = Object.freeze([
+  ORDER_PROGRESS_STATES.COMPLETED,
+  ORDER_PROGRESS_STATES.FAILED,
+  ORDER_PROGRESS_STATES.CANCELED,
+  ORDER_PROGRESS_STATES.MANUAL_REVIEW,
+]);
+
+const ORDER_PROGRESS_TERMINAL_STATE_SET = new Set(ORDER_PROGRESS_TERMINAL_STATES);
+
+/**
+ * Valores persistidos que devem ser ignorados por lookups de pedido aberto.
+ *
+ * Inclui aliases legados como `paid`, porque a busca SQL ve o valor bruto em
+ * `orders.current_step`; ela nao passa pela normalizacao JavaScript antes de
+ * decidir se uma linha pode ser retomada pela conversa.
+ */
+export const ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS = Object.freeze([
+  ...ORDER_PROGRESS_TERMINAL_STATES,
+  ...Object.entries(ORDER_PROGRESS_LEGACY_STEP_ALIASES)
+    .filter(([, canonicalStep]) => ORDER_PROGRESS_TERMINAL_STATE_SET.has(canonicalStep))
+    .map(([legacyStep]) => legacyStep),
+]);
+
 const KNOWN_STATES = new Set(Object.values(ORDER_PROGRESS_STATES));
 const KNOWN_EVENTS = new Set(Object.values(ORDER_PROGRESS_EVENTS));
 
@@ -117,6 +147,22 @@ function requireOrderBoundaryContext(context, event) {
 
 export function normalizePersistedOrderProgressStep(currentStep) {
   return ORDER_PROGRESS_LEGACY_STEP_ALIASES[currentStep] ?? currentStep;
+}
+
+/**
+ * Classifica passos que encerram a conversa editavel do pedido.
+ *
+ * `manual_review` tambem e terminal para o Telegram: o usuario nao deve
+ * conseguir retomar esse agregado como se ainda pudesse alterar valor,
+ * endereco ou confirmacao. A intervencao passa a ser operacional, enquanto uma
+ * nova compra deve nascer em outro pedido.
+ *
+ * @param {unknown} currentStep Passo persistido em `orders.current_step`.
+ * @returns {boolean} Verdadeiro quando o passo encerra o fluxo editavel.
+ */
+export function isTerminalOrderProgressStep(currentStep) {
+  return typeof currentStep === "string"
+    && ORDER_PROGRESS_TERMINAL_STATE_SET.has(normalizePersistedOrderProgressStep(currentStep));
 }
 
 function requireKnownState(currentStep) {

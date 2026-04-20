@@ -67,6 +67,7 @@
 - `cancelar` em `confirmation` encerra o pedido sem criar deposito
 - `cancel`, `cancelar` e `recomecar` podem cancelar um pedido aberto em `amount`, `wallet` ou `confirmation`
 - `recomecar` deve reaproveitar o contexto aberto quando existir e nao deve criar pedido novo quando nao houver contexto aberto
+- buscas de pedido aberto para Telegram devem excluir `completed`, `failed`, `canceled`, `manual_review` e aliases legados terminais como `paid`; esses registros permanecem auditaveis, mas nao sao mais editaveis pelo usuario
 - replays de mensagens antigas nao devem sobrescrever `amount_in_cents` quando o pedido ja saiu de `amount`
 - replays de mensagens antigas nao devem sobrescrever `wallet_address` quando o pedido ja saiu de `wallet`
 - quando um agregado financeiro confirma `depix_sent` / `paid` + `completed`, o envio assincrono de Telegram deve ser tratado como side effect idempotente e nao como dado principal

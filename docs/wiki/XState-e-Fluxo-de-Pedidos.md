@@ -87,10 +87,15 @@ usem `draft`, `wallet`, `awaiting_payment` ou `completed` continuam dentro do
 vocabulario atual. Qualquer valor legado fora dessa lista deve ser normalizado
 por migracao ou tratado explicitamente antes de chamar `advanceOrderProgression()`.
 
-Estados operacionais vindos do webhook da Eulen, como revisao manual, continuam
-sob responsabilidade do service de webhook ate a integracao completa do fluxo.
-O estado `manual_review` existe na maquina como terminal de compatibilidade para
-nao quebrar registros ja marcados para intervencao.
+Estados operacionais vindos do webhook da Eulen, como revisao manual, entram no
+mesmo vocabulario canonico da maquina. `manual_review` e terminal para a
+conversa editavel: o Telegram nao deve retomar esse agregado para alterar valor,
+endereco ou confirmacao; a continuidade passa a ser operacional, e uma nova
+compra precisa nascer em outro pedido.
+
+Para lookup conversacional, os passos terminais sao `completed`, `failed`,
+`canceled` e `manual_review`. Aliases legados que normalizam para terminal,
+como `paid`, tambem devem ficar fora de qualquer busca de pedido aberto.
 
 Aliases legados conhecidos sao normalizados em codigo por
 `normalizePersistedOrderProgressStep()`, mantendo o valor persistido original em

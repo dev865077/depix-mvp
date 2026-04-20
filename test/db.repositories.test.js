@@ -528,16 +528,40 @@ async function assertLatestOpenOrderLookup() {
   await resetDatabaseSchema();
 
   const db = getDatabase(env);
+  const terminalCases = [
+    {
+      currentStep: ORDER_PROGRESS_STATES.COMPLETED,
+      status: "paid",
+    },
+    {
+      currentStep: ORDER_PROGRESS_STATES.FAILED,
+      status: "failed",
+    },
+    {
+      currentStep: ORDER_PROGRESS_STATES.CANCELED,
+      status: "canceled",
+    },
+    {
+      currentStep: ORDER_PROGRESS_STATES.MANUAL_REVIEW,
+      status: "under_review",
+    },
+    {
+      currentStep: "paid",
+      status: "paid",
+    },
+  ];
 
-  await createOrder(db, {
-    tenantId: "alpha",
-    orderId: "order_closed_001",
-    userId: "telegram_user_002",
-    channel: "telegram",
-    productType: "depix",
-    currentStep: "completed",
-    status: "paid",
-  });
+  for (const [index, terminalCase] of terminalCases.entries()) {
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: `order_terminal_${index}`,
+      userId: `telegram_terminal_${index}`,
+      channel: "telegram",
+      productType: "depix",
+      currentStep: terminalCase.currentStep,
+      status: terminalCase.status,
+    });
+  }
 
   await createOrder(db, {
     tenantId: "alpha",
@@ -551,10 +575,12 @@ async function assertLatestOpenOrderLookup() {
 
   const latestOpenOrder = await getLatestOpenOrderByUser(db, "alpha", "telegram_user_002");
   const missingTenantOrder = await getLatestOpenOrderByUser(db, "beta", "telegram_user_002");
+  const terminalLookups = await Promise.all(terminalCases.map((_, index) => getLatestOpenOrderByUser(db, "alpha", `telegram_terminal_${index}`)));
 
   expect(latestOpenOrder?.orderId).toBe("order_open_001");
   expect(latestOpenOrder?.currentStep).toBe("draft");
   expect(missingTenantOrder).toBeNull();
+  expect(terminalLookups).toEqual(terminalCases.map(() => null));
 }
 
 async function assertTelegramChatHydrationContract() {
