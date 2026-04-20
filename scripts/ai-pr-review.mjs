@@ -14,6 +14,7 @@ const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-pr-discussion-final:openai -->";
+const DISCUSSION_SPECIALIST_ROLE_KEYS = ["product", "technical", "risk"];
 const BLOCKER_CONTRACT_TESTABLE_FIELDS = [
   "Behavior protected",
   "Suggested test file",
@@ -106,6 +107,18 @@ const REVIEW_CRITICAL_PATH_PATTERNS = [
   /^test\/health\.test\.js$/,
   /^test\/runtime-config\.test\.js$/,
 ];
+
+const DISCUSSION_ROLE_LABELS = {
+  product: "product",
+  technical: "technical",
+  risk: "risk",
+};
+
+const DISCUSSION_ROLE_TITLES = {
+  product: "Product and scope",
+  technical: "Technical and architecture",
+  risk: "Risk, security, and operations",
+};
 
 /**
  * Emit a stable operational log line for GitHub Actions.
@@ -417,9 +430,257 @@ export function buildMalformedBlockerContractMemo(role, reason) {
     "## Merge posture",
     "Request changes until the reviewer output follows the canonical blocker contract.",
     "",
+    "## Blocker contract",
+    "Testability: Not testable",
+    `Reason: Malformed blocker contract from ${role}: ${reason}`,
+    "Required human resolution: regenerate the review with the canonical blocker contract",
+    "",
     "## Recommendation",
     "Request changes",
   ].join("\n");
+}
+
+/**
+ * Collapse one blocker-contract field into a stable one-line summary value.
+ *
+ * @param {string} value Raw field value.
+ * @returns {string} Markdown-safe compact value.
+ */
+function summarizeBlockerFieldValue(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Insert one value into an array only once after normalized comparison.
+ *
+ * @param {string[]} values Target array.
+ * @param {string} value Candidate value.
+ * @returns {void}
+ */
+function pushUniqueSummaryValue(values, value) {
+  const normalizedCandidate = summarizeBlockerFieldValue(value);
+
+  if (normalizedCandidate.length === 0) {
+    return;
+  }
+
+  if (!values.some((currentValue) => summarizeBlockerFieldValue(currentValue) === normalizedCandidate)) {
+    values.push(value.trim());
+  }
+}
+
+/**
+ * Parse the blocking specialist contracts already present in one debate.
+ *
+ * Only Product, Technical, and Risk count here. Synthesis is summary-only.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis?: string }} debate Debate output.
+ * @returns {Array<{
+ *   role: "product" | "technical" | "risk",
+ *   testability: "Testable" | "Not testable",
+ *   fields: Record<string, string>
+ * }>} Valid blocking contracts in deterministic role order.
+ */
+function collectDiscussionBlockingContracts(debate) {
+  return DISCUSSION_SPECIALIST_ROLE_KEYS.flatMap((role) => {
+    const parsed = parseBlockingRoleContract(debate[role]);
+
+    if (parsed.status === "malformed") {
+      return [{
+        role,
+        testability: "Not testable",
+        fields: {
+          Testability: "Not testable",
+          Reason: `Malformed blocker contract from ${DISCUSSION_ROLE_TITLES[role] ?? role}: ${parsed.reason}`,
+          "Required human resolution": "regenerate the review with the canonical blocker contract",
+        },
+      }];
+    }
+
+    if (parsed.status !== "valid" || !parsed.testability || !parsed.fields) {
+      return [];
+    }
+
+    return [{
+      role,
+      testability: parsed.testability,
+      fields: parsed.fields,
+    }];
+  });
+}
+
+/**
+ * Consolidate blocking specialist contracts into stable synthesized summaries.
+ *
+ * Testable blockers can merge only when both `Behavior protected` and
+ * `Suggested test file` match. Not-testable blockers always stay role-specific.
+ *
+ * @param {{ product: string, technical: string, risk: string, synthesis?: string }} debate Debate output.
+ * @returns {{
+ *   testable: Array<{
+ *     roles: string[],
+ *     behaviorProtected: string,
+ *     suggestedTestFile: string,
+ *     minimumScenarios: string[],
+ *     essentialAssertions: string[],
+ *     resolutionConditions: string[]
+ *   }>,
+ *   notTestable: Array<{
+ *     role: string,
+ *     reason: string,
+ *     requiredHumanResolution: string
+ *   }>,
+ *   roleMap: Array<{
+ *     role: string,
+ *     expectedTest: string | null,
+ *     resolutionCondition: string,
+ *     behaviorProtected: string | null,
+ *     testability: "Testable" | "Not testable",
+ *     reason?: string
+ *   }>
+ * }} Consolidated blocker summary.
+ */
+export function summarizeDiscussionBlockingContracts(debate) {
+  const groupedTestableContracts = new Map();
+  const notTestableContracts = [];
+  const roleMap = [];
+
+  for (const contract of collectDiscussionBlockingContracts(debate)) {
+    const roleLabel = DISCUSSION_ROLE_LABELS[contract.role] ?? contract.role;
+
+    if (contract.testability === "Testable") {
+      const behaviorProtected = summarizeBlockerFieldValue(contract.fields["Behavior protected"]);
+      const suggestedTestFile = summarizeBlockerFieldValue(contract.fields["Suggested test file"]);
+      const minimumScenario = summarizeBlockerFieldValue(contract.fields["Minimum scenario"]);
+      const essentialAssertions = summarizeBlockerFieldValue(contract.fields["Essential assertions"]);
+      const resolutionCondition = summarizeBlockerFieldValue(contract.fields["Resolution rule"]);
+      const groupingKey = `${behaviorProtected}\u0000${suggestedTestFile}`;
+
+      if (!groupedTestableContracts.has(groupingKey)) {
+        groupedTestableContracts.set(groupingKey, {
+          roles: [],
+          behaviorProtected,
+          suggestedTestFile,
+          minimumScenarios: [],
+          essentialAssertions: [],
+          resolutionConditions: [],
+        });
+      }
+
+      const groupedContract = groupedTestableContracts.get(groupingKey);
+      pushUniqueSummaryValue(groupedContract.roles, roleLabel);
+      pushUniqueSummaryValue(groupedContract.minimumScenarios, minimumScenario);
+      pushUniqueSummaryValue(groupedContract.essentialAssertions, essentialAssertions);
+      pushUniqueSummaryValue(groupedContract.resolutionConditions, resolutionCondition);
+
+      roleMap.push({
+        role: roleLabel,
+        expectedTest: suggestedTestFile,
+        resolutionCondition,
+        behaviorProtected,
+        testability: "Testable",
+      });
+
+      continue;
+    }
+
+    const reason = summarizeBlockerFieldValue(contract.fields.Reason);
+    const requiredHumanResolution = summarizeBlockerFieldValue(contract.fields["Required human resolution"]);
+
+    notTestableContracts.push({
+      role: roleLabel,
+      reason,
+      requiredHumanResolution,
+    });
+    roleMap.push({
+      role: roleLabel,
+      expectedTest: null,
+      resolutionCondition: requiredHumanResolution,
+      behaviorProtected: null,
+      testability: "Not testable",
+      reason,
+    });
+  }
+
+  return {
+    testable: [...groupedTestableContracts.values()],
+    notTestable: notTestableContracts,
+    roleMap,
+  };
+}
+
+/**
+ * Render the canonical appendix for the synthesis comment.
+ *
+ * @param {ReturnType<typeof summarizeDiscussionBlockingContracts>} blockerSummary Consolidated blocker summary.
+ * @returns {string[]} Markdown lines for the deterministic appendix.
+ */
+export function buildDiscussionSynthesisContractAppendix(blockerSummary) {
+  const lines = [];
+
+  if (blockerSummary.testable.length > 0) {
+    lines.push("## Acceptance tests requested", "");
+
+    for (const item of blockerSummary.testable) {
+      lines.push(
+        `- Roles ${item.roles.map((role) => `\`${role}\``).join(", ")} -> \`${item.suggestedTestFile}\`: protect ${item.behaviorProtected}; minimum scenario: ${item.minimumScenarios.join(" | ")}; essential assertions: ${item.essentialAssertions.join(" | ")}; resolution condition: ${item.resolutionConditions.join(" | ")}.`,
+      );
+    }
+  }
+
+  if (blockerSummary.notTestable.length > 0) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+
+    lines.push("## Human resolution required", "");
+
+    for (const item of blockerSummary.notTestable) {
+      lines.push(
+        `- \`${item.role}\`: ${item.reason}; required human resolution: ${item.requiredHumanResolution}.`,
+      );
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Insert one deterministic appendix before the recommendation section.
+ *
+ * @param {string} markdown Existing markdown body.
+ * @param {string[]} appendixLines Appendix lines to insert.
+ * @returns {string} Augmented markdown body.
+ */
+function insertAppendixBeforeRecommendation(markdown, appendixLines) {
+  if (appendixLines.length === 0) {
+    return markdown;
+  }
+
+  const recommendationHeadingMatch = markdown.match(/^\s*##\s*Recommendation\s*:?\s*$/im);
+
+  if (!recommendationHeadingMatch || typeof recommendationHeadingMatch.index !== "number") {
+    return [markdown.trimEnd(), "", ...appendixLines].join("\n");
+  }
+
+  const beforeRecommendation = markdown.slice(0, recommendationHeadingMatch.index).trimEnd();
+  const recommendationAndAfter = markdown.slice(recommendationHeadingMatch.index).trimStart();
+
+  return [beforeRecommendation, "", ...appendixLines, "", recommendationAndAfter].join("\n");
+}
+
+/**
+ * Append deterministic blocker summaries to the synthesis memo.
+ *
+ * @param {string} synthesis Raw synthesis memo.
+ * @param {{ product: string, technical: string, risk: string, synthesis?: string }} debate Debate output.
+ * @returns {string} Augmented synthesis memo.
+ */
+export function augmentDiscussionSynthesis(synthesis, debate) {
+  return insertAppendixBeforeRecommendation(
+    synthesis,
+    buildDiscussionSynthesisContractAppendix(summarizeDiscussionBlockingContracts(debate)),
+  );
 }
 
 /**
@@ -2468,6 +2729,7 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
     }
   }
 
+  synthesis = augmentDiscussionSynthesis(synthesis, { product, technical, risk });
   console.log("Multi-role PR discussion synthesis completed.");
   return { product, technical, risk, synthesis };
 }
@@ -2570,12 +2832,16 @@ export function buildDiscussionReviewComments(debate) {
  *
  * @param {string} recommendation Parsed final recommendation.
  * @param {string[]} [blockingRoles] Specialist reviewer roles still blocking.
- * @param {{ isFollowUpRound?: boolean }} [options] Rendering options.
+ * @param {{
+ *   isFollowUpRound?: boolean,
+ *   blockerSummary?: ReturnType<typeof summarizeDiscussionBlockingContracts>
+ * }} [options] Rendering options.
  * @returns {string} Final Discussion status comment.
  */
 export function buildDiscussionCompletionComment(recommendation, blockingRoles = [], options = {}) {
   const isApproved = recommendation === "Approve";
   const isFollowUpRound = options.isFollowUpRound === true;
+  const blockerSummary = options.blockerSummary ?? { testable: [], notTestable: [], roleMap: [] };
   const statusLine = isApproved
     ? "Discussion concluded: all specialist reviewer roles returned `Approve`."
     : "Discussion concluded: unanimous approval was not reached across the specialist reviewer roles.";
@@ -2592,6 +2858,9 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `Blocking roles: ${blockingRoles.map((role) => `\`${role}\``).join(", ")}`
     : null;
+  const blockingRoleMap = !isApproved
+    ? blockerSummary.roleMap.filter((item) => blockingRoles.includes(item.role))
+    : [];
   const canonicalState = isApproved ? "pr_ready_to_merge" : "pr_review_request_changes";
   const nextActor = isApproved ? "codex" : "pr_author";
   const nextAction = isApproved ? "merge_when_required_checks_are_green" : "reply_to_pr_conclusion_after_changes";
@@ -2608,6 +2877,12 @@ export function buildDiscussionCompletionComment(recommendation, blockingRoles =
     ...(blockerLine ? [blockerLine] : []),
     policyLine,
     canonicalLine,
+    ...(!isApproved ? [""] : []),
+    ...(!isApproved ? buildDiscussionSynthesisContractAppendix(blockerSummary) : []),
+    ...(blockingRoleMap.length > 0 ? ["", "## Blocking role map", ""] : []),
+    ...blockingRoleMap.map((item) => item.testability === "Testable"
+      ? `- \`${item.role}\` -> \`${item.expectedTest}\` -> ${item.resolutionCondition}.`
+      : `- \`${item.role}\` -> human resolution -> ${item.resolutionCondition}.`),
     "",
     "## Estado canonico",
     `canonical_state: \`${canonicalState}\``,
@@ -2886,10 +3161,14 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
     }
 
     const evaluation = evaluateDiscussionRecommendation(debate);
+    const blockerSummary = summarizeDiscussionBlockingContracts(debate);
     const finalCommentBody = buildDiscussionCompletionComment(
       evaluation.recommendation,
       evaluation.blockingRoles,
-      { isFollowUpRound: Boolean(latestFinalComment) },
+      {
+        isFollowUpRound: Boolean(latestFinalComment),
+        blockerSummary,
+      },
     );
     await addDiscussionComment(
       discussion.id,
