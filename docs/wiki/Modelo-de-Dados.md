@@ -110,6 +110,6 @@ O modelo canonico do projeto distingue dois IDs externos:
 - `depositEntryId`: `response.id` retornado pela Eulen no `POST /deposit`
 - `qrId`: identificador do QR/deposito usado em webhook, `deposit-status` e `deposits`
 
-O banco local persiste os dois papeis separadamente. `depositEntryId` nasce na criacao da cobranca; `qrId` pode ser hidratado depois via `deposit-status` ou pelo proprio webhook.
+O banco local persiste os dois papeis separadamente. `depositEntryId` nasce na criacao da cobranca; `qrId` pode ser hidratado depois via webhook ou recheck.
 
-Na migracao do schema legado, o valor antigo de `deposit_id` e copiado para `deposit_entry_id` e `qr_id` para manter linhas historicas acessiveis imediatamente. Depois disso, a reconciliacao pode substituir `qr_id` quando a Eulen expuser um valor canonico diferente.
+Quando a confirmacao do Telegram precisar reaproveitar um deposito local existente, ela deve ler a linha canonica ja persistida em `deposits` e nao chamar a Eulen de novo.
