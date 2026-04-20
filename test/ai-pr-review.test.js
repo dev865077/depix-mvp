@@ -38,6 +38,86 @@ import {
   summarizePullRequestScope,
 } from "../scripts/ai-pr-review.mjs";
 
+/**
+ * Canonical regression fixtures for epic #211.
+ *
+ * These fixtures keep the new PR-review contract readable and reusable across
+ * the focused regression cases below.
+ */
+const TECHNICAL_TESTABLE_BLOCKER_MEMO = [
+  "## Perspective",
+  "One deterministic technical blocker remains.",
+  "",
+  "## Findings",
+  "- The parser boundary still needs proof.",
+  "",
+  "## Questions",
+  "- None.",
+  "",
+  "## Merge posture",
+  "Not ready.",
+  "",
+  "## Blocker contract",
+  "Testability: Testable",
+  "Behavior protected: Canonical blocker contracts remain scoped to the blocker section.",
+  "Suggested test file: test/ai-pr-review.test.js",
+  "Minimum scenario: Parse one blocking memo with labels outside the blocker section.",
+  "Essential assertions: parse returns malformed for labels outside the section.",
+  "Resolution rule: Reject blocking memos unless canonical fields live under the blocker section.",
+  "Why this test resolves the blocker: It proves section scoping is enforced.",
+  "",
+  "## Recommendation",
+  "Request changes",
+].join("\n");
+
+const RISK_TESTABLE_BLOCKER_MEMO = [
+  "## Perspective",
+  "One runtime-risk blocker remains.",
+  "",
+  "## Findings",
+  "- The follow-up contract still needs proof.",
+  "",
+  "## Questions",
+  "- None.",
+  "",
+  "## Merge posture",
+  "Not ready.",
+  "",
+  "## Blocker contract",
+  "Testability: Testable",
+  "Behavior protected: Follow-up blockers stay explicit until the suggested test lands.",
+  "Suggested test file: test/follow-up-reconciliation.test.js",
+  "Minimum scenario: Change an explicitly cited replacement test file and keep CI green.",
+  "Essential assertions: keeps the blocker visible in the final comment.",
+  "Resolution rule: Clear only when the suggested test file or an explicitly cited equivalent is in the diff and CI is green.",
+  "Why this test resolves the blocker: It proves the follow-up reconciler does not clear blockers early.",
+  "",
+  "## Recommendation",
+  "Request changes",
+].join("\n");
+
+const PRODUCT_NOT_TESTABLE_BLOCKER_MEMO = [
+  "## Perspective",
+  "A human product call is still required.",
+  "",
+  "## Findings",
+  "- Policy is unresolved.",
+  "",
+  "## Questions",
+  "- None.",
+  "",
+  "## Merge posture",
+  "Not ready.",
+  "",
+  "## Blocker contract",
+  "Testability: Not testable",
+  "Reason: The remaining blocker is a product policy decision.",
+  "Required human resolution: Maintainer must choose the supported policy.",
+  "",
+  "## Recommendation",
+  "Request changes",
+].join("\n");
+
 describe("ai pr review recommendation parser", () => {
   it("reads the canonical recommendation section", () => {
     const review = [
@@ -1752,6 +1832,68 @@ describe("ai pr review discussion rendering", () => {
       matchedTestFile: null,
       missingSignals: ["ci_test_green"],
     })).toContain("## Blocker contract");
+  });
+
+  it("keeps the regression fixture matrix explicit for technical, risk, product, synthesis, and follow-up", () => {
+    const debate = {
+      product: PRODUCT_NOT_TESTABLE_BLOCKER_MEMO,
+      technical: TECHNICAL_TESTABLE_BLOCKER_MEMO,
+      risk: RISK_TESTABLE_BLOCKER_MEMO,
+      synthesis: "Request changes\n\n## Findings\n- Multiple blockers remain.\n\n## Recommendation\nRequest changes",
+    };
+    const blockerSummary = summarizeDiscussionBlockingContracts(debate);
+    const synthesis = augmentDiscussionSynthesis(debate.synthesis, debate);
+    const followUpFinalComment = [
+      "## Discussion status",
+      "",
+      "## Acceptance tests requested",
+      "",
+      "- Roles `technical` -> `test/ai-pr-review.test.js`: protect Canonical blocker contracts remain scoped to the blocker section.; minimum scenario: Parse one blocking memo with labels outside the blocker section.; essential assertions: parse returns malformed for labels outside the section.; resolution condition: Reject blocking memos unless canonical fields live under the blocker section.",
+      "",
+      "## Blocking role map",
+      "",
+      "- `technical` -> `test/ai-pr-review.test.js` -> Reject blocking memos unless canonical fields live under the blocker section.",
+    ].join("\n");
+    const happyPath = reconcileFollowUpTestableBlockers(
+      { body: followUpFinalComment, replies: { nodes: [] } },
+      [
+        {
+          filename: "test/ai-pr-review.test.js",
+          patch: "@@\n+parse returns malformed for labels outside the section.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    );
+    const partialEvidence = reconcileFollowUpTestableBlockers(
+      { body: followUpFinalComment, replies: { nodes: [] } },
+      [
+        {
+          filename: "test/ai-pr-review.test.js",
+          patch: "@@\n+parse returns malformed for labels outside the section.",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" }],
+    );
+
+    expect(blockerSummary.testable).toHaveLength(2);
+    expect(blockerSummary.testable.map((item) => item.suggestedTestFile)).toEqual([
+      "test/ai-pr-review.test.js",
+      "test/follow-up-reconciliation.test.js",
+    ]);
+    expect(blockerSummary.notTestable).toEqual([
+      {
+        role: "product",
+        reason: "The remaining blocker is a product policy decision.",
+        requiredHumanResolution: "Maintainer must choose the supported policy.",
+      },
+    ]);
+    expect(synthesis).toContain("## Acceptance tests requested");
+    expect(synthesis).toContain("test/ai-pr-review.test.js");
+    expect(synthesis).toContain("test/follow-up-reconciliation.test.js");
+    expect(synthesis).toContain("## Human resolution required");
+    expect(happyPath).toEqual([]);
+    expect(partialEvidence).toHaveLength(1);
+    expect(partialEvidence[0].missingSignals).toContain("ci_test_green");
   });
 
   it("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow", () => {
