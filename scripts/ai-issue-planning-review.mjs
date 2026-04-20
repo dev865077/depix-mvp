@@ -761,6 +761,18 @@ export function parseReferencedIssueNumbers(body, rootIssueNumber) {
  */
 export function isIgnorableReferencedIssueFetchError(error) {
   const message = error instanceof Error ? error.message : String(error);
+  const directStatus = typeof error === "object" && error !== null && "status" in error
+    ? Number(error.status)
+    : null;
+  const nestedStatus = typeof error === "object" && error !== null && "response" in error
+    && typeof error.response === "object" && error.response !== null && "status" in error.response
+    ? Number(error.response.status)
+    : null;
+  const status = Number.isInteger(directStatus) ? directStatus : nestedStatus;
+
+  if (status === 403 || status === 404) {
+    return true;
+  }
 
   return /GitHub API request failed \((403|404)\):/i.test(message);
 }
@@ -770,10 +782,16 @@ export function isIgnorableReferencedIssueFetchError(error) {
  *
  * @param {string} repoFullName Repository in owner/name form.
  * @param {number[]} issueNumbers Candidate referenced issue numbers.
+ * @param {{
+ *   fetchIssueFn?: (repoFullName: string, issueNumber: number) => Promise<any>,
+ *   logEventFn?: (event: string, fields?: Record<string, any>) => void
+ * }} [options] Test-friendly collaborators.
  * @returns {Promise<any[]>} Accessible referenced issues.
  */
-export async function fetchReferencedChildIssues(repoFullName, issueNumbers) {
-  const results = await Promise.allSettled(issueNumbers.map((issueNumber) => fetchIssue(repoFullName, issueNumber)));
+export async function fetchReferencedChildIssues(repoFullName, issueNumbers, options = {}) {
+  const fetchIssueFn = options.fetchIssueFn ?? fetchIssue;
+  const logEventFn = options.logEventFn ?? logOperationalEvent;
+  const results = await Promise.allSettled(issueNumbers.map((issueNumber) => fetchIssueFn(repoFullName, issueNumber)));
   const childIssues = [];
 
   for (const [index, result] of results.entries()) {
@@ -783,7 +801,7 @@ export async function fetchReferencedChildIssues(repoFullName, issueNumbers) {
     }
 
     if (isIgnorableReferencedIssueFetchError(result.reason)) {
-      logOperationalEvent("ai_issue_planning_review.child_issue.skipped", {
+      logEventFn("ai_issue_planning_review.child_issue.skipped", {
         issueNumber: issueNumbers[index],
         reason: "reference_not_accessible",
       });

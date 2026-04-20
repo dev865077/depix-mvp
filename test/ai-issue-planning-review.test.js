@@ -18,6 +18,7 @@ import {
   extractIssueNumberFromDiscussion,
   extractIssueNumberFromText,
   extractPlanningRecommendation,
+  fetchReferencedChildIssues,
   findMatchingIssuePlanningDiscussionNumber,
   isAutomatedIssueMetaComment,
   isAutomatedIssueMetaCommentBody,
@@ -276,8 +277,64 @@ describe("ai issue planning review", () => {
   it("only ignores referenced issue fetch failures when the child context is inaccessible", () => {
     expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (403): nope"))).toBe(true);
     expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (404): nope"))).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError({ status: 403, message: "forbidden" })).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError({ response: { status: 404 }, message: "not found" })).toBe(true);
     expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (500): nope"))).toBe(false);
     expect(isIgnorableReferencedIssueFetchError(new Error("network timeout"))).toBe(false);
+  });
+
+  it("skips inaccessible referenced child issues while keeping accessible planning context", async () => {
+    const loggedEvents = [];
+    const childIssues = await fetchReferencedChildIssues(
+      "dev865077/depix-mvp",
+      [83, 209, 210],
+      {
+        fetchIssueFn: async (_repoFullName, issueNumber) => {
+          if (issueNumber === 83) {
+            return { number: 83, title: "Accessible child issue" };
+          }
+
+          if (issueNumber === 209) {
+            const error = new Error("GitHub API request failed (403): forbidden");
+            error.status = 403;
+            throw error;
+          }
+
+          const error = new Error("missing");
+          error.response = { status: 404 };
+          throw error;
+        },
+        logEventFn: (event, fields = {}) => {
+          loggedEvents.push({ event, fields });
+        },
+      },
+    );
+
+    expect(childIssues).toEqual([{ number: 83, title: "Accessible child issue" }]);
+    expect(loggedEvents).toEqual([
+      {
+        event: "ai_issue_planning_review.child_issue.skipped",
+        fields: { issueNumber: 209, reason: "reference_not_accessible" },
+      },
+      {
+        event: "ai_issue_planning_review.child_issue.skipped",
+        fields: { issueNumber: 210, reason: "reference_not_accessible" },
+      },
+    ]);
+  });
+
+  it("still throws when referenced child issue fetching fails for a real runtime problem", async () => {
+    await expect(fetchReferencedChildIssues(
+      "dev865077/depix-mvp",
+      [83],
+      {
+        fetchIssueFn: async () => {
+          const error = new Error("GitHub API request failed (500): boom");
+          error.status = 500;
+          throw error;
+        },
+      },
+    )).rejects.toThrow("GitHub API request failed (500): boom");
   });
 
   it("reads the canonical recommendation contract", () => {
