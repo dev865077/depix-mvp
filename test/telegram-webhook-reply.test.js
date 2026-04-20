@@ -2372,7 +2372,7 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy.mock.calls.some(([url]) => String(url) === "https://example.com/eulen-async/beta-001")).toBe(true);
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
     expect(savedDeposit?.depositEntryId).toBe("deposit_entry_beta_001");
-    expect(photoReply?.payload.caption).toContain("Expiracao: 18/04/2026 09:00 (horario de Brasilia).");
+    expect(photoReply?.payload.caption).toContain("Expiracao: 18/04/2026 12:00 (UTC).");
   });
 
   it("falls back to plain text when Telegram rejects the QR photo without dropping the copy-paste instructions", async function assertDepositPhotoFallback() {
@@ -2471,7 +2471,7 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(pixReplies).toHaveLength(2);
     expect(pixReplies[0]?.text).toContain("Pedido confirmado em Alpha.");
-    expect(pixReplies[0]?.text).toContain("Expiracao: 18/04/2026 09:00 (horario de Brasilia).");
+    expect(pixReplies[0]?.text).toContain("Expiracao: 18/04/2026 12:00 (UTC).");
     expect(pixReplies[0]?.text).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
     expect(pixReplies[1]?.text).toContain("Pix copia e cola:");
     expect(pixReplies[1]?.text).toContain("0002010102122688pix-alpha-002");

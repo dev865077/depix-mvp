@@ -701,25 +701,13 @@ function buildTelegramChatBindingBlockedReply() {
 }
 
 /**
- * Timezone canonico da copy operacional do Telegram.
- *
- * A Eulen pode devolver `expiration` em UTC ou com offset. Para nao deixar o
- * usuario fazer conta mental, o bot normaliza a exibicao para horario de
- * Brasilia, que e o contexto operacional padrao deste MVP.
- */
-const TELEGRAM_DEPOSIT_EXPIRATION_TIME_ZONE = "America/Sao_Paulo";
-
-/**
- * Label curta do timezone exibido ao usuario final.
- */
-const TELEGRAM_DEPOSIT_EXPIRATION_LABEL = "horario de Brasilia";
-
-/**
  * Formata a expiracao do Pix para uma copy curta e deterministica.
  *
- * A mensagem final nao pode inventar expiracao nem ecoar ISO bruto
- * desnecessariamente. Quando a Eulen nao devolver um timestamp valido, o
- * caption simplesmente omite a linha de expiracao.
+ * A copy precisa preservar o significado do timestamp upstream. Portanto, a
+ * funcao nao reinterpreta o fuso para "hora local do bot"; ela apenas formata
+ * a data/hora exatamente no offset informado pela Eulen. Se o valor vier num
+ * formato fora do ISO esperado, a funcao faz fallback para o texto bruto em
+ * vez de inventar uma conversao.
  *
  * @param {{ expiration?: unknown }} deposit Deposito criado na Eulen.
  * @returns {string | null} Linha pronta para o usuario ou `null` quando ausente.
@@ -733,34 +721,18 @@ function buildTelegramDepositExpirationLine(deposit) {
     return null;
   }
 
-  const parsedExpiration = new Date(expiration);
+  const isoMatch = expiration.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/u,
+  );
 
-  if (Number.isNaN(parsedExpiration.getTime())) {
-    return null;
+  if (!isoMatch) {
+    return `Expiracao: ${expiration}.`;
   }
 
-  const formattedParts = new Intl.DateTimeFormat("pt-BR", {
-    timeZone: TELEGRAM_DEPOSIT_EXPIRATION_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(parsedExpiration);
-  const partMap = Object.create(null);
+  const [, year, month, day, hour, minute, offset] = isoMatch;
+  const offsetLabel = offset === "Z" ? "UTC" : `UTC${offset}`;
 
-  for (const part of formattedParts) {
-    if (part.type !== "literal") {
-      partMap[part.type] = part.value;
-    }
-  }
-
-  if (!partMap.day || !partMap.month || !partMap.year || !partMap.hour || !partMap.minute) {
-    return null;
-  }
-
-  return `Expiracao: ${partMap.day}/${partMap.month}/${partMap.year} ${partMap.hour}:${partMap.minute} (${TELEGRAM_DEPOSIT_EXPIRATION_LABEL}).`;
+  return `Expiracao: ${day}/${month}/${year} ${hour}:${minute} (${offsetLabel}).`;
 }
 
 /**
