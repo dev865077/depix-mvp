@@ -29,6 +29,7 @@ import {
   parseReferencedIssueNumbers,
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
+  isIgnorableReferencedIssueFetchError,
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
@@ -263,11 +264,20 @@ describe("ai issue planning review", () => {
         "- [ ] #83",
         "- [x] #84",
         "Depende de #90 e #91, mas nao deve repetir #91.",
+        "Exemplo recente: o blocker no PR #209 nao deve virar dependencia.",
+        "Outro exemplo de pull request #210 tambem nao deve entrar.",
       ].join("\n"),
       91,
     );
 
     expect(issueNumbers).toEqual([83, 84, 90]);
+  });
+
+  it("only ignores referenced issue fetch failures when the child context is inaccessible", () => {
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (403): nope"))).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (404): nope"))).toBe(true);
+    expect(isIgnorableReferencedIssueFetchError(new Error("GitHub API request failed (500): nope"))).toBe(false);
+    expect(isIgnorableReferencedIssueFetchError(new Error("network timeout"))).toBe(false);
   });
 
   it("reads the canonical recommendation contract", () => {

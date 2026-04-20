@@ -730,18 +730,70 @@ export function parseReferencedIssueNumbers(body, rootIssueNumber) {
     return [];
   }
 
-  const matches = body.match(/#\d+/g) ?? [];
   const uniqueIssueNumbers = new Set();
+  const referencePattern = /#(\d+)/g;
+  let match = referencePattern.exec(body);
 
-  for (const match of matches) {
-    const issueNumber = Number.parseInt(match.slice(1), 10);
+  while (match) {
+    const issueNumber = Number.parseInt(match[1], 10);
+    const prefix = body.slice(Math.max(0, match.index - 24), match.index).toLowerCase();
+    const isPullRequestExample = /\b(?:pr|pull request)\s*$/.test(prefix);
 
-    if (Number.isInteger(issueNumber) && issueNumber > 0 && issueNumber !== rootIssueNumber) {
+    if (!isPullRequestExample && Number.isInteger(issueNumber) && issueNumber > 0 && issueNumber !== rootIssueNumber) {
       uniqueIssueNumbers.add(issueNumber);
     }
+
+    match = referencePattern.exec(body);
   }
 
   return [...uniqueIssueNumbers].sort((left, right) => left - right).slice(0, MAX_CHILD_ISSUES);
+}
+
+/**
+ * Decide whether a referenced issue fetch error is ignorable for planning.
+ *
+ * Referenced issues enrich the planning payload, but they are optional context.
+ * A prose example such as `PR #209` or an inaccessible historical issue should
+ * not abort the whole planning run for the root issue.
+ *
+ * @param {unknown} error Fetch failure.
+ * @returns {boolean} True when planning should skip that referenced issue.
+ */
+export function isIgnorableReferencedIssueFetchError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /GitHub API request failed \((403|404)\):/i.test(message);
+}
+
+/**
+ * Fetch referenced child issues while skipping inaccessible optional context.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number[]} issueNumbers Candidate referenced issue numbers.
+ * @returns {Promise<any[]>} Accessible referenced issues.
+ */
+export async function fetchReferencedChildIssues(repoFullName, issueNumbers) {
+  const results = await Promise.allSettled(issueNumbers.map((issueNumber) => fetchIssue(repoFullName, issueNumber)));
+  const childIssues = [];
+
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") {
+      childIssues.push(result.value);
+      continue;
+    }
+
+    if (isIgnorableReferencedIssueFetchError(result.reason)) {
+      logOperationalEvent("ai_issue_planning_review.child_issue.skipped", {
+        issueNumber: issueNumbers[index],
+        reason: "reference_not_accessible",
+      });
+      continue;
+    }
+
+    throw result.reason;
+  }
+
+  return childIssues;
 }
 
 /**
@@ -1819,7 +1871,7 @@ async function main() {
   ]);
 
   const referencedIssueNumbers = parseReferencedIssueNumbers(context.issue.body ?? "", context.issue.number);
-  const childIssues = await Promise.all(referencedIssueNumbers.map((issueNumber) => fetchIssue(repository, issueNumber)));
+  const childIssues = await fetchReferencedChildIssues(repository, referencedIssueNumbers);
   const discussionContext = buildDiscussionHistoryContext(context.discussion);
 
   // Package root issue, referenced issues, issue comments, and Discussion
