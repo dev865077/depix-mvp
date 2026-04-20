@@ -33,6 +33,8 @@
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
 - a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis e a propria issue publicar `canonical_state: issue_ready_for_codex`
 - quando a planning review concluir `Blocked`, a issue nao esta rejeitada; ela esta especificada, mas ainda depende de trabalho upstream explicito antes da implementacao
+- na review de PR por IA, qualquer `Request changes` precisa publicar um `## Blocker contract` canonico no memo, ou o resultado e tratado como invalido pela automacao
+- o contrato canonico de blocker usa os mesmos rotulos em product, technical e risk para manter decisao consistente entre roles
 
 ## Regra de longo prazo
 

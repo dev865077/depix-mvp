@@ -79,8 +79,8 @@ Explicitar:
 - a automacao le a conclusao anterior e as replies humanas nessa thread antes de emitir nova rodada
 - quando a PR passar numa rodada seguinte, a automacao deve responder na thread da conclusao explicando por que os bloqueios anteriores deixaram de valer
 - quando uma PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
+- quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
+- em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada
 - na lane de Discussion, a PR so fica pronta para merge quando `product`, `technical` e `risk` retornarem `Approve`; `Request changes` em qualquer um deles sempre falha o check
 - a lane de PR continua binaria: aqui nao existe `Blocked`; esse estado vale so para planning de issue
-- `synthesis` continua obrigatoria para visibilidade e fechamento operacional da Discussion, mas e resumo: ela nao vira um quarto voto de bloqueio por drift de redacao
-- se a publicacao da Discussion falhar, o workflow deve publicar fallback na PR e falhar o check, porque a saida publica da Discussion ficou incompleta
-- se uma chamada ao modelo falhar ou estourar timeout, a automacao deve publicar `Request changes` e registrar o motivo na Discussion ou fallback da PR
+- `synthesis` continua obrigatoria para visibilidade e fechamento operacional
