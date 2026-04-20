@@ -49,6 +49,18 @@ Schema inicial e evolucao multi-tenant.
 
 Suite automatizada do Worker e da base operacional.
 
+### `tsconfig.json`
+
+Fundacao TypeScript do Worker. Mantem `.js` e `.ts` coexistindo com `allowJs`, `strict` e `noEmit`, enquanto o runtime continua ancorado em `src/index.js`.
+
+### `worker-configuration.d.ts`
+
+Tipos gerados pelo Wrangler para o Worker. O arquivo e mantido em sincronia com `npm run cf:types` e validado no CI.
+
+### `package.json`
+
+Define o comando canonico `npm run typecheck` e as dependencias minimas de tipagem usadas pela fundacao TypeScript.
+
 ## Regra de manutencao
 
 Se uma mudanca altera arquitetura, schema, integracao ou operacao, a documentacao correspondente precisa mudar na mesma PR.

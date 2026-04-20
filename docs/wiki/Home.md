@@ -43,6 +43,9 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
 - `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
+- o Worker ganhou uma fundacao TypeScript incremental para validacao, sem substituir o runtime autoritativo em `.js`
+- o comando canonico de verficacao de tipos e `npm run typecheck`
+- os tipos gerados do Worker sao verificados separadamente com `npm run cf:types`
 
 ## Comece por aqui
 

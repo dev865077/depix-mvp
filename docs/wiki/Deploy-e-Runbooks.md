@@ -3,6 +3,7 @@
 ## Scripts relevantes
 
 - `npm run dev`
+- `npm run typecheck`
 - `npm test`
 - `npm run cf:types`
 - `npm run db:migrate:local`
@@ -40,6 +41,8 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
+- a validacao de tipos do Worker passou a ter comando canonico via `npm run typecheck`
+- a verificacao de tipos gerados do Cloudflare Worker passou a ser parte do fluxo de manutencao com `npm run cf:types`
 
 ## Recheck de deposito
 
@@ -94,12 +97,12 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 
 ## Rollout de `orders.telegram_chat_id`
 
-- a migracao adiciona `orders.telegram_chat_id` como coluna nullable e nao exige backfill destrutivo
-- pedidos novos ou retomados pelo Telegram passam a gravar o `chat.id` real da conversa
-- pedidos abertos legados com `telegram_chat_id = NULL` so ganham destino seguro quando receberem novo update Telegram do mesmo tenant, usuario e canal
-- pedidos legados que nao receberem novo update permanecem sem destino assincrono seguro; a notificacao pos-pagamento deve registrar skip controlado e nunca usar `user_id` como fallback
-- pedidos do canal `telegram` com `telegram_chat_id` valido agora recebem notificacao assincrona apenas quando o agregado financeiro confirma pagamento (`depix_sent` / `paid` + `completed`); duplicatas de webhook, recheck e fallback nao devem repetir a mesma mensagem
-- no fallback por janela, cada linha reparada so pode disparar a mesma notificacao pos-pagamento quando aquele agregado tambem chegar em `depix_sent` / `paid` + `completed`; linhas fora desse estado nao notificam
-- se um update conversacional chegar sem `chat.id`, o Worker falha fechado com `400 telegram_order_registration_failed` e `reason=missing_telegram_chat_id`, sem criar pedido parcial
-- se um update chegar de chat diferente do persistido, o Worker nao sobrescreve `telegram_chat_id`, responde orientando usar a conversa original e registra `telegram.order.chat_divergence_detected`
-- superficie order-bearing suportada no MVP: `message`/`message:text`; callback query, mensagem editada, channel post e demais updates recebem tratamento unsupported e nao criam nem retomam pedido
+- o destino do chat para notificacoes assincronas nao deve ser inferido do `user_id`
+- o campo `telegram_chat_id` e o contrato de persistencia do destino
+- pedidos legados sem `telegram_chat_id` continuam validos, mas nao possuem destino assincrono seguro ate receberem novo update Telegram do mesmo tenant, usuario e canal
+- emissao assincrona futura deve tratar `telegram_chat_id = NULL` como skip controlado e evidencia operacional, nunca como fallback implicito para `user_id`
+
+## Rollback
+
+- o rollback de uma mudanca tecnica deve preservar o estado da base e a compatibilidade com a wiki enquanto a PR nao for revertida por completo
+- mudancas em `typecheck`, `tsconfig.json` e tipos gerados do Worker devem voltar juntas quando a fundamentacao TypeScript precisar ser desfeita
