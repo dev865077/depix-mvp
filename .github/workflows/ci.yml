@@ -35,5 +35,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify generated Worker types
+        run: |
+          npm run cf:types
+          git diff --exit-code -- worker-configuration.d.ts
+
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
+
       - name: Run test suite
         run: npm test
