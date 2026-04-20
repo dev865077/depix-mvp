@@ -14,6 +14,27 @@ const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-pr-discussion-final:openai -->";
+const BLOCKER_CONTRACT_TESTABLE_FIELDS = [
+  "Behavior protected",
+  "Suggested test file",
+  "Minimum scenario",
+  "Essential assertions",
+  "Resolution rule",
+  "Why this test resolves the blocker",
+];
+const BLOCKER_CONTRACT_NOT_TESTABLE_FIELDS = [
+  "Reason",
+  "Required human resolution",
+];
+const BLOCKER_CONTRACT_FIELD_LABELS = [
+  "Testability",
+  ...BLOCKER_CONTRACT_TESTABLE_FIELDS,
+  ...BLOCKER_CONTRACT_NOT_TESTABLE_FIELDS,
+];
+const BLOCKER_CONTRACT_REQUIRED_FIELDS_BY_TESTABILITY = {
+  Testable: BLOCKER_CONTRACT_TESTABLE_FIELDS,
+  "Not testable": BLOCKER_CONTRACT_NOT_TESTABLE_FIELDS,
+};
 const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
@@ -181,6 +202,224 @@ export function extractReviewRecommendation(reviewText) {
   }
 
   return null;
+}
+
+/**
+ * Normalize one blocker-contract value for equality checks.
+ *
+ * @param {string} value Raw field value.
+ * @returns {string} Stable comparison value.
+ */
+function normalizeBlockerContractValue(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Extract the canonical blocker-contract section from one reviewer memo.
+ *
+ * The contract is only valid when the canonical fields live under the explicit
+ * `## Blocker contract` heading. Free-floating labels elsewhere in the memo do
+ * not count.
+ *
+ * @param {string} reviewText Reviewer memo markdown.
+ * @returns {{ ok: true, value: string } | { ok: false, reason: string }} Section body or malformed reason.
+ */
+function extractBlockerContractSection(reviewText) {
+  const headingMatch = reviewText.match(/^\s*##\s*Blocker contract\s*$/im);
+
+  if (!headingMatch || typeof headingMatch.index !== "number") {
+    return { ok: false, reason: "Missing required section: ## Blocker contract." };
+  }
+
+  const sectionStart = headingMatch.index + headingMatch[0].length;
+  const trailingText = reviewText.slice(sectionStart);
+  const nextHeadingMatch = trailingText.match(/^\s*##\s+/m);
+  const sectionBody = (nextHeadingMatch ? trailingText.slice(0, nextHeadingMatch.index) : trailingText).trim();
+
+  return { ok: true, value: sectionBody };
+}
+
+/**
+ * Collect canonical blocker-contract fields from one blocker-contract section.
+ *
+ * The parser accepts free ordering and multi-line field bodies inside the
+ * blocker section. Unknown prose is ignored unless it reuses one of the
+ * canonical field labels.
+ *
+ * @param {string} sectionText Reviewer memo blocker-contract section markdown.
+ * @returns {Record<string, string[]>} Parsed raw field values grouped by label.
+ */
+function collectBlockerContractFields(sectionText) {
+  const fields = Object.fromEntries(BLOCKER_CONTRACT_FIELD_LABELS.map((label) => [label, []]));
+  let currentLabel = null;
+  let currentLines = [];
+  const isContinuationLine = (line) => /^\s*(?:[-*]|\d+\.)\s+/.test(line) || /^\s{2,}\S/.test(line);
+
+  const flushCurrentField = () => {
+    if (!currentLabel) {
+      return;
+    }
+
+    const value = currentLines.join("\n").trim();
+
+    if (value.length > 0) {
+      fields[currentLabel].push(value);
+    }
+
+    currentLabel = null;
+    currentLines = [];
+  };
+
+  for (const line of sectionText.split(/\r?\n/)) {
+    const labelMatch = line.match(/^\s*([^:]+):\s*(.*)$/);
+    const label = labelMatch?.[1]?.trim() ?? null;
+
+    if (label && BLOCKER_CONTRACT_FIELD_LABELS.includes(label)) {
+      flushCurrentField();
+      currentLabel = label;
+      currentLines = [labelMatch?.[2] ?? ""];
+      continue;
+    }
+
+    if (currentLabel && /^\s*##\s+/.test(line)) {
+      flushCurrentField();
+      continue;
+    }
+
+    if (currentLabel) {
+      if (line.trim().length > 0 && !isContinuationLine(line)) {
+        flushCurrentField();
+        continue;
+      }
+
+      currentLines.push(line);
+    }
+  }
+
+  flushCurrentField();
+  return fields;
+}
+
+/**
+ * Resolve one canonical blocker-contract field.
+ *
+ * Duplicate identical values are allowed and normalized. Conflicting duplicates
+ * fail closed because they make the blocker contract ambiguous.
+ *
+ * @param {Record<string, string[]>} fields Parsed field map.
+ * @param {string} label Canonical field label.
+ * @returns {{ ok: true, value: string } | { ok: false, reason: string }} Canonical value or malformed reason.
+ */
+function resolveCanonicalBlockerField(fields, label) {
+  const values = fields[label] ?? [];
+
+  if (values.length === 0) {
+    return { ok: false, reason: `Missing required field: ${label}.` };
+  }
+
+  const normalizedValues = [...new Set(values.map(normalizeBlockerContractValue))];
+
+  if (normalizedValues.length > 1) {
+    return { ok: false, reason: `Conflicting duplicate field: ${label}.` };
+  }
+
+  const value = values[0]?.trim() ?? "";
+
+  if (value.length === 0) {
+    return { ok: false, reason: `Empty required field: ${label}.` };
+  }
+
+  return { ok: true, value };
+}
+
+/**
+ * Parse the canonical blocker contract required for blocking specialist memos.
+ *
+ * @param {string} reviewText Reviewer memo markdown.
+ * @returns {{
+ *   status: "not_applicable" | "valid" | "malformed",
+ *   testability?: "Testable" | "Not testable",
+ *   fields?: Record<string, string>,
+ *   reason?: string
+ * }} Normalized contract result.
+ */
+export function parseBlockingRoleContract(reviewText) {
+  const recommendation = assertValidReviewRecommendation(reviewText);
+
+  if (recommendation !== "Request changes") {
+    return { status: "not_applicable" };
+  }
+
+  const section = extractBlockerContractSection(reviewText);
+
+  if (!section.ok) {
+    return { status: "malformed", reason: section.reason };
+  }
+
+  const fields = collectBlockerContractFields(section.value);
+  const testabilityField = resolveCanonicalBlockerField(fields, "Testability");
+
+  if (!testabilityField.ok) {
+    return { status: "malformed", reason: testabilityField.reason };
+  }
+
+  const testability = normalizeBlockerContractValue(testabilityField.value);
+
+  if (testability !== "Testable" && testability !== "Not testable") {
+    return {
+      status: "malformed",
+      reason: `Invalid Testability value: ${testability}. Expected Testable or Not testable.`,
+    };
+  }
+
+  const requiredFields = BLOCKER_CONTRACT_REQUIRED_FIELDS_BY_TESTABILITY[testability];
+  const resolvedFields = { Testability: testability };
+
+  for (const label of requiredFields) {
+    const resolvedField = resolveCanonicalBlockerField(fields, label);
+
+    if (!resolvedField.ok) {
+      return { status: "malformed", reason: resolvedField.reason };
+    }
+
+    resolvedFields[label] = resolvedField.value;
+  }
+
+  return {
+    status: "valid",
+    testability,
+    fields: resolvedFields,
+  };
+}
+
+/**
+ * Build a synthetic blocking memo when the canonical blocker contract is absent
+ * or malformed.
+ *
+ * @param {string} role Reviewer role label.
+ * @param {string} reason Canonical malformed reason.
+ * @returns {string} Safe fail-closed memo.
+ */
+export function buildMalformedBlockerContractMemo(role, reason) {
+  return [
+    "## Perspective",
+    `The ${role} reviewer returned a blocking memo without the canonical blocker contract required by this repository.`,
+    "",
+    "## Findings",
+    "- The blocking memo could not be parsed safely.",
+    "- Contract status: Malformed",
+    `- Malformed reason: ${reason}`,
+    "- Required human resolution: regenerate the review with the canonical blocker contract",
+    "",
+    "## Questions",
+    "- None.",
+    "",
+    "## Merge posture",
+    "Request changes until the reviewer output follows the canonical blocker contract.",
+    "",
+    "## Recommendation",
+    "Request changes",
+  ].join("\n");
 }
 
 /**
@@ -2193,8 +2432,23 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
   const roleNames = ["Product and scope", "Technical and architecture", "Risk, security, and operations"];
   const failures = roleResults.flatMap((result, index) =>
     result.status === "rejected" ? [{ role: roleNames[index], error: result.reason }] : []);
-  const [product, technical, risk] = roleResults.map((result, index) =>
-    result.status === "fulfilled" ? result.value : buildModelFailureMemo(roleNames[index], result.reason));
+  const [product, technical, risk] = roleResults.map((result, index) => {
+    if (result.status !== "fulfilled") {
+      return buildModelFailureMemo(roleNames[index], result.reason);
+    }
+
+    const contract = parseBlockingRoleContract(result.value);
+
+    if (contract.status === "malformed") {
+      logOperationalEvent("ai_pr_review.blocker_contract.malformed", {
+        role: roleNames[index],
+        reason: contract.reason,
+      });
+      return buildMalformedBlockerContractMemo(roleNames[index], contract.reason);
+    }
+
+    return result.value;
+  });
 
   console.log("Specialist PR review memos completed. Starting synthesis.");
   let synthesis = "";

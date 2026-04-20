@@ -10,6 +10,7 @@ import {
   buildDiscussionDebateFailureSynthesis,
   buildDiscussionGateReview,
   buildDiscussionHistoryContext,
+  buildMalformedBlockerContractMemo,
   assessDiscussionGate,
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
@@ -21,6 +22,7 @@ import {
   extractDiscussionUrlFromComment,
   extractReviewRecommendation,
   getReviewGateFailure,
+  parseBlockingRoleContract,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
   sortFilesForReview,
@@ -133,6 +135,255 @@ describe("ai pr review recommendation parser", () => {
         synthesis: "Approve\n\n## Findings\n- No material findings.\n\n## Recommendation\nApprove",
       }),
     ).toThrow(/missing the ## Recommendation section/i);
+  });
+
+  it("parses a valid Testable blocker contract from a blocking specialist memo", () => {
+    const review = [
+      "## Perspective",
+      "Needs one deterministic blocker contract.",
+      "",
+      "## Findings",
+      "- Current payload is under-specified.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready yet.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Canonical blocker schema is emitted identically across roles.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Minimum scenario: Generate one blocking memo from a specialist prompt.",
+      "Essential assertions:",
+      "- includes Testability",
+      "- includes Behavior protected",
+      "Resolution rule: The blocker clears when the canonical schema parses without ambiguity.",
+      "Why this test resolves the blocker: It proves the emitted blocker is machine-readable.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "valid",
+      testability: "Testable",
+      fields: {
+        Testability: "Testable",
+        "Behavior protected": "Canonical blocker schema is emitted identically across roles.",
+        "Suggested test file": "test/ai-pr-review.test.js",
+        "Minimum scenario": "Generate one blocking memo from a specialist prompt.",
+        "Essential assertions": "- includes Testability\n- includes Behavior protected",
+        "Resolution rule": "The blocker clears when the canonical schema parses without ambiguity.",
+        "Why this test resolves the blocker": "It proves the emitted blocker is machine-readable.",
+      },
+    });
+  });
+
+  it("parses a valid Not testable blocker contract from a blocking specialist memo", () => {
+    const review = [
+      "## Perspective",
+      "Human judgment is still required.",
+      "",
+      "## Findings",
+      "- This is a product-only tradeoff.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready yet.",
+      "",
+      "## Blocker contract",
+      "Testability: Not testable",
+      "Reason: The blocker is a policy decision, not a runtime behavior.",
+      "Required human resolution: Maintainer must choose the intended policy.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "valid",
+      testability: "Not testable",
+      fields: {
+        Testability: "Not testable",
+        Reason: "The blocker is a policy decision, not a runtime behavior.",
+        "Required human resolution": "Maintainer must choose the intended policy.",
+      },
+    });
+  });
+
+  it("treats legacy blocking prose without Testability as malformed", () => {
+    const review = [
+      "## Perspective",
+      "Old format.",
+      "",
+      "## Findings",
+      "- Blocker without canonical contract.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "malformed",
+      reason: "Missing required section: ## Blocker contract.",
+    });
+  });
+
+  it("rejects free-floating blocker labels outside the blocker section", () => {
+    const review = [
+      "## Perspective",
+      "Section missing even though the labels exist.",
+      "",
+      "## Findings",
+      "- One blocker.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "Testability: Testable",
+      "Behavior protected: Validation only accepts fields inside the blocker section.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Minimum scenario: Parse one memo without the blocker heading.",
+      "Essential assertions: parse returns malformed.",
+      "Resolution rule: Require the section heading.",
+      "Why this test resolves the blocker: It locks the contract boundary.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "malformed",
+      reason: "Missing required section: ## Blocker contract.",
+    });
+  });
+
+  it("treats contradictory duplicate blocker fields as malformed", () => {
+    const review = [
+      "## Perspective",
+      "Duplicate conflict.",
+      "",
+      "## Findings",
+      "- Conflicting file path.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Canonical blocker schema is emitted identically across roles.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Suggested test file: test/other.test.js",
+      "Minimum scenario: Generate one blocking memo.",
+      "Essential assertions: includes Testability",
+      "Resolution rule: The blocker clears when parsing is deterministic.",
+      "Why this test resolves the blocker: It proves machine readability.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "malformed",
+      reason: "Conflicting duplicate field: Suggested test file.",
+    });
+  });
+
+  it("accepts non-conflicting extra prose around a valid blocker contract", () => {
+    const review = [
+      "## Perspective",
+      "Extra context is okay.",
+      "",
+      "## Findings",
+      "- One blocker.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Canonical blocker schema is emitted identically across roles.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Minimum scenario: Generate one blocking memo.",
+      "Essential assertions: includes Testability",
+      "Resolution rule: The blocker clears when parsing is deterministic.",
+      "Why this test resolves the blocker: It proves machine readability.",
+      "",
+      "Extra note: this sentence is contextual and should be ignored by the parser.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review).status).toBe("valid");
+  });
+
+  it("accepts incidental prose between canonical fields inside the blocker section", () => {
+    const review = [
+      "## Perspective",
+      "Normal memo formatting can include one stray sentence.",
+      "",
+      "## Findings",
+      "- One blocker.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Canonical blocker contracts remain valid with incidental prose inside the blocker section.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Note: this line is explanatory noise and should be ignored safely.",
+      "Minimum scenario: Parse one blocking memo with stray prose between canonical fields.",
+      "Essential assertions: parse returns valid and preserves canonical values.",
+      "Resolution rule: Accept realistic memo formatting without relaxing canonical validation.",
+      "Why this test resolves the blocker: It proves the parser tolerates normal memo noise inside the section.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(parseBlockingRoleContract(review)).toEqual({
+      status: "valid",
+      testability: "Testable",
+      fields: {
+        Testability: "Testable",
+        "Behavior protected": "Canonical blocker contracts remain valid with incidental prose inside the blocker section.",
+        "Suggested test file": "test/ai-pr-review.test.js",
+        "Minimum scenario": "Parse one blocking memo with stray prose between canonical fields.",
+        "Essential assertions": "parse returns valid and preserves canonical values.",
+        "Resolution rule": "Accept realistic memo formatting without relaxing canonical validation.",
+        "Why this test resolves the blocker": "It proves the parser tolerates normal memo noise inside the section.",
+      },
+    });
+  });
+
+  it("builds a canonical malformed blocker memo", () => {
+    const memo = buildMalformedBlockerContractMemo("Technical and architecture", "Missing required field: Testability.");
+
+    expect(memo).toContain("Contract status: Malformed");
+    expect(memo).toContain("Malformed reason: Missing required field: Testability.");
+    expect(memo).toContain("Required human resolution: regenerate the review with the canonical blocker contract");
+    expect(memo).toContain("## Recommendation\nRequest changes");
   });
 });
 

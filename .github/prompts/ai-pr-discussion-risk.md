@@ -30,3 +30,20 @@ Output requirements:
 - In `## Recommendation`, say exactly one of:
   - `Approve`
   - `Request changes`
+- If you block, the section order must be exactly:
+  - `## Perspective`
+  - `## Findings`
+  - `## Questions`
+  - `## Merge posture`
+  - `## Blocker contract`
+  - `## Recommendation`
+- If `## Recommendation` is `Request changes`, add a `## Blocker contract` section after `## Merge posture`.
+- In `## Blocker contract`, emit exactly one highest-severity blocker contract using the canonical labels from the shared doctrine.
+- A blocking memo without the full canonical blocker contract is invalid and will be discarded by automation.
+- Use this exact blocking skeleton:
+  - `## Blocker contract`
+  - `Testability: Testable|Not testable`
+  - `...remaining canonical labels for that testability mode...`
+  - `## Recommendation`
+  - `Request changes`
+- If `## Recommendation` is `Approve`, omit `## Blocker contract` entirely.
