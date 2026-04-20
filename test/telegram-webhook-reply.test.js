@@ -1484,6 +1484,15 @@ describe("telegram webhook reply flow", () => {
       currentStep: "completed",
       status: "paid",
     });
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_legacy_paid_closed",
+      userId: "903",
+      channel: "telegram",
+      productType: "depix",
+      currentStep: "paid",
+      status: "paid",
+    });
 
     await app.request(
       "https://example.com/telegram/alpha/webhook",
@@ -1530,6 +1539,21 @@ describe("telegram webhook reply flow", () => {
       workerEnv,
     );
 
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 9003,
+          fromId: 903,
+          updateId: 58,
+        }),
+      },
+      workerEnv,
+    );
+
     const manualReviewOrder = await getDatabase(env)
       .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
       .bind("alpha", "order_manual_review_closed")
@@ -1538,8 +1562,13 @@ describe("telegram webhook reply flow", () => {
       .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
       .bind("alpha", "order_completed_closed")
       .first();
+    const legacyPaidOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_legacy_paid_closed")
+      .first();
     const newManualReviewUserOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "901");
     const newCompletedUserOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "902");
+    const newLegacyPaidUserOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "903");
 
     expect(manualReviewOrder).toEqual({
       currentStep: "manual_review",
@@ -1549,14 +1578,21 @@ describe("telegram webhook reply flow", () => {
       currentStep: "completed",
       status: "paid",
     });
+    expect(legacyPaidOrder).toEqual({
+      currentStep: "paid",
+      status: "paid",
+    });
     expect(newManualReviewUserOrder?.orderId).not.toBe("order_manual_review_closed");
     expect(newManualReviewUserOrder?.currentStep).toBe("amount");
     expect(newCompletedUserOrder?.orderId).not.toBe("order_completed_closed");
     expect(newCompletedUserOrder?.currentStep).toBe("amount");
+    expect(newLegacyPaidUserOrder?.orderId).not.toBe("order_legacy_paid_closed");
+    expect(newLegacyPaidUserOrder?.currentStep).toBe("amount");
     expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
     expect(replies[1]).toContain("Não consegui entender esse valor.");
     expect(replies[2]).toContain("envie o valor em BRL");
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(replies[3]).toContain("envie o valor em BRL");
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
   });
 
   it("does not create a second Eulen deposit when confirmar is replayed after awaiting_payment", async function assertConfirmationReplayIdempotency() {
