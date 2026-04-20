@@ -21,6 +21,7 @@ const MAX_ISSUE_BODY_CHARS = 5000;
 const MAX_EXISTING_COMMENT_CHARS = 5000;
 const MAX_OUTPUT_TOKENS = 25000;
 const REASONING_EFFORT = "low";
+const ISSUE_PLANNING_WORKFLOW_FILE = "ai-issue-planning-review.yml";
 
 /**
  * @typedef {{
@@ -137,7 +138,13 @@ async function githubRequest(url, init = {}) {
     throw new Error(`GitHub API request failed (${response.status}): ${body}`);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return null;
+  }
+
+  const body = await response.text();
+
+  return body.trim().length > 0 ? JSON.parse(body) : null;
 }
 
 /**
@@ -536,6 +543,107 @@ async function upsertIssueComment(repoFullName, issueNumber, body) {
 }
 
 /**
+ * Build the workflow_dispatch payload used to hand planning work to Actions.
+ *
+ * GitHub does not reliably trigger a second workflow from comments created by
+ * `GITHUB_TOKEN`, so triage must dispatch planning explicitly when the route
+ * requires a four-role planning Discussion.
+ *
+ * @param {number} issueNumber GitHub issue number.
+ * @returns {{ issue_number: string }} Workflow input payload.
+ */
+export function buildIssuePlanningDispatchInputs(issueNumber) {
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    throw new Error(`Invalid issue number for planning dispatch: ${String(issueNumber)}`);
+  }
+
+  return { issue_number: String(issueNumber) };
+}
+
+/**
+ * Resolve the ref used for planning workflow dispatch.
+ *
+ * The normal Actions runtime exposes `GITHUB_REF_NAME`. Tests and unusual
+ * events may not, so the repository default branch from the event is the safe
+ * fallback before the final repository default of `main`.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @param {NodeJS.ProcessEnv} [env] Environment source.
+ * @returns {string} Branch or ref accepted by workflow_dispatch.
+ */
+export function resolveIssuePlanningDispatchRef(event, env = process.env) {
+  return env.GITHUB_REF_NAME?.trim()
+    || env.GITHUB_REF?.replace(/^refs\/heads\//, "")
+    || event?.repository?.default_branch
+    || "main";
+}
+
+/**
+ * Decide whether the triage result must enqueue the planning workflow.
+ *
+ * @param {IssueTriagePlan} plan Safe triage plan.
+ * @returns {boolean} True when planning must run before Codex.
+ */
+export function shouldDispatchIssuePlanning(plan) {
+  return plan.route === ROUTE_DISCUSSION_BEFORE_PR;
+}
+
+/**
+ * Build the GitHub Actions workflow_dispatch request for issue planning.
+ *
+ * Keeping this request construction pure gives the automation a stable,
+ * testable contract: triage posts its canonical issue comment, then sends this
+ * exact API request when the issue still needs the four-role planning lane.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber GitHub issue number.
+ * @param {string} ref Git ref to run the planning workflow on.
+ * @returns {{ url: string, init: RequestInit }} Fetch request descriptor.
+ */
+export function buildIssuePlanningDispatchRequest(repoFullName, issueNumber, ref) {
+  const trimmedRef = typeof ref === "string" ? ref.trim() : "";
+
+  if (typeof repoFullName !== "string" || !/^[^/]+\/[^/]+$/.test(repoFullName)) {
+    throw new Error(`Invalid repository for planning dispatch: ${String(repoFullName)}`);
+  }
+
+  if (!trimmedRef) {
+    throw new Error("Invalid ref for planning dispatch.");
+  }
+
+  return {
+    url: `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_PLANNING_WORKFLOW_FILE}/dispatches`,
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: trimmedRef,
+        inputs: buildIssuePlanningDispatchInputs(issueNumber),
+      }),
+    },
+  };
+}
+
+/**
+ * Trigger the issue planning workflow through the GitHub Actions API.
+ *
+ * This is the reliable bridge from issue triage to API-owned planning. The
+ * workflow token needs `actions: write`, configured in the triage workflow.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber GitHub issue number.
+ * @param {string} ref Git ref to run the planning workflow on.
+ * @returns {Promise<void>} Resolves when GitHub accepts the dispatch.
+ */
+async function dispatchIssuePlanningWorkflow(repoFullName, issueNumber, ref) {
+  const request = buildIssuePlanningDispatchRequest(repoFullName, issueNumber, ref);
+
+  await githubRequest(request.url, request.init);
+}
+
+/**
  * Write a compact GitHub Actions summary when the runner exposes it.
  *
  * @param {IssueTriagePlan} plan Safe triage plan.
@@ -565,17 +673,56 @@ async function writeStepSummary(plan) {
 }
 
 /**
- * Main workflow entrypoint.
+ * Runtime dependencies used by the issue triage orchestrator.
  *
- * @returns {Promise<void>} Resolves when the issue comment is updated.
+ * The production entrypoint uses the real implementations. Tests can inject
+ * narrow fakes to exercise the release-critical handoff without touching the
+ * filesystem, OpenAI, or GitHub.
+ *
+ * @typedef {object} IssueTriageRuntime
+ * @property {(promptPath: string) => Promise<string>} readTriagePrompt Read the system prompt.
+ * @property {(repoFullName: string, issueNumber: number) => Promise<any[]>} fetchIssueComments Fetch issue comments.
+ * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<string>} generateIssueTriage Call the model.
+ * @property {(repoFullName: string, issueNumber: number, body: string) => Promise<void>} upsertIssueComment Publish the sticky issue comment.
+ * @property {(repoFullName: string, issueNumber: number, ref: string) => Promise<void>} dispatchIssuePlanningWorkflow Dispatch planning workflow.
+ * @property {(plan: IssueTriagePlan) => Promise<void>} writeStepSummary Write Actions summary.
  */
-async function main() {
-  const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
-  const repository = readRequiredEnv("GITHUB_REPOSITORY");
-  const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
-  const model = readConfiguredModel();
-  const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
-  const issue = event.issue;
+
+/**
+ * Default production runtime for issue triage.
+ *
+ * @type {IssueTriageRuntime}
+ */
+const ISSUE_TRIAGE_RUNTIME = {
+  readTriagePrompt,
+  fetchIssueComments,
+  generateIssueTriage,
+  upsertIssueComment,
+  dispatchIssuePlanningWorkflow,
+  writeStepSummary,
+};
+
+/**
+ * Execute the issue triage orchestration for one open GitHub issue.
+ *
+ * This is the testable core behind `main()`: it reads current context, asks the
+ * model for a canonical route, posts the sticky comment, and only then dispatches
+ * issue planning when the route is `discussion_before_pr`. Dispatch failures are
+ * intentionally not swallowed because a posted comment without a planning run is
+ * an incomplete handoff and must keep the workflow red.
+ *
+ * @param {object} input Orchestration input.
+ * @param {string} input.repository Repository in owner/name form.
+ * @param {any} input.issue GitHub issue payload.
+ * @param {any} input.event Raw GitHub event payload.
+ * @param {string} input.promptPath Prompt file path.
+ * @param {string} input.model OpenAI model name.
+ * @param {IssueTriageRuntime} [runtime] Runtime dependency overrides.
+ * @returns {Promise<IssueTriagePlan | null>} Final plan, or null when skipped.
+ */
+export async function runIssueTriageWorkflow(input, runtime = ISSUE_TRIAGE_RUNTIME) {
+  const { repository, issue, event, promptPath, model } = input;
+  const workflowRef = resolveIssuePlanningDispatchRef(event);
 
   if (!issue) {
     throw new Error("This workflow only supports issue events.");
@@ -583,12 +730,12 @@ async function main() {
 
   if (issue.pull_request) {
     console.log("Skipping issue triage because this issue event belongs to a pull request.");
-    return;
+    return null;
   }
 
   if (issue.state !== "open") {
     console.log("Skipping issue triage because the issue is not open.");
-    return;
+    return null;
   }
 
   if (!repository.includes("/")) {
@@ -596,8 +743,8 @@ async function main() {
   }
 
   const [systemPrompt, comments] = await Promise.all([
-    readTriagePrompt(promptPath),
-    fetchIssueComments(repository, issue.number),
+    runtime.readTriagePrompt(promptPath),
+    runtime.fetchIssueComments(repository, issue.number),
   ]);
   const existingComment = findExistingTriageComment(comments);
   const userPrompt = [
@@ -613,12 +760,35 @@ async function main() {
     truncateText(existingComment?.body ?? "", MAX_EXISTING_COMMENT_CHARS) || "[none]",
   ].join("\n");
 
-  const rawTriage = await generateIssueTriage(systemPrompt, userPrompt, model);
+  const rawTriage = await runtime.generateIssueTriage(systemPrompt, userPrompt, model);
   const plan = assertValidIssueTriagePlan(parseIssueTriageResponse(rawTriage));
 
   const commentBody = buildIssueCommentBody(plan, model);
-  await upsertIssueComment(repository, issue.number, commentBody);
-  await writeStepSummary(plan);
+  await runtime.upsertIssueComment(repository, issue.number, commentBody);
+
+  if (shouldDispatchIssuePlanning(plan)) {
+    await runtime.dispatchIssuePlanningWorkflow(repository, issue.number, workflowRef);
+  }
+
+  await runtime.writeStepSummary(plan);
+
+  return plan;
+}
+
+/**
+ * Main workflow entrypoint.
+ *
+ * @returns {Promise<void>} Resolves when the issue comment is updated.
+ */
+async function main() {
+  const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
+  const repository = readRequiredEnv("GITHUB_REPOSITORY");
+  const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
+  const model = readConfiguredModel();
+  const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
+  const issue = event.issue;
+
+  await runIssueTriageWorkflow({ repository, issue, event, promptPath, model });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
