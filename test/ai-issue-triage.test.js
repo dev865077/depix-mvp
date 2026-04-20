@@ -170,6 +170,7 @@ describe("ai issue triage validation", () => {
     expect(body).toContain("next_actor: `ai_issue_planning_review`");
     expect(body).toContain("ready_for_codex: `false`");
     expect(body).toContain("## Racional de rota");
+    expect(body).toContain("despacha o workflow `AI Issue Planning Review`");
     expect(body).toContain("criar ou reutilizar uma unica Discussion canonica");
   });
 
@@ -252,7 +253,8 @@ describe("ai issue triage validation", () => {
         calls.push(["upsert", repo, issueNumber, body.includes("canonical_state: `issue_needs_planning`")]);
       },
       dispatchIssuePlanningWorkflow: async (repo, issueNumber, ref) => {
-        calls.push(["dispatch", repo, issueNumber, ref]);
+        const request = buildIssuePlanningDispatchRequest(repo, issueNumber, ref);
+        calls.push(["dispatch", repo, issueNumber, ref, request.url, JSON.parse(request.init.body)]);
       },
       writeStepSummary: async () => {
         calls.push(["summary"]);
@@ -275,7 +277,14 @@ describe("ai issue triage validation", () => {
 
     expect(calls).toEqual([
       ["upsert", "dev865077/depix-mvp", 217, true],
-      ["dispatch", "dev865077/depix-mvp", 217, "trunk"],
+      [
+        "dispatch",
+        "dev865077/depix-mvp",
+        217,
+        "trunk",
+        "https://api.github.com/repos/dev865077/depix-mvp/actions/workflows/ai-issue-planning-review.yml/dispatches",
+        { ref: "trunk", inputs: { issue_number: "217" } },
+      ],
       ["summary"],
     ]);
   });

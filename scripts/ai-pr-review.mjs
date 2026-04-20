@@ -45,6 +45,8 @@ const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_DISCUSSION_CONTEXT_COMMENTS = 20;
 const MAX_DISCUSSION_CONTEXT_CHARS = 16000;
 const MAX_DISCUSSION_CONTEXT_COMMENT_CHARS = 1400;
+const MAX_FAILURE_LOG_CONTEXT_CHARS = 12000;
+const MAX_FAILURE_LOG_CHARS_PER_CHECK = 2400;
 const MAX_PATCH_CHARS_PER_FILE = 7000;
 const MAX_CRITICAL_PATCH_CHARS_PER_FILE = 50000;
 const MAX_PR_BODY_CHARS = 3000;
@@ -130,6 +132,35 @@ const TEST_FILE_REFERENCE_PATTERN = /(?:^|[^A-Za-z0-9_./-])((?:[A-Za-z0-9._-]+\/
  */
 function logOperationalEvent(event, fields = {}) {
   console.log(JSON.stringify({ event, ...fields }));
+}
+
+/**
+ * Classify GitHub/API/log failures before treating a failed check as review
+ * feedback.
+ *
+ * @param {string | Error | unknown} error Failure object or message.
+ * @returns {"github_api_schema_error" | "github_api_permission_error" | "github_api_rate_limit" | "github_actions_log_error" | "unknown_operational_failure"} Stable class.
+ */
+export function classifyGitHubOperationalFailure(error) {
+  const message = String(error instanceof Error ? error.message : error ?? "");
+
+  if (/undefinedField|Field '[^']+' doesn't exist on type|doesn't exist on type/i.test(message)) {
+    return "github_api_schema_error";
+  }
+
+  if (/Resource not accessible by integration|FORBIDDEN|403|permission|permissions/i.test(message)) {
+    return "github_api_permission_error";
+  }
+
+  if (/rate limit|secondary rate limit|429/i.test(message)) {
+    return "github_api_rate_limit";
+  }
+
+  if (/actions\/jobs\/\d+\/logs|job logs|log archive|logs/i.test(message)) {
+    return "github_actions_log_error";
+  }
+
+  return "unknown_operational_failure";
 }
 
 /**
@@ -908,6 +939,34 @@ async function githubRequest(url, init = {}) {
 }
 
 /**
+ * Perform an authenticated GitHub REST API request and return raw text.
+ *
+ * @param {string} url Full API URL.
+ * @param {RequestInit} [init] Extra fetch options.
+ * @returns {Promise<string>} Raw response body.
+ */
+async function githubRequestText(url, init = {}) {
+  const token = readRequiredEnv("GITHUB_TOKEN");
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(init.headers ?? {}),
+    },
+  });
+
+  const body = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`GitHub API request failed (${response.status}) for ${url}: ${body}`);
+  }
+
+  return body;
+}
+
+/**
  * Perform an authenticated GitHub GraphQL request.
  *
  * @param {string} query GraphQL document.
@@ -930,7 +989,13 @@ async function githubGraphqlRequest(query, variables) {
   const body = await response.json();
 
   if (!response.ok || Array.isArray(body.errors) && body.errors.length > 0) {
-    throw new Error(`GitHub GraphQL request failed: ${JSON.stringify(body.errors ?? body)}`);
+    const error = new Error(`GitHub GraphQL request failed: ${JSON.stringify(body.errors ?? body)}`);
+
+    logOperationalEvent("ai_pr_review.github_graphql.failure", {
+      failureClass: classifyGitHubOperationalFailure(error),
+    });
+
+    throw error;
   }
 
   return body.data;
@@ -1010,6 +1075,132 @@ async function fetchPullRequestStatusCheckRollup(repoFullName, pullRequestNumber
       return [];
     }
     throw error;
+  }
+}
+
+/**
+ * Extract a GitHub Actions job id from one check-run details URL.
+ *
+ * @param {string | undefined} detailsUrl Check-run details URL.
+ * @returns {string | null} Job id when the URL points at a GitHub Actions job.
+ */
+function extractActionsJobId(detailsUrl) {
+  const match = String(detailsUrl ?? "").match(/\/actions\/runs\/\d+\/job\/(\d+)(?:\?|$)/);
+
+  return match?.[1] ?? null;
+}
+
+/**
+ * Render failed check logs into a bounded prompt block.
+ *
+ * @param {Array<{
+ *   name?: string,
+ *   conclusion?: string,
+ *   status?: string,
+ *   details_url?: string,
+ *   html_url?: string,
+ *   output?: { title?: string, summary?: string, text?: string },
+ *   logText?: string,
+ *   logFailureClass?: string,
+ *   logFailureMessage?: string
+ * }>} checkRuns Check runs with optional fetched log text.
+ * @returns {string} Markdown context block.
+ */
+export function buildFailedActionsLogContext(checkRuns) {
+  const failedRuns = (Array.isArray(checkRuns) ? checkRuns : [])
+    .filter((checkRun) => ["failure", "timed_out", "cancelled", "action_required"].includes(String(checkRun?.conclusion ?? "").toLowerCase()));
+
+  if (failedRuns.length === 0) {
+    return "";
+  }
+
+  const sections = failedRuns.map((checkRun) => {
+    const logBody = checkRun.logText
+      ? truncateText(checkRun.logText, MAX_FAILURE_LOG_CHARS_PER_CHECK)
+      : [
+        checkRun.logFailureClass ? `Log fetch classification: ${checkRun.logFailureClass}` : "",
+        checkRun.logFailureMessage ? `Log fetch failure: ${checkRun.logFailureMessage}` : "",
+        checkRun.output?.title ? `Output title: ${checkRun.output.title}` : "",
+        checkRun.output?.summary ? `Output summary: ${checkRun.output.summary}` : "",
+        checkRun.output?.text ? `Output text: ${checkRun.output.text}` : "",
+      ].filter(Boolean).join("\n") || "[no log body available]";
+
+    return [
+      `### ${checkRun.name ?? "Unnamed check"}`,
+      `conclusion: ${checkRun.conclusion ?? "unknown"}`,
+      `status: ${checkRun.status ?? "unknown"}`,
+      `details: ${checkRun.details_url ?? checkRun.html_url ?? "unknown"}`,
+      "",
+      "```text",
+      sanitizePublishedMarkdown(logBody),
+      "```",
+    ].join("\n");
+  });
+
+  return truncateText([
+    "## Failing GitHub Actions logs",
+    "Use these real check logs to distinguish automation/runtime failures from reviewer-requested changes.",
+    "",
+    ...sections,
+  ].join("\n\n"), MAX_FAILURE_LOG_CONTEXT_CHARS);
+}
+
+/**
+ * Load failed GitHub Actions check logs for the current PR head.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} pullRequestNumber PR number.
+ * @returns {Promise<string>} Markdown context block, or an empty string.
+ */
+async function loadFailedActionsLogContext(repoFullName, pullRequestNumber) {
+  try {
+    const pullRequest = await fetchPullRequest(repoFullName, pullRequestNumber);
+    const headSha = pullRequest?.head?.sha;
+
+    if (!headSha) {
+      return "";
+    }
+
+    const checkRunResponse = await githubRequest(
+      `https://api.github.com/repos/${repoFullName}/commits/${headSha}/check-runs?per_page=100`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+        },
+      },
+    );
+    const failedCheckRuns = (Array.isArray(checkRunResponse?.check_runs) ? checkRunResponse.check_runs : [])
+      .filter((checkRun) => ["failure", "timed_out", "cancelled", "action_required"].includes(String(checkRun?.conclusion ?? "").toLowerCase()));
+    const enrichedCheckRuns = await Promise.all(failedCheckRuns.map(async (checkRun) => {
+      const jobId = extractActionsJobId(checkRun.details_url);
+
+      if (!jobId) {
+        return checkRun;
+      }
+
+      try {
+        const logText = await githubRequestText(`https://api.github.com/repos/${repoFullName}/actions/jobs/${jobId}/logs`);
+
+        return { ...checkRun, logText };
+      } catch (error) {
+        return {
+          ...checkRun,
+          logFailureClass: classifyGitHubOperationalFailure(error),
+          logFailureMessage: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }));
+
+    return buildFailedActionsLogContext(enrichedCheckRuns);
+  } catch (error) {
+    logOperationalEvent("ai_pr_review.failed_actions_logs.unavailable", {
+      repository: repoFullName,
+      pullRequestNumber,
+      failureClass: classifyGitHubOperationalFailure(error),
+      reason: error instanceof Error ? error.message : String(error),
+    });
+
+    return "";
   }
 }
 
@@ -2779,6 +2970,7 @@ async function loadAutomationEvidenceContext(files) {
  * @param {ReturnType<typeof assessDiscussionGate>} gate Gate decision.
  * @param {string} [discussionContext] Prior Discussion context for append-only reruns.
  * @param {string} [automationEvidence] Current repository-state evidence for automation contract changes.
+ * @param {string} [failureLogContext] Real failed GitHub Actions logs for the current PR head.
  * @returns {string} Final user payload.
  */
 export function buildPullRequestUserPrompt(
@@ -2788,6 +2980,7 @@ export function buildPullRequestUserPrompt(
   gate,
   discussionContext = "",
   automationEvidence = "",
+  failureLogContext = "",
 ) {
   const boundedDiscussionContext = discussionContext.trim()
     ? [
@@ -2817,6 +3010,7 @@ export function buildPullRequestUserPrompt(
     "## PR description",
     truncateText(pullRequest.body ?? "", MAX_PR_BODY_CHARS) || "[no description provided]",
     "",
+    ...(failureLogContext.trim() ? [failureLogContext.trim(), ""] : []),
     ...(automationEvidence.trim() ? [automationEvidence.trim(), ""] : []),
     ...boundedDiscussionContext,
     "## Changed files digest",
@@ -3754,6 +3948,7 @@ async function main() {
   let discussionContext = "";
   let discussionThread = discussion;
   const automationEvidence = await loadAutomationEvidenceContext(files);
+  const failureLogContext = await loadFailedActionsLogContext(repository, pullRequest.number);
 
   if (gate.requiresDiscussion) {
     if (discussion?.url) {
@@ -3788,6 +3983,7 @@ async function main() {
     gate,
     discussionContext,
     automationEvidence,
+    failureLogContext,
   );
 
   if (gate.requiresDiscussion) {

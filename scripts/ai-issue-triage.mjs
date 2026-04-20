@@ -5,7 +5,7 @@
  * structured triage decision, and keeps a single sticky comment on the issue.
  *
  * It deliberately does not create Discussions. When the issue needs planning,
- * the planning workflow observes this sticky comment and owns the single
+ * this workflow dispatches the planning workflow, which owns the single
  * specialist Discussion lifecycle through the GitHub API.
  */
 import fs from "node:fs/promises";
@@ -460,7 +460,7 @@ export function buildIssueCommentBody(plan, model) {
     ? [
       "## Planning automatico",
       "",
-      "A triage nao cria Discussion. O workflow `AI Issue Planning Review` deve observar este comentario, criar ou reutilizar uma unica Discussion canonica da issue, rodar os quatro especialistas e marcar a issue como pronta para Codex apenas quando houver aprovacao unanime.",
+      "A triage nao cria Discussion. Ela apenas publica este comentario canonico e despacha o workflow `AI Issue Planning Review`, que deve criar ou reutilizar uma unica Discussion canonica da issue, rodar os quatro especialistas e marcar a issue como pronta para Codex apenas quando houver aprovacao unanime.",
     ]
     : [];
 
