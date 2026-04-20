@@ -14,6 +14,35 @@ import { notifyTelegramOrderTransitionSafely } from "../services/telegram-paymen
 export const webhooksRouter = new Hono();
 
 /**
+ * Agenda a notificacao Telegram sem transformar side effect outbound em
+ * dependencia obrigatoria da reconciliacao HTTP.
+ *
+ * Em Workers reais usamos `waitUntil`. Em ambientes sem `executionCtx`, como
+ * algumas chamadas locais, o handler faz `await` explicito para manter o
+ * contrato testavel e deterministico.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @param {Promise<unknown>} task Tarefa de notificacao ja criada.
+ * @returns {Promise<void>} Sinaliza apenas o agendamento seguro.
+ */
+async function dispatchNonBlockingTelegramNotification(c, task) {
+  let executionCtx = null;
+
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    executionCtx = null;
+  }
+
+  if (executionCtx && typeof executionCtx.waitUntil === "function") {
+    executionCtx.waitUntil(task);
+    return;
+  }
+
+  await task;
+}
+
+/**
  * Placeholder do webhook principal de confirmacao de deposito da Eulen.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
@@ -67,7 +96,7 @@ export async function handleEulenDepositWebhook(c) {
     return jsonError(c, result.status, result.code, result.message, result.details);
   }
 
-  await notifyTelegramOrderTransitionSafely({
+  await dispatchNonBlockingTelegramNotification(c, notifyTelegramOrderTransitionSafely({
     env: c.env,
     db,
     runtimeConfig,
@@ -78,7 +107,7 @@ export async function handleEulenDepositWebhook(c) {
       path: c.req.path,
     },
     ...result.details,
-  });
+  }));
 
   return c.json(
     {

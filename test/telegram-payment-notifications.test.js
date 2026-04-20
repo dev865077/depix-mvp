@@ -38,7 +38,7 @@ describe("telegram payment notifications", () => {
     });
   });
 
-  it("classifies under_review as manual review notification", function assertManualReviewClassification() {
+  it("skips non-payment terminal states in this MVP slice", function assertNonPaymentNotificationOutOfScope() {
     expect(classifyTelegramOrderNotification({
       duplicate: false,
       externalStatus: "under_review",
@@ -52,9 +52,9 @@ describe("telegram payment notifications", () => {
         telegramChatId: "chat_001",
       },
     })).toEqual({
-      shouldNotify: true,
-      reason: "visible_state_changed",
-      kind: "manual_review",
+      shouldNotify: false,
+      reason: "external_status_not_notifiable",
+      kind: null,
     });
   });
 

@@ -394,6 +394,56 @@ describe("deposits fallback route", () => {
     expect(createBotSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps fallback reconciliation successful when Telegram returns 429", async function assertDepositsFallbackTelegram429Isolation() {
+    const { db, depositEntryId, orderId } = await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposits?")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            qrId: "qr_alpha_001",
+            status: "depix_sent",
+            bankTxId: "bank_tx_001",
+          },
+        ]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      if (url === "https://api.telegram.org/botalpha-bot-token/sendMessage") {
+        return Promise.resolve(new Response(JSON.stringify({
+          ok: false,
+          error_code: 429,
+          description: "Too Many Requests: retry later",
+        }), {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }));
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const response = await requestDepositsFallback();
+    const body = await response.json();
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", depositEntryId);
+    const updatedOrder = await getOrderById(db, "alpha", orderId);
+
+    expect(response.status).toBe(200);
+    expect(body.summary.processed).toBe(1);
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://api.telegram.org/botalpha-bot-token/sendMessage")).toHaveLength(1);
+  });
+
   it("fails closed when Eulen returns more rows than the supported fallback limit", async function assertDepositsFallbackRemoteRowLimit() {
     await seedDepositAggregate();
     mockDepositsListResponse(Array.from({ length: 201 }, (_, index) => ({

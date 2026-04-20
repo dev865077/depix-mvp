@@ -21,11 +21,6 @@ import { getTelegramRuntime } from "../telegram/runtime.js";
 
 const NOTIFIABLE_EXTERNAL_STATUSES = new Set([
   "depix_sent",
-  "under_review",
-  "error",
-  "expired",
-  "canceled",
-  "refunded",
 ]);
 
 /**

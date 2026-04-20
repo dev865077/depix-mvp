@@ -42,6 +42,35 @@ import {
 export const opsRouter = new Hono();
 
 /**
+ * Agenda notificacoes Telegram como side effect nao bloqueante da reconciliacao.
+ *
+ * O HTTP responde pelo estado financeiro persistido. O outbound do Telegram
+ * segue em `waitUntil` quando o contexto de execucao existe; fora disso, o
+ * fallback local faz `await` para manter testes e execucoes em memoria
+ * deterministicas.
+ *
+ * @param {import("hono").Context} c Contexto HTTP atual.
+ * @param {Promise<unknown>} task Tarefa outbound a agendar.
+ * @returns {Promise<void>} Sinaliza apenas o despacho seguro.
+ */
+async function dispatchNonBlockingTelegramNotification(c, task) {
+  let executionCtx = null;
+
+  try {
+    executionCtx = c.executionCtx;
+  } catch {
+    executionCtx = null;
+  }
+
+  if (executionCtx && typeof executionCtx.waitUntil === "function") {
+    executionCtx.waitUntil(task);
+    return;
+  }
+
+  await task;
+}
+
+/**
  * Converte erros conhecidos do service de diagnostico para JSON padronizado.
  *
  * @param {import("hono").Context} c Contexto HTTP atual.
@@ -267,7 +296,7 @@ export async function handleDepositRecheck(c) {
       requestId: c.get("requestId"),
     });
 
-    await notifyTelegramOrderTransitionSafely({
+    await dispatchNonBlockingTelegramNotification(c, notifyTelegramOrderTransitionSafely({
       env: c.env,
       db,
       runtimeConfig,
@@ -278,7 +307,7 @@ export async function handleDepositRecheck(c) {
         path: c.req.path,
       },
       ...result.details,
-    });
+    }));
 
     return c.json(
       {
@@ -335,26 +364,30 @@ export async function handleDepositsFallback(c) {
       requestId: c.get("requestId"),
     });
 
-    await Promise.all((result.details.results ?? []).map(async (entry) => notifyTelegramOrderTransitionSafely({
-      env: c.env,
-      db,
-      runtimeConfig,
-      tenant,
-      requestContext: {
-        requestId: c.get("requestId"),
-        method: c.req.method,
-        path: c.req.path,
-      },
-      duplicate: entry.outcome === "duplicate",
-      externalStatus: entry.status,
-      orderId: entry.orderId,
-      depositEntryId: entry.depositEntryId,
-      orderStatus: entry.orderStatus,
-      orderCurrentStep: entry.orderCurrentStep,
-      previousExternalStatus: entry.previousExternalStatus,
-      previousOrderStatus: entry.previousOrderStatus,
-      previousOrderCurrentStep: entry.previousOrderCurrentStep,
-    })));
+    await dispatchNonBlockingTelegramNotification(c, (async function notifyFallbackRowsSequentially() {
+      for (const entry of result.details.results ?? []) {
+        await notifyTelegramOrderTransitionSafely({
+          env: c.env,
+          db,
+          runtimeConfig,
+          tenant,
+          requestContext: {
+            requestId: c.get("requestId"),
+            method: c.req.method,
+            path: c.req.path,
+          },
+          duplicate: entry.outcome === "duplicate",
+          externalStatus: entry.status,
+          orderId: entry.orderId,
+          depositEntryId: entry.depositEntryId,
+          orderStatus: entry.orderStatus,
+          orderCurrentStep: entry.orderCurrentStep,
+          previousExternalStatus: entry.previousExternalStatus,
+          previousOrderStatus: entry.previousOrderStatus,
+          previousOrderCurrentStep: entry.previousOrderCurrentStep,
+        });
+      }
+    }()));
 
     return c.json(
       {

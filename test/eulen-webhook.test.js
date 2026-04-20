@@ -229,6 +229,38 @@ describe("eulen deposit webhook", () => {
     expect(createBotSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps webhook reconciliation successful when Telegram returns 429", async function assertWebhookTelegram429Isolation() {
+    await seedDepositAggregate();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: false,
+        error_code: 429,
+        description: "Too Many Requests: retry later",
+      }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+    const db = getDatabase(env);
+    const updatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const updatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(updatedOrder?.status).toBe("paid");
+    expect(updatedOrder?.currentStep).toBe("completed");
+    expect(updatedDeposit?.externalStatus).toBe("depix_sent");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an invalid webhook secret at the boundary", async function assertInvalidSecretRejection() {
     await seedDepositAggregate();
 
