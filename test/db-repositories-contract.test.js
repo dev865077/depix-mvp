@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { getDatabase } from "../src/db/client.js";
 import { createDepositEvent } from "../src/db/repositories/deposit-events-repository.js";
-import { createDeposit } from "../src/db/repositories/deposits-repository.js";
+import { createDeposit, DepositOrderUniquenessError } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 
 const SCHEMA_STATEMENTS = [
@@ -40,6 +40,8 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_nonce_unique_idx ON deposits (nonce);",
+  "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id);",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -136,6 +138,99 @@ describe("db repository typed contracts", () => {
       externalStatus: "pending",
       expiration: null,
     });
+  });
+
+  it("keeps duplicate deposits on the tenant/order domain error path", async function assertTenantOrderUniquenessContract() {
+    const db = getDatabase(env);
+    await ensureSchema(db);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_contract_duplicate_001",
+      userId: "user_contract_duplicate_001",
+      productType: "depix",
+    });
+
+    const firstDeposit = await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_contract_duplicate_001",
+      qrId: "qr_contract_duplicate_001",
+      orderId: "order_contract_duplicate_001",
+      nonce: "nonce-contract-duplicate-001",
+      qrCopyPaste: "pix-code-contract-duplicate-001",
+      qrImageUrl: "https://example.com/qr-contract-duplicate-001.png",
+    });
+
+    await expect(createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_contract_duplicate_002",
+      qrId: "qr_contract_duplicate_002",
+      orderId: "order_contract_duplicate_001",
+      nonce: "nonce-contract-duplicate-002",
+      qrCopyPaste: "pix-code-contract-duplicate-002",
+      qrImageUrl: "https://example.com/qr-contract-duplicate-002.png",
+    })).rejects.toMatchObject({
+      code: "deposit_order_already_has_deposit",
+      tenantId: "alpha",
+      orderId: "order_contract_duplicate_001",
+      existingDeposit: expect.objectContaining({
+        depositEntryId: firstDeposit?.depositEntryId,
+      }),
+    });
+
+    const persistedDeposits = await db
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_contract_duplicate_001")
+      .first();
+
+    expect(persistedDeposits?.count).toBe(1);
+  });
+
+  it("does not convert unrelated unique violations into tenant/order idempotency", async function assertUnrelatedUniquenessContract() {
+    const db = getDatabase(env);
+    await ensureSchema(db);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_contract_unique_nonce_001",
+      userId: "user_contract_unique_nonce_001",
+      productType: "depix",
+    });
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_contract_unique_nonce_002",
+      userId: "user_contract_unique_nonce_002",
+      productType: "depix",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_contract_unique_nonce_001",
+      qrId: "qr_contract_unique_nonce_001",
+      orderId: "order_contract_unique_nonce_001",
+      nonce: "nonce-contract-shared",
+      qrCopyPaste: "pix-code-contract-unique-nonce-001",
+      qrImageUrl: "https://example.com/qr-contract-unique-nonce-001.png",
+    });
+
+    let caughtError;
+    try {
+      await createDeposit(db, {
+        tenantId: "alpha",
+        depositEntryId: "deposit_entry_contract_unique_nonce_002",
+        qrId: "qr_contract_unique_nonce_002",
+        orderId: "order_contract_unique_nonce_002",
+        nonce: "nonce-contract-shared",
+        qrCopyPaste: "pix-code-contract-unique-nonce-002",
+        qrImageUrl: "https://example.com/qr-contract-unique-nonce-002.png",
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(caughtError).not.toBeInstanceOf(DepositOrderUniquenessError);
+    expect(String(caughtError?.message ?? caughtError).toLowerCase()).toContain("unique");
   });
 
   it("keeps deposit event field mapping stable", async function assertDepositEventContract() {

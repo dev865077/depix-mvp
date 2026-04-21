@@ -74,21 +74,6 @@ export class DepositOrderUniquenessError extends Error {
 }
 
 /**
- * Reconhece a familia de falhas unicas exposta pelo D1/SQLite.
- *
- * @param {unknown} error Erro vindo do D1/SQLite.
- * @returns {boolean} Verdadeiro quando a falha pertence a uma constraint unica.
- */
-function isUniqueConstraintViolation(error: unknown): boolean {
-  const message = String((error as { message?: unknown } | null | undefined)?.message ?? error ?? "").toLowerCase();
-
-  return message.includes("unique constraint")
-    || message.includes("constraint_unique")
-    || message.includes("sqlite_constraint_unique")
-    || message.includes(DEPOSITS_TENANT_ORDER_UNIQUE_INDEX);
-}
-
-/**
  * Reconhece mensagens conhecidas da barreira `tenant_id + order_id`.
  *
  * @param {unknown} error Erro vindo do D1/SQLite.
@@ -196,11 +181,9 @@ export async function createDeposit(db: D1Database, input: CreateDepositInput): 
 
     return selectResult?.results[0];
   } catch (error) {
-    const existingDeposit = isUniqueConstraintViolation(error)
-      ? await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId)
-      : null;
+    if (isDepositOrderUniquenessViolation(error)) {
+      const existingDeposit = await getLatestDepositByOrderId(db, deposit.tenantId, deposit.orderId);
 
-    if (existingDeposit || isDepositOrderUniquenessViolation(error)) {
       throw new DepositOrderUniquenessError({
         tenantId: deposit.tenantId,
         orderId: deposit.orderId,
