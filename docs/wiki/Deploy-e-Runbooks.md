@@ -112,3 +112,12 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 3. Validar se `test` possui cron ativo e `production` continua sem triggers.
 4. Rodar `npm run typecheck` e `npm test` antes de promover qualquer ajuste de runtime.
 5. Em caso de incidente, revisar logs do Worker e o estado da tabela `scheduled_deposit_reconciliation_claims`.
+
+## Migracao TypeScript
+
+O contrato de validacao operacional e rollback das ondas da migracao TypeScript
+fica em [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript).
+
+Use esse runbook antes de promover qualquer onda que altere bootstrap, rotas,
+webhooks, autorizacao operacional, entrypoint, tipos gerados ou cleanup final de
+runtime.

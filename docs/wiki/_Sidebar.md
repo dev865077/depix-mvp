@@ -23,6 +23,7 @@
 - [Estrutura do Repositorio](Estrutura-do-Repositorio)
 - [Contribuicao e PRs](Contribuicao-e-PRs)
 - [Testes e Qualidade](Testes-e-Qualidade)
+- [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)
 
 ## Operacao
 
