@@ -15,7 +15,7 @@ import {
   createEulenDeposit,
   EulenApiError,
   pingEulen,
-  resolveEulenAsyncResponse,
+  resolveCreatedEulenDepositResponse,
 } from "../clients/eulen-client.js";
 import { readTenantSecret, readTenantSplitConfig } from "../config/tenants.js";
 import { createDeposit } from "../db/repositories/deposits-repository.js";
@@ -648,7 +648,7 @@ export async function createEulenDiagnosticDeposit(input) {
       asyncMode: input.asyncMode,
       body: createDiagnosticEulenDepositPayload(input.amountInCents, splitConfig),
     });
-    response = await resolveEulenAsyncResponse(response);
+    response = await resolveCreatedEulenDepositResponse(response);
   } catch (error) {
     if (error instanceof DiagnosticServiceError) {
       throw error;

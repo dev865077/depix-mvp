@@ -3,33 +3,89 @@
  *
  * Este modulo concentra autenticacao, nonce, async mode, timeout e parsing de
  * resposta para os endpoints usados no MVP. Ele existe para separar integracao
- * externa da regra de negocio.
+ * externa da regra de negocio e explicitar os contratos externos sensiveis.
  */
-
 const REQUIRED_DEPOSIT_SPLIT_FIELDS = [
-  "depixSplitAddress",
-  "splitFee",
+    "depixSplitAddress",
+    "splitFee",
 ];
 const EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS = 6;
 const EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS = 1_000;
-
 /**
  * Erro padronizado para qualquer falha de integracao com a Eulen.
  *
  * O campo `details` ajuda a manter logs ricos sem vazar segredos.
  */
 export class EulenApiError extends Error {
-  /**
-   * @param {string} message Mensagem principal do erro.
-   * @param {Record<string, unknown>=} details Metadados operacionais.
-   */
-  constructor(message, details = {}) {
-    super(message);
-    this.name = "EulenApiError";
-    this.details = details;
-  }
+    details;
+    /**
+     * @param {string} message Mensagem principal do erro.
+     * @param {Record<string, unknown>=} details Metadados operacionais.
+     */
+    constructor(message, details = {}) {
+        super(message);
+        this.name = "EulenApiError";
+        this.details = details;
+    }
 }
-
+/**
+ * Erro estruturado para payload invalido na borda Eulen.
+ */
+export class EulenPayloadValidationError extends EulenApiError {
+    constructor(message, input) {
+        super(message, buildInvalidEulenPayloadDetails(input));
+        this.name = "EulenPayloadValidationError";
+        this.details = buildInvalidEulenPayloadDetails(input);
+    }
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function unwrapEulenResponsePayload(payload) {
+    if (isRecord(payload) && "response" in payload) {
+        return payload.response;
+    }
+    return payload;
+}
+function hasResolvedResponseEnvelope(payload) {
+    return isRecord(payload) && payload.async === false && "response" in payload;
+}
+function buildInvalidPayloadError(message, input) {
+    return new EulenPayloadValidationError(message, input);
+}
+function readRequiredTrimmedString(value, input) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        throw buildInvalidPayloadError("Eulen payload is missing a required text field.", input);
+    }
+    return value.trim();
+}
+function readOptionalTrimmedString(value, input) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        throw buildInvalidPayloadError("Eulen payload contains an invalid text field.", input);
+    }
+    const normalizedValue = value.trim();
+    return normalizedValue.length > 0 ? normalizedValue : undefined;
+}
+function readRequiredPositiveInteger(value, input) {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+        throw buildInvalidPayloadError("Eulen payload is missing a required positive integer field.", input);
+    }
+    return value;
+}
+export function buildInvalidEulenPayloadDetails(input) {
+    return {
+        code: "eulen_invalid_payload",
+        source: input.source,
+        reason: input.reason,
+        ...(input.field ? { field: input.field } : {}),
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        ...(input.path ? { path: input.path } : {}),
+        ...(typeof input.status === "number" ? { status: input.status } : {}),
+    };
+}
 /**
  * Garante que o tenant atual trouxe as credenciais minimas da Eulen.
  *
@@ -37,53 +93,178 @@ export class EulenApiError extends Error {
  * @returns {{ apiToken: string, partnerId?: string }} Credenciais normalizadas.
  */
 export function assertEulenCredentials(credentials) {
-  if (!credentials.apiToken || String(credentials.apiToken).trim().length === 0) {
-    throw new EulenApiError("Missing required Eulen API token.", {
-      field: "apiToken",
-    });
-  }
-
-  return {
-    apiToken: String(credentials.apiToken),
-    partnerId: credentials.partnerId ? String(credentials.partnerId) : undefined,
-  };
+    if (!credentials.apiToken || String(credentials.apiToken).trim().length === 0) {
+        throw new EulenApiError("Missing required Eulen API token.", {
+            field: "apiToken",
+        });
+    }
+    return {
+        apiToken: String(credentials.apiToken),
+        partnerId: credentials.partnerId ? String(credentials.partnerId) : undefined,
+    };
 }
-
 /**
- * Garante que a cobranca saia com o split obrigatorio do MVP.
+ * Garante que o payload de create-deposit usado hoje pelo MVP e valido.
  *
- * @param {Record<string, unknown> | undefined} body Payload bruto do deposit.
- * @returns {Record<string, unknown>} Payload validado.
+ * @param {unknown} body Payload bruto do deposit.
+ * @param {string=} requestId Request id opcional para correlacao.
+ * @returns {EulenCreateDepositRequest} Payload validado.
+ */
+export function assertEulenCreateDepositRequest(body, requestId) {
+    if (!isRecord(body)) {
+        throw buildInvalidPayloadError("Eulen create-deposit request must be a JSON object.", {
+            source: "request",
+            reason: "request_body_must_be_object",
+            requestId,
+            path: "/deposit",
+        });
+    }
+    return {
+        amountInCents: readRequiredPositiveInteger(body.amountInCents, {
+            source: "request",
+            reason: "missing_required_positive_integer",
+            field: "amountInCents",
+            requestId,
+            path: "/deposit",
+        }),
+        depixAddress: readOptionalTrimmedString(body.depixAddress, {
+            source: "request",
+            reason: "field_must_be_string",
+            field: "depixAddress",
+            requestId,
+            path: "/deposit",
+        }),
+        depixSplitAddress: readRequiredTrimmedString(body.depixSplitAddress, {
+            source: "request",
+            reason: "missing_required_string",
+            field: "depixSplitAddress",
+            requestId,
+            path: "/deposit",
+        }),
+        splitFee: readRequiredTrimmedString(body.splitFee, {
+            source: "request",
+            reason: "missing_required_string",
+            field: "splitFee",
+            requestId,
+            path: "/deposit",
+        }),
+    };
+}
+/**
+ * Alias legada mantida para compatibilidade com testes e callsites antigos.
+ *
+ * @param {unknown} body Payload bruto do deposit.
+ * @returns {EulenCreateDepositRequest} Payload validado.
  */
 export function assertRequiredDepositSplit(body) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new EulenApiError("Missing required deposit payload.", {
-      field: "body",
-    });
-  }
-
-  for (const field of REQUIRED_DEPOSIT_SPLIT_FIELDS) {
-    const value = body[field];
-
-    if (typeof value !== "string" || value.trim().length === 0) {
-      throw new EulenApiError("Missing required deposit split configuration.", {
-        field,
-      });
-    }
-  }
-
-  return body;
+    return assertEulenCreateDepositRequest(body);
 }
-
+/**
+ * Valida o payload de create-deposit consumido hoje pelo MVP.
+ *
+ * @param {unknown} payload Corpo bruto recebido da Eulen.
+ * @param {string=} requestId Request id opcional para correlacao.
+ * @returns {EulenCreateDepositResponsePayload} Payload validado.
+ */
+export function assertEulenCreateDepositResponsePayload(payload, requestId) {
+    const candidate = unwrapEulenResponsePayload(payload);
+    if (!isRecord(candidate)) {
+        throw buildInvalidPayloadError("Eulen create-deposit response must be a JSON object.", {
+            source: "response",
+            reason: "response_body_must_be_object",
+            requestId,
+            path: "/deposit",
+        });
+    }
+    return {
+        id: readRequiredTrimmedString(candidate.id, {
+            source: "response",
+            reason: "missing_required_string",
+            field: "id",
+            requestId,
+            path: "/deposit",
+        }),
+        qrCopyPaste: readRequiredTrimmedString(candidate.qrCopyPaste, {
+            source: "response",
+            reason: "missing_required_string",
+            field: "qrCopyPaste",
+            requestId,
+            path: "/deposit",
+        }),
+        qrImageUrl: readRequiredTrimmedString(candidate.qrImageUrl, {
+            source: "response",
+            reason: "missing_required_string",
+            field: "qrImageUrl",
+            requestId,
+            path: "/deposit",
+        }),
+        expiration: readOptionalTrimmedString(candidate.expiration, {
+            source: "response",
+            reason: "field_must_be_string",
+            field: "expiration",
+            requestId,
+            path: "/deposit",
+        }),
+    };
+}
+/**
+ * Valida o payload de deposit-status consumido hoje pelo MVP.
+ *
+ * @param {unknown} payload Corpo bruto recebido da Eulen.
+ * @param {string=} requestId Request id opcional para correlacao.
+ * @returns {EulenDepositStatusResponsePayload} Payload validado.
+ */
+export function assertEulenDepositStatusResponsePayload(payload, requestId) {
+    const candidate = unwrapEulenResponsePayload(payload);
+    if (!isRecord(candidate)) {
+        throw buildInvalidPayloadError("Eulen deposit-status response must be a JSON object.", {
+            source: "response",
+            reason: "response_body_must_be_object",
+            requestId,
+            path: "/deposit-status",
+        });
+    }
+    const normalizedPayload = {
+        qrId: readOptionalTrimmedString(candidate.qrId, {
+            source: "response",
+            reason: "field_must_be_string",
+            field: "qrId",
+            requestId,
+            path: "/deposit-status",
+        }),
+        status: readOptionalTrimmedString(candidate.status, {
+            source: "response",
+            reason: "field_must_be_string",
+            field: "status",
+            requestId,
+            path: "/deposit-status",
+        }),
+        expiration: readOptionalTrimmedString(candidate.expiration, {
+            source: "response",
+            reason: "field_must_be_string",
+            field: "expiration",
+            requestId,
+            path: "/deposit-status",
+        }),
+    };
+    if (!normalizedPayload.qrId && !normalizedPayload.status && !normalizedPayload.expiration) {
+        throw buildInvalidPayloadError("Eulen deposit-status response did not expose any supported field.", {
+            source: "response",
+            reason: "response_missing_supported_fields",
+            requestId,
+            path: "/deposit-status",
+        });
+    }
+    return normalizedPayload;
+}
 /**
  * Gera um nonce novo para uma intencao inedita de chamada externa.
  *
  * @returns {string} Nonce UUID.
  */
 export function generateNonce() {
-  return crypto.randomUUID();
+    return crypto.randomUUID();
 }
-
 /**
  * Normaliza o modo aceito pelo header `X-Async`.
  *
@@ -91,56 +272,39 @@ export function generateNonce() {
  * @returns {"auto" | "true" | "false"} Valor pronto para o header.
  */
 export function normalizeAsyncMode(asyncMode) {
-  if (asyncMode === undefined || asyncMode === null || asyncMode === "") {
-    return "auto";
-  }
-
-  const normalizedValue = String(asyncMode).toLowerCase();
-
-  if (normalizedValue !== "auto" && normalizedValue !== "true" && normalizedValue !== "false") {
-    throw new EulenApiError("Invalid Eulen async mode.", {
-      asyncMode,
-    });
-  }
-
-  return normalizedValue;
+    if (asyncMode === undefined || asyncMode === null || asyncMode === "") {
+        return "auto";
+    }
+    const normalizedValue = String(asyncMode).toLowerCase();
+    if (normalizedValue !== "auto" && normalizedValue !== "true" && normalizedValue !== "false") {
+        throw new EulenApiError("Invalid Eulen async mode.", {
+            asyncMode,
+        });
+    }
+    return normalizedValue;
 }
-
 /**
  * Monta os headers padrao da Eulen para o tenant atual.
  *
- * O `partnerId` e opcional porque algumas operacoes podem usar conta
- * compartilhada, mas quando existir ele deve seguir junto do tenant resolvido.
- *
- * @param {{
- *   apiToken: string,
- *   partnerId?: string,
- *   nonce?: string,
- *   asyncMode?: string,
- *   contentType?: string
- * }} options Opcoes da chamada atual.
- * @returns {{ headers: Headers, nonce: string, asyncMode: "auto" | "true" | "false" }} Resultado normalizado.
+ * @param {EulenRequestHeaderOptions} options Opcoes da chamada atual.
+ * @returns {{ headers: Headers, nonce: string, asyncMode: EulenAsyncMode }} Resultado normalizado.
  */
 export function buildEulenRequestHeaders(options) {
-  const nonce = options.nonce ?? generateNonce();
-  const asyncMode = normalizeAsyncMode(options.asyncMode);
-  const headers = new Headers({
-    Authorization: `Bearer ${options.apiToken}`,
-    "X-Nonce": nonce,
-    "X-Async": asyncMode,
-  });
-
-  if (options.partnerId) {
-    headers.set("X-Partner-Id", options.partnerId);
-  }
-
-  if (options.contentType) {
-    headers.set("Content-Type", options.contentType);
-  }
-
-  return { headers, nonce, asyncMode };
+    const nonce = options.nonce ?? generateNonce();
+    const asyncMode = normalizeAsyncMode(options.asyncMode);
+    const headers = new Headers({
+        Authorization: `Bearer ${options.apiToken}`,
+        "X-Nonce": nonce,
+        "X-Async": asyncMode,
+    });
+    if (options.partnerId) {
+        headers.set("X-Partner-Id", options.partnerId);
+    }
+    if (options.contentType) {
+        headers.set("Content-Type", options.contentType);
+    }
+    return { headers, nonce, asyncMode };
 }
-
 /**
  * Construi a URL final para o endpoint da Eulen.
  *
@@ -150,19 +314,16 @@ export function buildEulenRequestHeaders(options) {
  * @returns {string} URL pronta para `fetch`.
  */
 export function buildEulenUrl(baseUrl, path, query = {}) {
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
-  const url = new URL(normalizedPath, normalizedBaseUrl);
-
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") {
-      url.searchParams.set(key, value);
+    const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+    const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+    const url = new URL(normalizedPath, normalizedBaseUrl);
+    for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined && value !== null && value !== "") {
+            url.searchParams.set(key, value);
+        }
     }
-  }
-
-  return url.toString();
+    return url.toString();
 }
-
 /**
  * Cria um AbortController com timeout padrao para chamadas externas.
  *
@@ -170,17 +331,15 @@ export function buildEulenUrl(baseUrl, path, query = {}) {
  * @returns {{ controller: AbortController, cleanup: () => void }} Controller e rotina de limpeza.
  */
 export function createTimeoutController(timeoutMs) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort("Eulen request timeout"), timeoutMs);
-
-  return {
-    controller,
-    cleanup() {
-      clearTimeout(timeoutId);
-    },
-  };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort("Eulen request timeout"), timeoutMs);
+    return {
+        controller,
+        cleanup() {
+            clearTimeout(timeoutId);
+        },
+    };
 }
-
 /**
  * Faz o parsing do corpo da resposta sem assumir JSON valido em todos os casos.
  *
@@ -188,54 +347,38 @@ export function createTimeoutController(timeoutMs) {
  * @returns {Promise<unknown>} Corpo parseado.
  */
 export async function parseEulenResponseBody(response) {
-  const rawBody = await response.text();
-
-  if (!rawBody) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    return rawBody;
-  }
+    const rawBody = await response.text();
+    if (!rawBody) {
+        return null;
+    }
+    try {
+        return JSON.parse(rawBody);
+    }
+    catch {
+        return rawBody;
+    }
 }
-
 /**
  * Aguarda entre leituras de resultado assincrono.
- *
- * A espera fica isolada no client para que testes consigam zerar o intervalo
- * sem alterar o contrato operacional usado pelo Worker em ambiente real.
  *
  * @param {number} delayMs Intervalo em milissegundos.
  * @returns {Promise<void>} Promessa resolvida apos o intervalo.
  */
 function waitForEulenAsyncResultRetry(delayMs) {
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
-
 /**
  * Verifica se o corpo retornado pela Eulen e um ponteiro de resultado async.
  *
- * A Eulen pode responder `202 Accepted` com `async: true` e uma `urlResponse`
- * publica. Essa URL nao recebe Authorization nem headers do tenant; ela aponta
- * para o resultado materializado pela propria Eulen depois que a operacao
- * terminar. O client trata esse shape como contrato de transporte, nao como
- * regra de negocio da rota de diagnostico.
- *
  * @param {unknown} data Corpo parseado da resposta inicial.
- * @returns {data is { async: true, urlResponse: string, expiration?: string }} Verdadeiro quando ha resultado async pendente.
+ * @returns {data is EulenAsyncResponsePointer} Verdadeiro quando ha resultado async pendente.
  */
 export function isEulenAsyncResponsePointer(data) {
-  return Boolean(
-    data
-      && typeof data === "object"
-      && data.async === true
-      && typeof data.urlResponse === "string"
-      && data.urlResponse.trim().length > 0,
-  );
+    return Boolean(isRecord(data)
+        && data.async === true
+        && typeof data.urlResponse === "string"
+        && data.urlResponse.trim().length > 0);
 }
-
 /**
  * Normaliza opcoes de polling para a URL de resultado assincrono da Eulen.
  *
@@ -243,314 +386,281 @@ export function isEulenAsyncResponsePointer(data) {
  * @returns {{ maxAttempts: number, pollDelayMs: number }} Opcoes seguras.
  */
 function normalizeEulenAsyncResultOptions(options = {}) {
-  const maxAttempts = Number.isInteger(options.maxAttempts) && options.maxAttempts > 0
-    ? options.maxAttempts
-    : EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS;
-  const pollDelayMs = Number.isInteger(options.pollDelayMs) && options.pollDelayMs >= 0
-    ? options.pollDelayMs
-    : EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS;
-
-  return { maxAttempts, pollDelayMs };
+    const maxAttemptsInput = options.maxAttempts;
+    const pollDelayInput = options.pollDelayMs;
+    const maxAttempts = typeof maxAttemptsInput === "number" && Number.isInteger(maxAttemptsInput) && maxAttemptsInput > 0
+        ? maxAttemptsInput
+        : EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS;
+    const pollDelayMs = typeof pollDelayInput === "number" && Number.isInteger(pollDelayInput) && pollDelayInput >= 0
+        ? pollDelayInput
+        : EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS;
+    return { maxAttempts, pollDelayMs };
 }
-
 /**
  * Le a URL de resultado assincrono publicada pela Eulen.
- *
- * A URL pode retornar `404` por alguns instantes enquanto o resultado ainda
- * nao foi gravado no blob da Eulen. Por isso o client faz polling curto,
- * limitado e documentado. Qualquer status diferente de `404` encerra a
- * tentativa imediatamente, porque ja representa falha real de transporte.
  *
  * @param {{ urlResponse: string, expiration?: string }} pointer Ponteiro retornado pela Eulen.
  * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica de polling.
  * @returns {Promise<{ status: number, headers: Record<string, string>, attempt: number, data: unknown }>} Resultado publicado.
  */
 export async function readEulenAsyncResult(pointer, options = {}) {
-  const { maxAttempts, pollDelayMs } = normalizeEulenAsyncResultOptions(options);
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await fetch(pointer.urlResponse, {
-      method: "GET",
-    });
-    const data = await parseEulenResponseBody(response);
-
-    if (response.ok) {
-      return {
-        status: response.status,
-        headers: Object.fromEntries(response.headers.entries()),
-        attempt,
-        data,
-      };
+    const { maxAttempts, pollDelayMs } = normalizeEulenAsyncResultOptions(options);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const response = await fetch(pointer.urlResponse, {
+            method: "GET",
+        });
+        const data = await parseEulenResponseBody(response);
+        if (response.ok) {
+            return {
+                status: response.status,
+                headers: Object.fromEntries(response.headers.entries()),
+                attempt,
+                data,
+            };
+        }
+        if (response.status !== 404 || attempt === maxAttempts) {
+            throw new EulenApiError("Eulen asynchronous result request failed.", {
+                code: "eulen_async_result_unavailable",
+                status: response.status,
+                attempt,
+                maxAttempts,
+                expiration: pointer.expiration,
+                data,
+            });
+        }
+        await waitForEulenAsyncResultRetry(pollDelayMs);
     }
-
-    if (response.status !== 404 || attempt === maxAttempts) {
-      throw new EulenApiError("Eulen asynchronous result request failed.", {
-        code: "eulen_async_result_unavailable",
-        status: response.status,
-        attempt,
+    throw new EulenApiError("Eulen asynchronous result request timed out.", {
+        code: "eulen_async_result_timeout",
         maxAttempts,
         expiration: pointer.expiration,
-        data,
-      });
-    }
-
-    await waitForEulenAsyncResultRetry(pollDelayMs);
-  }
-
-  throw new EulenApiError("Eulen asynchronous result request timed out.", {
-    code: "eulen_async_result_timeout",
-    maxAttempts,
-    expiration: pointer.expiration,
-  });
+    });
 }
-
 /**
  * Converte o corpo publicado na URL async para payload de negocio.
- *
- * Em respostas sincronas, nosso client preserva o envelope `data.response`.
- * Ja a URL de resultado async da Eulen pode publicar diretamente o payload
- * final ou repetir um envelope semelhante. Esta funcao reduz os dois formatos
- * para o mesmo contrato consumido pelas camadas superiores.
  *
  * @param {unknown} asyncResultData Corpo retornado pela URL async.
  * @returns {unknown} Payload final da operacao Eulen.
  */
 function normalizeEulenAsyncResultPayload(asyncResultData) {
-  if (
-    asyncResultData
-    && typeof asyncResultData === "object"
-    && "response" in asyncResultData
-  ) {
-    return asyncResultData.response;
-  }
-
-  return asyncResultData;
+    return unwrapEulenResponsePayload(asyncResultData);
 }
-
 /**
  * Resolve respostas Eulen que foram aceitas para execucao assincrona.
  *
- * O metodo e deliberadamente generico: recebe a resposta normalizada de
- * qualquer endpoint Eulen e so faz trabalho extra quando `data` e um ponteiro
- * async. Assim, rotas de diagnostico e fluxos de produto podem compartilhar o
- * mesmo comportamento sem duplicar polling, parsing ou mapeamento de erro.
- *
- * @template T
- * @param {T & {
- *   status: number,
- *   nonce: string,
- *   asyncMode: "auto" | "true" | "false",
- *   data: unknown
- * }} response Resposta inicial da Eulen.
+ * @param {EulenApiResponse<unknown>} response Resposta inicial da Eulen.
  * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica de polling da URL async.
- * @returns {Promise<T & {
- *   data: {
- *     response: unknown,
- *     async: false,
- *     resolvedFromAsync: true,
- *     originalAsync: { async: true, urlResponse: string, expiration?: string },
- *     asyncResult: { status: number, headers: Record<string, string>, attempt: number }
- *   }
- * } | T>} Resposta original ou resposta resolvida para payload final.
+ * @returns {Promise<EulenApiResponse<unknown> | EulenApiResponse<EulenAsyncResultData<unknown>>>} Resposta original ou resposta resolvida.
  */
 export async function resolveEulenAsyncResponse(response, options = {}) {
-  if (!isEulenAsyncResponsePointer(response.data)) {
-    return response;
-  }
-
-  const asyncResult = await readEulenAsyncResult(response.data, options);
-  const responsePayload = normalizeEulenAsyncResultPayload(asyncResult.data);
-
-  if (
-    responsePayload
-    && typeof responsePayload === "object"
-    && typeof responsePayload.errorMessage === "string"
-  ) {
-    throw new EulenApiError("Eulen asynchronous API result failed.", {
-      code: "eulen_async_result_failed",
-      nonce: response.nonce,
-      asyncMode: response.asyncMode,
-      status: response.status,
-      errorMessage: responsePayload.errorMessage,
-      expiration: response.data.expiration,
-      asyncResultStatus: asyncResult.status,
-      asyncResultAttempt: asyncResult.attempt,
-    });
-  }
-
-  return {
-    ...response,
-    data: {
-      response: responsePayload,
-      async: false,
-      resolvedFromAsync: true,
-      originalAsync: response.data,
-      asyncResult: {
-        status: asyncResult.status,
-        headers: asyncResult.headers,
-        attempt: asyncResult.attempt,
-      },
-    },
-  };
+    if (!isEulenAsyncResponsePointer(response.data)) {
+        return response;
+    }
+    const asyncResult = await readEulenAsyncResult(response.data, options);
+    const responsePayload = normalizeEulenAsyncResultPayload(asyncResult.data);
+    if (isRecord(responsePayload)
+        && typeof responsePayload.errorMessage === "string") {
+        throw new EulenApiError("Eulen asynchronous API result failed.", {
+            code: "eulen_async_result_failed",
+            nonce: response.nonce,
+            asyncMode: response.asyncMode,
+            status: response.status,
+            errorMessage: responsePayload.errorMessage,
+            expiration: response.data.expiration,
+            asyncResultStatus: asyncResult.status,
+            asyncResultAttempt: asyncResult.attempt,
+        });
+    }
+    return {
+        ...response,
+        data: {
+            response: responsePayload,
+            async: false,
+            resolvedFromAsync: true,
+            originalAsync: response.data,
+            asyncResult: {
+                status: asyncResult.status,
+                headers: asyncResult.headers,
+                attempt: asyncResult.attempt,
+            },
+        },
+    };
 }
-
+/**
+ * Resolve create-deposit para um envelope canonico com payload validado.
+ *
+ * @param {EulenApiResponse<unknown>} response Resposta inicial da Eulen.
+ * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica async opcional.
+ * @param {string=} requestId Request id opcional para correlacao.
+ * @returns {Promise<EulenApiResponse<{ response: EulenCreateDepositResponsePayload, async: false, resolvedFromAsync?: true, originalAsync?: EulenAsyncResponsePointer, asyncResult?: { status: number, headers: Record<string, string>, attempt: number } }>>} Envelope canonico validado.
+ */
+export async function resolveCreatedEulenDepositResponse(response, options = {}, requestId) {
+    const resolvedResponse = await resolveEulenAsyncResponse(response, options);
+    if (hasResolvedResponseEnvelope(resolvedResponse.data)) {
+        return {
+            ...resolvedResponse,
+            data: {
+                ...resolvedResponse.data,
+                response: assertEulenCreateDepositResponsePayload(resolvedResponse.data.response, requestId),
+            },
+        };
+    }
+    return {
+        ...resolvedResponse,
+        data: {
+            response: assertEulenCreateDepositResponsePayload(resolvedResponse.data, requestId),
+            async: false,
+        },
+    };
+}
+/**
+ * Resolve deposit-status para o shape canonico consumido hoje pelo MVP.
+ *
+ * @param {EulenApiResponse<unknown>} response Resposta inicial da Eulen.
+ * @param {{ maxAttempts?: number, pollDelayMs?: number }=} options Politica async opcional.
+ * @param {string=} requestId Request id opcional para correlacao.
+ * @returns {Promise<EulenDepositStatusResponsePayload>} Status remoto validado.
+ */
+export async function resolveEulenDepositStatusResponse(response, options = {}, requestId) {
+    const resolvedResponse = await resolveEulenAsyncResponse(response, options);
+    return assertEulenDepositStatusResponsePayload(resolvedResponse.data, requestId);
+}
 /**
  * Executa uma chamada padronizada para a Eulen no contexto de um tenant.
  *
  * @param {{ eulenApiBaseUrl: string, eulenApiTimeoutMs: number }} runtimeConfig Configuracao segura do runtime.
  * @param {{ apiToken?: string, partnerId?: string }} credentials Credenciais resolvidas do tenant.
- * @param {{
- *   path: string,
- *   method?: string,
- *   query?: Record<string, string | undefined>,
- *   body?: Record<string, unknown>,
- *   nonce?: string,
- *   asyncMode?: string
- * }} request Configuracao da chamada atual.
- * @returns {Promise<{
- *   ok: boolean,
- *   status: number,
- *   nonce: string,
- *   asyncMode: "auto" | "true" | "false",
- *   headers: Record<string, string>,
- *   data: unknown
- * }>} Resposta normalizada da integracao.
+ * @param {EulenApiRequest} request Configuracao da chamada atual.
+ * @returns {Promise<EulenApiResponse<unknown>>} Resposta normalizada da integracao.
  */
 export async function requestEulenApi(runtimeConfig, credentials, request) {
-  const normalizedCredentials = assertEulenCredentials(credentials);
-  const { headers, nonce, asyncMode } = buildEulenRequestHeaders({
-    apiToken: normalizedCredentials.apiToken,
-    partnerId: normalizedCredentials.partnerId,
-    nonce: request.nonce,
-    asyncMode: request.asyncMode,
-    contentType: request.body ? "application/json" : undefined,
-  });
-  const url = buildEulenUrl(runtimeConfig.eulenApiBaseUrl, request.path, request.query);
-  const timeoutMs = runtimeConfig.eulenApiTimeoutMs;
-  const { controller, cleanup } = createTimeoutController(timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      method: request.method ?? "GET",
-      headers,
-      body: request.body ? JSON.stringify(request.body) : undefined,
-      signal: controller.signal,
+    const normalizedCredentials = assertEulenCredentials(credentials);
+    const { headers, nonce, asyncMode } = buildEulenRequestHeaders({
+        apiToken: normalizedCredentials.apiToken,
+        partnerId: normalizedCredentials.partnerId,
+        nonce: request.nonce,
+        asyncMode: request.asyncMode,
+        contentType: request.body ? "application/json" : undefined,
     });
-    const data = await parseEulenResponseBody(response);
-
-    if (!response.ok) {
-      throw new EulenApiError("Eulen API request failed.", {
-        status: response.status,
-        nonce,
-        path: request.path,
-        data,
-      });
+    const url = buildEulenUrl(runtimeConfig.eulenApiBaseUrl, request.path, request.query);
+    const timeoutMs = runtimeConfig.eulenApiTimeoutMs;
+    const { controller, cleanup } = createTimeoutController(timeoutMs);
+    try {
+        const response = await fetch(url, {
+            method: request.method ?? "GET",
+            headers,
+            body: request.body ? JSON.stringify(request.body) : undefined,
+            signal: controller.signal,
+        });
+        const data = await parseEulenResponseBody(response);
+        if (!response.ok) {
+            throw new EulenApiError("Eulen API request failed.", {
+                status: response.status,
+                nonce,
+                path: request.path,
+                data,
+            });
+        }
+        return {
+            ok: response.ok,
+            status: response.status,
+            nonce,
+            asyncMode,
+            headers: Object.fromEntries(response.headers.entries()),
+            data,
+        };
     }
-
-    return {
-      ok: response.ok,
-      status: response.status,
-      nonce,
-      asyncMode,
-      headers: Object.fromEntries(response.headers.entries()),
-      data,
-    };
-  } catch (error) {
-    if (error instanceof EulenApiError) {
-      throw error;
+    catch (error) {
+        if (error instanceof EulenApiError) {
+            throw error;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+            throw new EulenApiError("Eulen API request timed out.", {
+                nonce,
+                path: request.path,
+                timeoutMs,
+            });
+        }
+        throw new EulenApiError("Unexpected Eulen API error.", {
+            nonce,
+            path: request.path,
+            cause: error instanceof Error ? error.message : String(error),
+        });
     }
-
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new EulenApiError("Eulen API request timed out.", {
-        nonce,
-        path: request.path,
-        timeoutMs,
-      });
+    finally {
+        cleanup();
     }
-
-    throw new EulenApiError("Unexpected Eulen API error.", {
-      nonce,
-      path: request.path,
-      cause: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    cleanup();
-  }
 }
-
 /**
  * Ping de conectividade e autenticacao basica da Eulen.
  *
  * @param {{ eulenApiBaseUrl: string, eulenApiTimeoutMs: number }} runtimeConfig Configuracao do runtime.
  * @param {{ apiToken?: string, partnerId?: string }} credentials Credenciais do tenant.
  * @param {{ nonce?: string, asyncMode?: string }=} options Opcoes da chamada.
- * @returns {Promise<ReturnType<typeof requestEulenApi>>} Resposta padronizada.
+ * @returns {Promise<EulenApiResponse<unknown>>} Resposta padronizada.
  */
 export function pingEulen(runtimeConfig, credentials, options = {}) {
-  return requestEulenApi(runtimeConfig, credentials, {
-    path: "/ping",
-    method: "GET",
-    nonce: options.nonce,
-    asyncMode: options.asyncMode,
-  });
+    return requestEulenApi(runtimeConfig, credentials, {
+        path: "/ping",
+        method: "GET",
+        nonce: options.nonce,
+        asyncMode: options.asyncMode,
+    });
 }
-
 /**
  * Cria uma cobranca Pix -> DePix usando a conta correta do tenant.
  *
  * @param {{ eulenApiBaseUrl: string, eulenApiTimeoutMs: number }} runtimeConfig Configuracao do runtime.
  * @param {{ apiToken?: string, partnerId?: string }} credentials Credenciais do tenant.
- * @param {{ body: Record<string, unknown>, nonce?: string, asyncMode?: string }} options Opcoes da chamada.
- * @returns {Promise<ReturnType<typeof requestEulenApi>>} Resposta padronizada.
+ * @param {{ body: unknown, nonce?: string, asyncMode?: string, requestId?: string }} options Opcoes da chamada.
+ * @returns {Promise<EulenApiResponse<unknown>>} Resposta padronizada.
  */
 export function createEulenDeposit(runtimeConfig, credentials, options) {
-  return requestEulenApi(runtimeConfig, credentials, {
-    path: "/deposit",
-    method: "POST",
-    body: assertRequiredDepositSplit(options.body),
-    nonce: options.nonce,
-    asyncMode: options.asyncMode,
-  });
+    return requestEulenApi(runtimeConfig, credentials, {
+        path: "/deposit",
+        method: "POST",
+        body: { ...assertEulenCreateDepositRequest(options.body, options.requestId) },
+        nonce: options.nonce,
+        asyncMode: options.asyncMode,
+    });
 }
-
 /**
  * Consulta o status de um deposito especifico.
  *
  * @param {{ eulenApiBaseUrl: string, eulenApiTimeoutMs: number }} runtimeConfig Configuracao do runtime.
  * @param {{ apiToken?: string, partnerId?: string }} credentials Credenciais do tenant.
  * @param {{ id: string, nonce?: string, asyncMode?: string }} options Opcoes da chamada.
- * @returns {Promise<ReturnType<typeof requestEulenApi>>} Resposta padronizada.
+ * @returns {Promise<EulenApiResponse<unknown>>} Resposta padronizada.
  */
 export function getEulenDepositStatus(runtimeConfig, credentials, options) {
-  return requestEulenApi(runtimeConfig, credentials, {
-    path: "/deposit-status",
-    method: "GET",
-    query: {
-      id: options.id,
-    },
-    nonce: options.nonce,
-    asyncMode: options.asyncMode,
-  });
+    return requestEulenApi(runtimeConfig, credentials, {
+        path: "/deposit-status",
+        method: "GET",
+        query: {
+            id: options.id,
+        },
+        nonce: options.nonce,
+        asyncMode: options.asyncMode,
+    });
 }
-
 /**
  * Lista depositos por janela para reconciliacao e fallback.
  *
  * @param {{ eulenApiBaseUrl: string, eulenApiTimeoutMs: number }} runtimeConfig Configuracao do runtime.
  * @param {{ apiToken?: string, partnerId?: string }} credentials Credenciais do tenant.
  * @param {{ start: string, end: string, status?: string, nonce?: string, asyncMode?: string }} options Opcoes da chamada.
- * @returns {Promise<ReturnType<typeof requestEulenApi>>} Resposta padronizada.
+ * @returns {Promise<EulenApiResponse<unknown>>} Resposta padronizada.
  */
 export function listEulenDeposits(runtimeConfig, credentials, options) {
-  return requestEulenApi(runtimeConfig, credentials, {
-    path: "/deposits",
-    method: "GET",
-    query: {
-      start: options.start,
-      end: options.end,
-      status: options.status,
-    },
-    nonce: options.nonce,
-    asyncMode: options.asyncMode,
-  });
+    return requestEulenApi(runtimeConfig, credentials, {
+        path: "/deposits",
+        method: "GET",
+        query: {
+            start: options.start,
+            end: options.end,
+            status: options.status,
+        },
+        nonce: options.nonce,
+        asyncMode: options.asyncMode,
+    });
 }
