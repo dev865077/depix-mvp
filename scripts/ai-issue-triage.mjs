@@ -572,8 +572,13 @@ export function buildIssuePlanningDispatchInputs(issueNumber) {
  * @returns {string} Branch or ref accepted by workflow_dispatch.
  */
 export function resolveIssuePlanningDispatchRef(event, env = process.env) {
-  return env.GITHUB_REF_NAME?.trim()
-    || env.GITHUB_REF?.replace(/^refs\/heads\//, "")
+  const refName = env.GITHUB_REF_NAME?.trim();
+  const ref = env.GITHUB_REF?.trim();
+  const normalizedRef = ref?.startsWith("refs/heads/") ? ref.replace(/^refs\/heads\//, "") : ref;
+  const dispatchRef = [refName, normalizedRef]
+    .find((candidate) => candidate && !candidate.startsWith("refs/pull/") && !/^\d+\/merge$/u.test(candidate));
+
+  return dispatchRef
     || event?.repository?.default_branch
     || "main";
 }

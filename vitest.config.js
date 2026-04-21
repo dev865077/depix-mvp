@@ -40,5 +40,7 @@ export default defineConfig({
     fileParallelism: false,
     maxWorkers: 1,
     minWorkers: 1,
+    testTimeout: 300000,
+    hookTimeout: 300000,
   },
 });

@@ -158,7 +158,7 @@ async function requestDepositRecheck(options = {}) {
     headers.authorization = "Bearer ops-route-test-token";
   }
 
-  return app.request(
+  const response = await app.request(
     options.url ?? "https://example.com/ops/alpha/recheck/deposit",
     {
       method: "POST",
@@ -169,6 +169,13 @@ async function requestDepositRecheck(options = {}) {
     },
     createWorkerEnv(options.envOverrides),
   );
+  const body = await response.text();
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 afterEach(function restoreRecheckMocks() {
