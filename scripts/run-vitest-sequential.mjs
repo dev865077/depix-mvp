@@ -5,8 +5,13 @@ import { fileURLToPath } from "node:url";
 
 export const CLOUDFLARE_POOL_MARKER = "@vitest-pool cloudflare";
 const CLOUDFLARE_POOL_MARKER_PATTERN = /^\s*\/\/\s*@vitest-pool cloudflare\s*$/mu;
+const TEST_FILE_EXTENSIONS = [".test.js", ".test.ts"];
 const cliArgs = process.argv.slice(2);
 const vitestBin = join(process.cwd(), "node_modules", ".bin", "vitest");
+
+export function isTestFile(path) {
+  return TEST_FILE_EXTENSIONS.some((extension) => path.endsWith(extension));
+}
 
 export function listTestFiles(directory) {
   return readdirSync(directory)
@@ -18,7 +23,7 @@ export function listTestFiles(directory) {
         return listTestFiles(path);
       }
 
-      return path.endsWith(".test.js") ? [path] : [];
+      return isTestFile(path) ? [path] : [];
     })
     .sort((left, right) => {
       const leftIsDatabaseRepositorySpec = left.endsWith("db.repositories.test.js");
@@ -50,7 +55,7 @@ export function splitTestFilesByPool(testFiles) {
 
 export function splitCliArguments(args) {
   return args.reduce((result, arg) => {
-    if (arg.endsWith(".test.js")) {
+    if (isTestFile(arg)) {
       result.testFiles.push(arg);
       return result;
     }

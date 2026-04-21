@@ -35,7 +35,7 @@ const workersPoolOptions = {
 export default defineConfig({
   plugins: [cloudflareTest(workersPoolOptions)],
   test: {
-    include: ["test/**/*.test.js"],
+    include: ["test/**/*.test.{js,ts}"],
     pool: cloudflarePool(workersPoolOptions),
     fileParallelism: false,
     maxWorkers: 1,
