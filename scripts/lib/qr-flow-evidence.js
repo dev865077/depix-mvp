@@ -31,7 +31,18 @@ export const ENVIRONMENT_WORKER_HOSTS = Object.freeze({
  *
  * @type {ReadonlySet<string>}
  */
-const SUPPORTED_OPTION_KEYS = new Set(["env", "tenant", "since", "limit", "issue", "order-id", "deposit-entry-id"]);
+const SUPPORTED_OPTION_KEYS = new Set([
+  "env",
+  "tenant",
+  "since",
+  "limit",
+  "issue",
+  "order-id",
+  "deposit-entry-id",
+  "require-split-proof",
+]);
+
+const FLAG_OPTION_KEYS = new Set(["require-split-proof"]);
 
 /**
  * Nome da variavel de ambiente que permite ao operador apontar um Wrangler
@@ -90,7 +101,8 @@ export function buildHealthUrl(environment) {
  *   orderId: string | null,
  *   depositEntryId: string | null,
  *   limit: number,
- *   issueNumber: number
+ *   issueNumber: number,
+ *   requireSplitProof: boolean
  * }} Opcoes normalizadas.
  */
 export function readEvidenceCliOptions(argv) {
@@ -110,6 +122,11 @@ export function readEvidenceCliOptions(argv) {
       throw new Error(`Unsupported option '${current}'.`);
     }
 
+    if (FLAG_OPTION_KEYS.has(key)) {
+      values.set(key, "true");
+      continue;
+    }
+
     const next = argv[index + 1];
 
     if (!next || next.startsWith("--")) {
@@ -127,6 +144,7 @@ export function readEvidenceCliOptions(argv) {
   const depositEntryId = values.get("deposit-entry-id")?.trim() || null;
   const issueNumber = Number.parseInt(values.get("issue") ?? "90", 10);
   const limit = Number.parseInt(values.get("limit") ?? "5", 10);
+  const requireSplitProof = values.get("require-split-proof") === "true";
 
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
     throw new Error("The --issue option must be a positive integer.");
@@ -152,7 +170,21 @@ export function readEvidenceCliOptions(argv) {
     depositEntryId,
     limit,
     issueNumber,
+    requireSplitProof,
   };
+}
+
+export class SplitProofRequirementError extends Error {
+  /**
+   * @param {string} status Status de splitProof observado.
+   * @param {string} markdown Relatorio ja renderizado.
+   */
+  constructor(status, markdown) {
+    super(`Split proof requirement failed with status '${status}'.`);
+    this.name = "SplitProofRequirementError";
+    this.status = status;
+    this.markdown = markdown;
+  }
 }
 
 /**
@@ -370,7 +402,7 @@ export function createQrFlowEvidenceCollector(dependencies) {
     const gitCommit = runCommand("git", ["rev-parse", "HEAD"]).trim();
     const splitProof = buildSplitProofReport(orders, deposits, depositEvents);
 
-    return formatEvidenceMarkdown({
+    const markdown = formatEvidenceMarkdown({
       issueNumber: options.issueNumber,
       environment: options.environment,
       generatedAt: now().toISOString(),
@@ -389,6 +421,12 @@ export function createQrFlowEvidenceCollector(dependencies) {
       deposits,
       depositEvents,
     });
+
+    if (options.requireSplitProof && splitProof.status !== "proved") {
+      throw new SplitProofRequirementError(splitProof.status, markdown);
+    }
+
+    return markdown;
   }
 
   return {
@@ -418,6 +456,10 @@ export async function runQrFlowEvidenceCli(dependencies) {
     stdout?.write(`${markdown}\n`);
     return 0;
   } catch (error) {
+    if (error instanceof SplitProofRequirementError) {
+      stdout?.write(`${error.markdown}\n`);
+    }
+
     stderr?.write(`[collect-qr-flow-evidence] ${formatUnknownError(error)}\n`);
     return 1;
   }

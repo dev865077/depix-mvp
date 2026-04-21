@@ -45,7 +45,18 @@ describe("qr flow evidence helpers", () => {
       depositEntryId: "deposit_123",
       limit: 3,
       issueNumber: 90,
+      requireSplitProof: false,
     });
+  });
+
+  it("parses the split proof release gate as an explicit flag", function assertSplitProofFlagParsing() {
+    const options = readEvidenceCliOptions([
+      "--env",
+      "test",
+      "--require-split-proof",
+    ]);
+
+    expect(options.requireSplitProof).toBe(true);
   });
 
   it("uses the canonical public health hosts for remote environments", function assertHealthUrlMapping() {
@@ -465,6 +476,114 @@ describe("qr flow evidence helpers", () => {
     );
     expect(calls.filter((call) => call.file === "wrangler-test" && call.args[1] === "execute")).toHaveLength(3);
     expect(calls.every((call) => call.options.timeout === DEFAULT_OPERATION_TIMEOUT_MS)).toBe(true);
+  });
+
+  it("returns a failing exit code when required split proof is not proved", async function assertRequiredSplitProofGate() {
+    const output = {
+      stdout: "",
+      stderr: "",
+    };
+    const writableStdout = {
+      write(chunk) {
+        output.stdout += chunk;
+        return true;
+      },
+    };
+    const writableStderr = {
+      write(chunk) {
+        output.stderr += chunk;
+        return true;
+      },
+    };
+    const execFileSync = (file, args) => {
+      if (file === "git") {
+        return "commit_cli\n";
+      }
+
+      if (args[0] === "deployments") {
+        return "Current Version ID: version_cli";
+      }
+
+      if (args[0] === "d1" && args[1] === "migrations") {
+        return "No migrations to apply!";
+      }
+
+      if (args[0] === "d1" && args[1] === "execute" && args.join(" ").includes("FROM orders")) {
+        return JSON.stringify([
+          {
+            results: [
+              {
+                order_id: "order_cli",
+                split_address: "lq1split",
+                split_fee: "1.00%",
+              },
+            ],
+          },
+        ]);
+      }
+
+      if (args[0] === "d1" && args[1] === "execute" && args.join(" ").includes("FROM deposit_events e")) {
+        return JSON.stringify([
+          {
+            results: [
+              {
+                order_id: "order_cli",
+                bank_tx_id: "fitbank_cli",
+                blockchain_tx_id: null,
+              },
+            ],
+          },
+        ]);
+      }
+
+      if (args[0] === "d1" && args[1] === "execute" && args.join(" ").includes("FROM deposits d")) {
+        return JSON.stringify([
+          {
+            results: [
+              {
+                order_id: "order_cli",
+                external_status: "depix_sent",
+              },
+            ],
+          },
+        ]);
+      }
+
+      if (args[0] === "d1" && args[1] === "execute") {
+        return JSON.stringify([
+          {
+            results: [],
+          },
+        ]);
+      }
+
+      throw new Error(`Unexpected command ${file} ${args.join(" ")}`);
+    };
+
+    const exitCode = await runQrFlowEvidenceCli({
+      argv: ["--env", "test", "--tenant", "alpha", "--limit", "1", "--require-split-proof"],
+      cwd: "/repo",
+      platform: "linux",
+      nodeBinary: "node-test",
+      env: {
+        WRANGLER_BIN: "wrangler-test",
+      },
+      fileExists: () => false,
+      execFileSync,
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "ok" }),
+      }),
+      now: () => new Date("2026-04-21T13:00:00.000Z"),
+      stdout: writableStdout,
+      stderr: writableStderr,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(output.stdout).toContain("### Split proof");
+    expect(output.stdout).toContain("\"status\": \"missing_onchain_tx\"");
+    expect(output.stderr).toContain("Split proof requirement failed with status 'missing_onchain_tx'.");
   });
 
   it("renders a markdown report ready for issue evidence", function assertMarkdownRendering() {

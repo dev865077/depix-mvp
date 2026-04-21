@@ -127,6 +127,7 @@ node scripts/collect-qr-flow-evidence.mjs --env test --tenant alpha --since 2026
 ```
 
 Use `--order-id` e `--deposit-entry-id` quando a evidencia precisar ser restrita a um agregado especifico.
+Use `--require-split-proof` quando a evidencia for gate de release ou auditoria de split: o script ainda imprime o relatorio, mas retorna exit code `1` se `splitProof.status` nao for `proved`.
 
 ## Regra operacional
 
