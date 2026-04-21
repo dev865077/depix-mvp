@@ -295,6 +295,172 @@ export async function listDepositsNeedingQrIdReconciliation(
 }
 
 /**
+ * Lista depositos Telegram pendentes elegiveis para o cron bounded.
+ *
+ * A selecao cruza o agregado de pedido para evitar reconciliar cobrancas fora
+ * do fluxo visivel `awaiting_payment`/`pending`. O limite e normalizado antes
+ * do bind para garantir que chamada malformada nao vire varredura ilimitada.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} sinceIso Limite inferior da janela de reconciliacao.
+ * @param {number} limit Limite maximo por tenant.
+ * @param {string} [staleClaimBeforeIso=sinceIso] Claims anteriores a este instante podem ser retomados.
+ * @returns {Promise<DepositRecord[]>} Depositos candidatos em ordem de antiguidade.
+ */
+export async function listPendingTelegramDepositsForScheduledReconciliation(
+  db: D1Database,
+  tenantId: string,
+  sinceIso: string,
+  limit: number,
+  staleClaimBeforeIso = sinceIso,
+): Promise<DepositRecord[]> {
+  const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 0;
+
+  if (normalizedLimit === 0) {
+    return [];
+  }
+
+  const result = await db.prepare(`
+    SELECT
+      d.tenant_id AS tenantId,
+      d.deposit_entry_id AS depositEntryId,
+      d.qr_id AS qrId,
+      d.order_id AS orderId,
+      d.nonce AS nonce,
+      d.qr_copy_paste AS qrCopyPaste,
+      d.qr_image_url AS qrImageUrl,
+      d.external_status AS externalStatus,
+      d.expiration AS expiration,
+      d.created_at AS createdAt,
+      d.updated_at AS updatedAt
+    FROM deposits d
+    INNER JOIN orders o
+      ON o.tenant_id = d.tenant_id
+     AND o.order_id = d.order_id
+    LEFT JOIN scheduled_deposit_reconciliation_claims c
+      ON c.tenant_id = d.tenant_id
+     AND c.deposit_entry_id = d.deposit_entry_id
+    WHERE d.tenant_id = ?
+      AND o.channel = 'telegram'
+      AND o.current_step = 'awaiting_payment'
+      AND o.status = 'pending'
+      AND d.external_status = 'pending'
+      AND (
+        c.claimed_at IS NULL
+        OR julianday(c.claimed_at) < julianday(?)
+      )
+      AND (
+        julianday(d.updated_at) >= julianday(?)
+        OR julianday(d.created_at) >= julianday(?)
+      )
+    ORDER BY julianday(d.updated_at) ASC, julianday(d.created_at) ASC
+    LIMIT ?
+  `).bind(
+    tenantId,
+    staleClaimBeforeIso,
+    sinceIso,
+    sinceIso,
+    normalizedLimit,
+  ).all<DepositRecord>();
+
+  return result.results;
+}
+
+/**
+ * Tenta adquirir a posse temporaria de um deposito para uma execucao agendada.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @param {string} expectedExternalStatus Status visto pela selecao.
+ * @param {string} expectedUpdatedAt Timestamp visto pela selecao.
+ * @param {string} claimedAtIso Momento do claim.
+ * @param {string} staleClaimBeforeIso Claims anteriores a este instante podem ser retomados.
+ * @returns {Promise<boolean>} Verdadeiro quando o claim foi adquirido.
+ */
+export async function claimPendingTelegramDepositForScheduledReconciliation(
+  db: D1Database,
+  tenantId: string,
+  depositEntryId: string,
+  expectedExternalStatus: string,
+  expectedUpdatedAt: string,
+  claimedAtIso: string,
+  staleClaimBeforeIso: string,
+): Promise<boolean> {
+  await db.prepare(`
+    DELETE FROM scheduled_deposit_reconciliation_claims
+    WHERE tenant_id = ?
+      AND deposit_entry_id = ?
+      AND julianday(claimed_at) < julianday(?)
+  `).bind(
+    tenantId,
+    depositEntryId,
+    staleClaimBeforeIso,
+  ).run();
+
+  const result = await db.prepare(`
+    INSERT OR IGNORE INTO scheduled_deposit_reconciliation_claims (
+      tenant_id,
+      deposit_entry_id,
+      claimed_at
+    )
+    SELECT ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1
+      FROM deposits
+      WHERE tenant_id = ?
+        AND deposit_entry_id = ?
+        AND external_status = ?
+        AND updated_at = ?
+    )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM scheduled_deposit_reconciliation_claims
+        WHERE tenant_id = ?
+          AND deposit_entry_id = ?
+      )
+  `).bind(
+    tenantId,
+    depositEntryId,
+    claimedAtIso,
+    tenantId,
+    depositEntryId,
+    expectedExternalStatus,
+    expectedUpdatedAt,
+    tenantId,
+    depositEntryId,
+  ).run();
+
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
+/**
+ * Solta um claim agendado ao fim do processamento, com ou sem erro.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @returns {Promise<boolean>} Verdadeiro quando uma linha foi liberada.
+ */
+export async function releaseScheduledDepositReconciliationClaim(
+  db: D1Database,
+  tenantId: string,
+  depositEntryId: string,
+): Promise<boolean> {
+  const result = await db.prepare(`
+    DELETE FROM scheduled_deposit_reconciliation_claims
+    WHERE tenant_id = ?
+      AND deposit_entry_id = ?
+  `).bind(
+    tenantId,
+    depositEntryId,
+  ).run();
+
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
+/**
  * Atualiza parcialmente um deposito usando `depositEntryId` como ancora local.
  *
  * @param {D1Database} db Database D1.

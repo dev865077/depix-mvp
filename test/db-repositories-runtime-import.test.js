@@ -14,7 +14,7 @@ async function assertNodeImport(specifier) {
     "process.exit(1);",
     "});",
   ].join("");
-  const { stdout } = await execFileAsync(process.execPath, ["-e", command, specifier], {
+  const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "-e", command, specifier], {
     cwd: process.cwd(),
   });
 
