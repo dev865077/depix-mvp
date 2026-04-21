@@ -31,6 +31,7 @@ Estado atual:
 - o comando `/status` consulta o pedido aberto atual; se nao houver pedido aberto, ele mostra o ultimo pedido relevante do mesmo tenant/usuario/canal sem criar ou alterar linhas
 - `/status` e somente leitura: nao reabre pedido terminal, nao cria pedido novo e nao muda o estado do agregado
 - mensagens invalidas de valor ou endereco nao avancam o pedido e retornam orientacao de correcao
+- as mensagens de `wallet`, `confirmation` e do valor invalido agora sao renderizadas com entidades do Telegram, com copy mais curta nessas tres respostas
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `confirmation`
 - pedidos terminais e `manual_review` nao devem ser retomados como conversa editavel pelo Telegram
@@ -96,20 +97,4 @@ Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: B
 
 O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` cobre um deposito especifico e `deposits` cobre uma janela curta quando callbacks atrasarem ou faltarem.
 
-Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e completar a associacao.
-
-## Telegram canonico e edicao in-place
-
-O fluxo Telegram agora trata a mensagem de QR/status/conclusao como uma mensagem canonica por pedido quando possivel.
-
-Campos persistidos no pedido:
-
-- `telegram_canonical_message_id`
-- `telegram_canonical_message_kind`
-
-Contrato observado no codigo atual:
-
-- a primeira entrega canonica pode ser enviada como `text` ou `photo`
-- quando existe `telegram_canonical_message_id`, o runtime tenta editar a mensagem em vez de enviar uma nova
-- se a edicao falhar por um erro benigno de Telegram, o fluxo pode cair para envio novo sem duplicar o contrato de negocio
-- quando o pedido ja possui metadados da mensagem canonica, a notificacao de pagamento confirmado pode editar a mesma mensagem em vez de publicar outra
+Na persistencia local, `depositEntryId` e `qrId`

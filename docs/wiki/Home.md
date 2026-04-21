@@ -78,41 +78,4 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 1. [Leitura Inicial](Leitura-Inicial)
 2. [Visao Geral do Produto](Visao-Geral-do-Produto)
 3. [Arquitetura Geral](Arquitetura-Geral)
-4. [Estrutura do Repositorio](Estrutura-do-Repositorio)
-5. [Ambientes e Segredos](Ambientes-e-Segredos)
-
-## Caminhos por necessidade
-
-### Produto
-
-- [Visao Geral do Produto](Visao-Geral-do-Produto)
-- [Escopo e Fluxo](Escopo-e-Fluxo)
-- [Roadmap e Backlog](Roadmap-e-Backlog)
-
-### Arquitetura
-
-- [Arquitetura Geral](Arquitetura-Geral)
-- [Tenancy e Roteamento](Tenancy-e-Roteamento)
-- [Modelo de Dados](Modelo-de-Dados)
-- [XState e Fluxo de Pedidos](XState-e-Fluxo-de-Pedidos)
-- [Integracoes Externas](Integracoes-Externas)
-
-### Engenharia
-
-- [Estrutura do Repositorio](Estrutura-do-Repositorio)
-- [Contribuicao e PRs](Contribuicao-e-PRs)
-- [Testes e Qualidade](Testes-e-Qualidade)
-- [Migracao TypeScript](Migracao-TypeScript)
-- [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)
-
-### Operacao
-
-- [Ambientes e Segredos](Ambientes-e-Segredos)
-- [Deploy e Runbooks](Deploy-e-Runbooks)
-- [Teste Humano MVP](Teste-Humano-MVP)
-- [Release 0.1 Readiness](Release-0.1-Readiness)
-
-### Governanca
-
-- [Governanca Tecnica](Governanca-Tecnica)
-- [ADRs](ADRs)
+4. [Estrutura do Repositorio

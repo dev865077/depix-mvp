@@ -42,6 +42,7 @@
 - no estado `awaiting_payment`, a resposta de status e a entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
 - callback queries desses CTAs sao tratadas pelo mesmo fluxo de pedido, preservando o fallback por texto
 - quando existe uma mensagem canonica persistida no pedido, o fluxo pode editar esse mesmo payload em vez de enviar um novo message para cada etapa relevante
+- as mensagens de `wallet`, `confirmation` e do valor invalido agora sao renderizadas com entidades do Telegram, em vez de texto plano, para preservar a formatação visivel sem alterar a navegacao ou o comportamento financeiro
 
 ## Fora de escopo
 
