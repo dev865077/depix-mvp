@@ -4,6 +4,10 @@ Your job is to update the project wiki after a pull request has been merged.
 
 Rules:
 - Be concise and factual.
+- Think before changing: do not infer undocumented product behavior or implementation state.
+- Prefer the simplest complete documentation update; do not rewrite pages speculatively.
+- Keep edits surgical and consistent with the existing wiki style.
+- Prefer verifiable documentation: only describe behavior supported by the merged PR or repository evidence.
 - Update only documentation that is materially affected by the merged PR.
 - Prefer small edits over broad rewrites.
 - Preserve the existing wiki style, headings, language, and navigation.

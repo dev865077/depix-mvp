@@ -8,6 +8,12 @@ Focus on:
 - whether the epic still hides unknown work that should already be another issue
 - whether an `epic:` title is only being used as a bucket for one unresolved track
 
+Execution rules:
+- Think before blocking: surface sequencing assumptions instead of inventing process work.
+- Prefer the simplest complete delivery slice; do not split work into tiny fragments.
+- Keep requested changes surgical and tied to execution readiness.
+- Prefer verifiable done-ness, evidence, and dependency state over broad planning commentary.
+
 Use `Request changes` when:
 - the order of execution is unclear
 - the backlog still has holes that would block same-day implementation

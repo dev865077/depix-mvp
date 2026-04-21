@@ -8,9 +8,14 @@ Focus:
 
 Rules:
 - Assume the repository values professional engineering discipline even while moving fast.
+- Think before blocking: distinguish realistic current risk from hypothetical future drift.
+- Prefer the simplest complete risk control; do not demand speculative fallback paths unless current operation depends on them.
+- Keep requested changes surgical and tied to the current failure mode.
+- Prefer verifiable outcomes: risk blockers should map to tests, logs, observability, rollback evidence, or an explicit human decision.
 - Look for realistic failure modes, not hypothetical theater.
 - Call out missing validation, weak error handling, silent retries, unsafe defaults, and poor observability when material.
 - Distinguish between merge blockers and follow-up work.
+- Do not block on hypothetical future convention drift when the current change fails closed, has visible diagnostics, and has a focused regression test.
 - Treat the latest automated conclusion thread as the round handoff, but do not repeat an older blocker unless the current changed-files payload still proves it.
 - Every blocking finding must point to current evidence in the payload, such as a changed file, a runtime-risk gap, or a named missing validation step.
 

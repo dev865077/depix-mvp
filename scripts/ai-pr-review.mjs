@@ -1873,13 +1873,15 @@ function extractPullRequestNumberFromText(value) {
     return null;
   }
 
-  const match = value.match(/(?:\[PR\s*#|Pull request origem:\s*#|Pull request origin:\s*#)\s*(\d+)/i);
+  const match = value.match(
+    /<!--\s*ai-pr-discussion-pr-number\s*:\s*(\d+)\s*-->|(?:\[PR\s*#|Pull request origem:\s*#|Pull request origin:\s*#)\s*(\d+)|\/pull\/(\d+)(?:\b|[/?#])/i,
+  );
 
   if (!match) {
     return null;
   }
 
-  const number = Number.parseInt(match[1], 10);
+  const number = Number.parseInt(match[1] ?? match[2] ?? match[3], 10);
 
   return Number.isInteger(number) && number > 0 ? number : null;
 }
@@ -3358,6 +3360,12 @@ export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
   const resolverIndex = prReviewWorkflow.indexOf("Resolve discussion pull request head");
   const missingPullRequestGuardIndex = prReviewWorkflow.indexOf("Could not resolve the linked pull request");
   const resolverFailureIndex = prReviewWorkflow.indexOf("exit 1", missingPullRequestGuardIndex);
+  const canonicalMarkerParserIndex = prReviewWorkflow.indexOf("ai-pr-discussion-pr-number", resolverIndex);
+  const originParserIndex = prReviewWorkflow.indexOf("Pull request origem", resolverIndex);
+  const pullUrlParserIndex = Math.max(
+    prReviewWorkflow.indexOf("/pull/", resolverIndex),
+    prReviewWorkflow.indexOf("\\/pull\\/", resolverIndex),
+  );
   const pullRequestApiIndex = prReviewWorkflow.indexOf('gh api "repos/${REPOSITORY}/pulls/${pr_number}"');
   const discussionCheckoutIndex = prReviewWorkflow.indexOf("Checkout discussion pull request head", pullRequestApiIndex);
   const discussionOnlyRefIndex = prReviewWorkflow.indexOf("ref: ${{ steps.discussion-pr-head.outputs.sha }}", discussionCheckoutIndex);
@@ -3368,6 +3376,9 @@ export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
     && resolverIndex > discussionCommentIndex
     && missingPullRequestGuardIndex > resolverIndex
     && resolverFailureIndex > missingPullRequestGuardIndex
+    && canonicalMarkerParserIndex > resolverIndex
+    && originParserIndex > resolverIndex
+    && pullUrlParserIndex > resolverIndex
     && pullRequestApiIndex > resolverIndex
     && discussionCheckoutIndex > pullRequestApiIndex
     && discussionOnlyRefIndex > discussionCheckoutIndex
@@ -4031,6 +4042,7 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
  */
 export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model) {
   return [
+    `<!-- ai-pr-discussion-pr-number:${pullRequest.number} -->`,
     `Pull request origem: #${pullRequest.number} - ${sanitizePlainTextForGitHubTitle(pullRequest.title)} (${pullRequest.html_url})`,
     "",
     "## Discussion gate",

@@ -49,9 +49,20 @@ jobs:
           DISCUSSION_TITLE: ${{ github.event.discussion.title }}
           DISCUSSION_BODY: ${{ github.event.discussion.body }}
         run: |
-          discussion_text="${DISCUSSION_TITLE}
-          ${DISCUSSION_BODY}"
-          pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
+          pr_number="$(node - <<'NODE'
+          const text = `${process.env.DISCUSSION_TITLE ?? ""}
+          ${process.env.DISCUSSION_BODY ?? ""}`;
+          const patterns = [
+            /<!--\s*ai-pr-discussion-pr-number\s*:\s*(\d+)\s*-->/i,
+            /\[PR\s*#(\d+)\]/i,
+            /Pull request origem:\s*#(\d+)/i,
+            /Pull request origin:\s*#(\d+)/i,
+            /\/pull\/(\d+)(?:\b|[/?#])/i,
+          ];
+          const match = patterns.map((pattern) => text.match(pattern)).find(Boolean);
+          process.stdout.write(match?.[1] ?? "");
+          NODE
+          )"
           if [ -z "$pr_number" ]; then
             echo "::error::Could not resolve the linked pull request from the Discussion title/body."
             exit 1
@@ -107,9 +118,20 @@ jobs:
           DISCUSSION_TITLE: ${{ github.event.discussion.title }}
           DISCUSSION_BODY: ${{ github.event.discussion.body }}
         run: |
-          discussion_text="${DISCUSSION_TITLE}
-          ${DISCUSSION_BODY}"
-          pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
+          pr_number="$(node - <<'NODE'
+          const text = `${process.env.DISCUSSION_TITLE ?? ""}
+          ${process.env.DISCUSSION_BODY ?? ""}`;
+          const patterns = [
+            /<!--\s*ai-pr-discussion-pr-number\s*:\s*(\d+)\s*-->/i,
+            /\[PR\s*#(\d+)\]/i,
+            /Pull request origem:\s*#(\d+)/i,
+            /Pull request origin:\s*#(\d+)/i,
+            /\/pull\/(\d+)(?:\b|[/?#])/i,
+          ];
+          const match = patterns.map((pattern) => text.match(pattern)).find(Boolean);
+          process.stdout.write(match?.[1] ?? "");
+          NODE
+          )"
           if [ -z "$pr_number" ]; then
             echo "::error::Could not resolve the linked pull request from the Discussion title/body."
             exit 1
@@ -167,9 +189,20 @@ jobs:
           DISCUSSION_TITLE: ${{ github.event.discussion.title }}
           DISCUSSION_BODY: ${{ github.event.discussion.body }}
         run: |
-          discussion_text="${DISCUSSION_TITLE}
-          ${DISCUSSION_BODY}"
-          pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
+          pr_number="$(node - <<'NODE'
+          const text = `${process.env.DISCUSSION_TITLE ?? ""}
+          ${process.env.DISCUSSION_BODY ?? ""}`;
+          const patterns = [
+            /<!--\s*ai-pr-discussion-pr-number\s*:\s*(\d+)\s*-->/i,
+            /\[PR\s*#(\d+)\]/i,
+            /Pull request origem:\s*#(\d+)/i,
+            /Pull request origin:\s*#(\d+)/i,
+            /\/pull\/(\d+)(?:\b|[/?#])/i,
+          ];
+          const match = patterns.map((pattern) => text.match(pattern)).find(Boolean);
+          process.stdout.write(match?.[1] ?? "");
+          NODE
+          )"
           if [ -z "$pr_number" ]; then
             echo "::error::Could not resolve the linked pull request from the Discussion title/body."
             exit 1

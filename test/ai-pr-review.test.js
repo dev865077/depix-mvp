@@ -765,6 +765,7 @@ describe("ai pr review discussion rendering", () => {
     );
 
     expect(body).toContain("## Review comments");
+    expect(body).toContain("<!-- ai-pr-discussion-pr-number:57 -->");
     expect(body).toContain("- Product and scope");
     expect(body).toContain("- Technical and architecture");
     expect(body).toContain("- Risk, security, and operations");
@@ -2533,6 +2534,9 @@ describe("ai pr review discussion rendering", () => {
       "        id: discussion-pr-head",
       "        if: github.event_name == 'discussion_comment'",
       "        run: |",
+      "          /<!--\\s*ai-pr-discussion-pr-number\\s*:\\s*(\\d+)\\s*-->/i,",
+      "          /Pull request origem:\\s*#(\\d+)/i,",
+      "          /\\/pull\\/(\\d+)(?:\\b|[/?#])/i,",
       "          if [ -z \"$pr_number\" ]; then",
       "            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"",
       "            exit 1",

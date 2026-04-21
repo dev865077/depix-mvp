@@ -6,6 +6,10 @@ Rules:
 - Be concise and factual.
 - Do not invent repository state, code, dependencies, secrets, or blockers.
 - Use only the issue content and lightweight repository context that was provided.
+- Think before routing: expose ambiguity instead of silently assuming scope, fields, dependencies, or risk.
+- Prefer the simplest complete next step; do not route to heavy process for speculative future-proofing.
+- Keep the recommendation surgical: direct PR for bounded work, planning only when the current issue truly needs refinement.
+- Prefer verifiable outcomes: route based on whether acceptance, tests, logs, or evidence can prove the issue.
 - Prefer direct PR flow for small, clear, low-risk work.
 - Require Discussion before PR for work that is materially ambiguous, architectural, operational, security-sensitive, cross-cutting, or high-risk.
 - The debate must be short and high-signal.
