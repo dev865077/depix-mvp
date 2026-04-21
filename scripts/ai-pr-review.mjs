@@ -1642,6 +1642,48 @@ function findLatestAutomatedFinalComment(comments) {
 }
 
 /**
+ * Resolve the newest automated conclusion entry inside one final-comment thread.
+ *
+ * The root final comment stays as the canonical reply target, but later rounds
+ * append newer automated final-status replies below that same root. Follow-up
+ * blocker reconciliation must read the newest automated conclusion body rather
+ * than the original root body from the first failing round.
+ *
+ * @param {{ body?: string, id?: string, createdAt?: string, publishedAt?: string, replies?: { nodes?: any[] } } | null} finalComment Final-status root comment.
+ * @returns {{ body: string, id: string | null, createdAt: string }} Latest automated conclusion entry.
+ */
+function getLatestAutomatedConclusionEntry(finalComment) {
+  if (!finalComment || typeof finalComment.body !== "string") {
+    return {
+      body: "",
+      id: null,
+      createdAt: "unknown time",
+    };
+  }
+
+  const automatedEntries = [
+    {
+      body: finalComment.body,
+      id: finalComment.id ?? null,
+      createdAt: finalComment.publishedAt ?? finalComment.createdAt ?? "unknown time",
+    },
+    ...(finalComment.replies?.nodes ?? [])
+      .filter((reply) => isAutomatedDiscussionReply(reply))
+      .map((reply) => ({
+        body: typeof reply?.body === "string" ? reply.body : "",
+        id: reply?.id ?? null,
+        createdAt: reply?.createdAt ?? "unknown time",
+      })),
+  ];
+
+  return automatedEntries.at(-1) ?? {
+    body: "",
+    id: null,
+    createdAt: "unknown time",
+  };
+}
+
+/**
  * Extract a pull request number from one Discussion title/body string.
  *
  * @param {string} value Discussion title or body.
@@ -1690,19 +1732,7 @@ function buildLatestConclusionThreadContext(finalComment) {
     return "";
   }
 
-  const automatedEntries = [
-    {
-      body: finalComment.body,
-      createdAt: finalComment.publishedAt ?? finalComment.createdAt ?? "unknown time",
-    },
-    ...(finalComment.replies?.nodes ?? [])
-      .filter((reply) => isAutomatedDiscussionReply(reply))
-      .map((reply) => ({
-        body: reply.body,
-        createdAt: reply.createdAt ?? "unknown time",
-      })),
-  ];
-  const latestAutomatedEntry = automatedEntries.at(-1);
+  const latestAutomatedEntry = getLatestAutomatedConclusionEntry(finalComment);
   const humanReplies = getLatestHumanConclusionThreadReplies(finalComment.replies?.nodes ?? [])
     .filter((reply) => typeof reply?.body === "string" && reply.body.trim().length > 0)
     .map((reply) => [
@@ -2065,7 +2095,8 @@ function hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker) {
  * }>} Unresolved testable blockers that must remain active.
  */
 export function reconcileFollowUpTestableBlockers(finalComment, files, statusCheckContexts, repositoryFileContents = {}) {
-  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+  const latestConclusion = getLatestAutomatedConclusionEntry(finalComment);
+  const previousBlockers = extractFollowUpTestableBlockers(latestConclusion.body);
 
   if (previousBlockers.length === 0) {
     return [];
@@ -2885,7 +2916,8 @@ function buildFilesReviewPayload(files, prioritizedPaths = []) {
  * @returns {string[]} Unique repository-relative paths.
  */
 export function extractFollowUpPriorityPaths(finalComment) {
-  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+  const latestConclusion = getLatestAutomatedConclusionEntry(finalComment);
+  const previousBlockers = extractFollowUpTestableBlockers(latestConclusion.body);
   const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
 
   return [...new Set([
@@ -2919,7 +2951,8 @@ export function collectFollowUpEvidenceRecords(
   statusCheckContexts,
   repositoryFileContents = {},
 ) {
-  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+  const latestConclusion = getLatestAutomatedConclusionEntry(finalComment);
+  const previousBlockers = extractFollowUpTestableBlockers(latestConclusion.body);
 
   if (previousBlockers.length === 0) {
     return [];
