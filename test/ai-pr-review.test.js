@@ -2217,6 +2217,35 @@ describe("ai pr review discussion rendering", () => {
     expect(unresolved).toEqual([]);
   });
 
+  it("clears a follow-up blocker when code identifiers prove the requested test behavior", () => {
+    const finalComment = {
+      body: [
+        "## Discussion status",
+        "",
+        "## Acceptance tests requested",
+        "",
+        "- Roles `technical` -> `test/ai-issue-refinement.test.js`: protect A root issue cannot exceed 12 automation-created child issues across open and closed issues.; minimum scenario: Seed a root with 12 prior child issues where some are closed, then run `selectChildIssueDraftsForCreation()` with new drafts.; essential assertions: The selector returns `[]` once the total historical child count hits 12; closed child issues still count toward the limit.; resolution condition: Count all refinement child issues for the root, not only open ones, before allowing any new creation or reuse.",
+        "- Roles `risk` -> `test/ai-issue-refinement.test.js`: protect Native sub-issue links must not fail silently when GitHub supports them.; minimum scenario: Mock `githubRequest` to reject during `linkGitHubSubIssue` for an otherwise valid created child.; essential assertions: The workflow must either surface a failure state or emit an explicit fallback signal that the parent/child link was not created. It must not complete as if the link succeeded.; resolution condition: If the link API fails, the run must produce an observable non-success outcome or a clearly machine-detectable fallback path.",
+      ].join("\n"),
+      replies: { nodes: [] },
+    };
+    const files = [
+      {
+        filename: "test/ai-issue-refinement.test.js",
+        patch: "@@\n+expect(selectChildIssueDraftsForCreation(parentIssue, historicalIssues, drafts)).toEqual([]);\n+await expect(createOrReuseChildIssuesWithRequest(requestGitHub, repo, parentIssue, drafts)).rejects.toThrow();",
+      },
+    ];
+    const checks = [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }];
+    const repositoryFileContents = {
+      "test/ai-issue-refinement.test.js": [
+        "selectChildIssueDraftsForCreation(parentIssue, historicalIssues, drafts)",
+        "createOrReuseChildIssuesWithRequest(requestGitHub, repo, parentIssue, drafts)",
+      ].join("\n"),
+    };
+
+    expect(reconcileFollowUpTestableBlockers(finalComment, files, checks, repositoryFileContents)).toEqual([]);
+  });
+
   it("accepts an explicitly cited equivalent test file in the conclusion thread", () => {
     const unresolved = reconcileFollowUpTestableBlockers(
       {

@@ -2231,9 +2231,69 @@ function extractDiffEvidenceNeedles(value) {
     if (fragment.length >= 3) {
       pushUniqueSummaryValue(needles, fragment);
     }
+
+    for (const identifierMatch of match[1].matchAll(/[A-Za-z_$][A-Za-z0-9_$]{2,}/g)) {
+      const identifier = identifierMatch[0];
+
+      if (/[A-Z_$]/.test(identifier) || String(match[1]).includes("(")) {
+        pushUniqueSummaryValue(needles, normalizeComparableText(identifier));
+      }
+    }
   }
 
   return needles;
+}
+
+function extractFollowUpEvidenceTerms(value) {
+  const stopWords = new Set([
+    "after",
+    "again",
+    "against",
+    "before",
+    "being",
+    "current",
+    "either",
+    "explicit",
+    "file",
+    "from",
+    "into",
+    "must",
+    "only",
+    "path",
+    "rule",
+    "should",
+    "that",
+    "the",
+    "then",
+    "this",
+    "when",
+    "where",
+    "with",
+    "without",
+    "workflow",
+  ]);
+
+  return [...new Set((normalizeComparableText(value).match(/[a-z0-9_$-]{4,}/g) ?? [])
+    .map((term) => term.replace(/(?:ing|ed|s)$/u, ""))
+    .filter((term) => term.length >= 4 && !stopWords.has(term)))];
+}
+
+function hasTermEvidenceForFollowUpBlocker(candidateText, blocker) {
+  const terms = [
+    ...extractFollowUpEvidenceTerms(blocker.behaviorProtected),
+    ...extractFollowUpEvidenceTerms(blocker.minimumScenario),
+    ...blocker.essentialAssertions.flatMap(extractFollowUpEvidenceTerms),
+    ...extractFollowUpEvidenceTerms(blocker.resolutionCondition),
+  ];
+  const uniqueTerms = [...new Set(terms)];
+
+  if (uniqueTerms.length === 0) {
+    return false;
+  }
+
+  const matchedTerms = uniqueTerms.filter((term) => candidateText.includes(term));
+
+  return matchedTerms.length >= Math.min(4, uniqueTerms.length);
 }
 
 /**
@@ -3201,7 +3261,8 @@ export function collectFollowUpEvidenceRecords(
       ...extractDiffEvidenceNeedles(blocker.resolutionCondition),
     ];
     const hasPatchEvidence = evidenceNeedles.some((needle) => candidatePatchText.includes(needle));
-    const hasRepositoryEvidence = evidenceNeedles.some((needle) => candidateRepositoryText.includes(needle));
+    const hasRepositoryEvidence = evidenceNeedles.some((needle) => candidateRepositoryText.includes(needle))
+      || hasTermEvidenceForFollowUpBlocker(candidateRepositoryText, blocker);
     const hasReplyEvidence = hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker);
     const status = !matchedTestFile
       ? "missing_test_file"
