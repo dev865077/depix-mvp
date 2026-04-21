@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const CLOUDFLARE_POOL_MARKER = "@vitest-pool cloudflare";
+export const CLOUDFLARE_POOL_MARKER = "@vitest-pool cloudflare";
 const CLOUDFLARE_POOL_MARKER_PATTERN = /^\s*\/\/\s*@vitest-pool cloudflare\s*$/mu;
 const cliArgs = process.argv.slice(2);
 const vitestBin = join(process.cwd(), "node_modules", ".bin", "vitest");
