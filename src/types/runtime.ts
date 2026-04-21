@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import type { TenantId } from "./domain";
-import { readRuntimeConfig } from "../config/runtime.js";
-import { resolveTenantFromRequest } from "../config/tenants.js";
+import type { readRuntimeConfig } from "../config/runtime.js";
+import type { resolveTenantFromRequest } from "../config/tenants.js";
 
 export interface TenantSecretBindings {
   telegramBotToken: string;
