@@ -288,6 +288,8 @@ async function clearTelegramPersistence() {
       channel TEXT NOT NULL DEFAULT 'telegram',
       product_type TEXT NOT NULL,
       telegram_chat_id TEXT,
+      telegram_canonical_message_id INTEGER,
+      telegram_canonical_message_kind TEXT,
       amount_in_cents INTEGER,
       wallet_address TEXT,
       current_step TEXT NOT NULL DEFAULT 'draft',
@@ -2280,6 +2282,24 @@ describe("telegram webhook reply flow", () => {
         });
       }
 
+      if (url.includes("/editMessageCaption")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramCalls.push({
+          kind: "edit_caption",
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
       if (url.includes("/sendMessage")) {
         const payload = JSON.parse(String(init?.body));
         telegramCalls.push({
@@ -2392,7 +2412,7 @@ describe("telegram webhook reply flow", () => {
       .first();
     const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
     const copyPasteReply = telegramCalls.find((entry) => entry.kind === "message" && entry.payload.text?.includes("Pix copia e cola:"));
-    const replayReply = telegramCalls[telegramCalls.length - 1];
+    const replayReply = telegramCalls.findLast((entry) => entry.kind === "edit_caption");
 
     expect(eulenCalls).toHaveLength(1);
     expect(eulenCalls[0]).toEqual({
@@ -2405,13 +2425,15 @@ describe("telegram webhook reply flow", () => {
     expect(finalOrder?.status).toBe("pending");
     expect(finalOrder?.splitAddress).toBe(SIDESWAP_LQ_ADDRESS);
     expect(finalOrder?.splitFee).toBe("1.00%");
+    expect(finalOrder?.telegramCanonicalMessageId).toBe(20);
+    expect(finalOrder?.telegramCanonicalMessageKind).toBe("photo");
     expect(savedDeposit?.depositEntryId).toBe("deposit_entry_alpha_001");
     expect(savedDeposit?.qrCopyPaste).toBe("0002010102122688pix-alpha-001");
     expect(persistedDeposits?.count).toBe(1);
     expect(photoReply?.payload.photo).toBe("https://example.com/qr/alpha-001.png");
-    expect(photoReply?.payload.caption).toContain("Pedido confirmado em Alpha.");
-    expect(photoReply?.payload.caption).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
-    expect(photoReply?.payload.caption).toContain("Se precisar revisar o proximo passo, envie /help.");
+    expect(photoReply?.payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
+    expect(photoReply?.payload.caption).toContain("Pix copia e cola:");
+    expect(photoReply?.payload.caption).toContain("0002010102122688pix-alpha-001");
     expect(photoReply?.payload.caption).not.toContain("Expiracao:");
     expect(photoReply?.payload.reply_markup?.inline_keyboard).toEqual([
       [
@@ -2425,8 +2447,10 @@ describe("telegram webhook reply flow", () => {
         },
       ],
     ]);
-    expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-alpha-001");
-    expect(replayReply.payload.text).toContain("já está aguardando pagamento");
+    expect(copyPasteReply).toBeUndefined();
+    expect(replayReply?.kind).toBe("edit_caption");
+    expect(replayReply.payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
+    expect(replayReply.payload.caption).toContain("0002010102122688pix-alpha-001");
     expect(fetchSpy).toHaveBeenCalled();
   });
 
@@ -2534,7 +2558,8 @@ describe("telegram webhook reply flow", () => {
     });
     expect(persistedDeposits?.count).toBe(1);
     expect(photoReply?.payload.photo).toBe("https://example.com/qr/existing-retry-001.png");
-    expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-existing-retry-001");
+    expect(copyPasteReply).toBeUndefined();
+    expect(photoReply?.payload.caption).toContain("0002010102122688pix-existing-retry-001");
   });
 
   it("fails closed when an existing local deposit loses the order state race", async function assertExistingDepositTerminalConflictFailsClosed() {
@@ -2912,7 +2937,7 @@ describe("telegram webhook reply flow", () => {
     expect(savedDeposit?.depositEntryId).toBe("deposit_partial_recovery_001");
     expect(savedDeposit?.nonce).toBe(expectedNonce);
     expect(persistedDeposits?.count).toBe(1);
-    expect(telegramMessages.some((message) => message?.includes("Pedido confirmado em Alpha."))).toBe(true);
+    expect(telegramMessages.some((message) => message?.includes("Pedido em Alpha: aguardando pagamento."))).toBe(true);
 
     const serializedLogs = consoleSpy.mock.calls.map(([line]) => String(line)).join("\n");
 
@@ -3223,12 +3248,11 @@ describe("telegram webhook reply flow", () => {
     ));
 
     expect(fetchSpy).toHaveBeenCalled();
-    expect(pixReplies).toHaveLength(2);
-    expect(pixReplies[0]?.text).toContain("Pedido confirmado em Alpha.");
+    expect(pixReplies).toHaveLength(1);
+    expect(pixReplies[0]?.text).toContain("Pedido em Alpha: aguardando pagamento.");
     expect(pixReplies[0]?.text).toContain("Expiracao: 18/04/2026 12:00 (UTC).");
-    expect(pixReplies[0]?.text).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
-    expect(pixReplies[1]?.text).toContain("Pix copia e cola:");
-    expect(pixReplies[1]?.text).toContain("0002010102122688pix-alpha-002");
+    expect(pixReplies[0]?.text).toContain("Pix copia e cola:");
+    expect(pixReplies[0]?.text).toContain("0002010102122688pix-alpha-002");
   });
 
   it("marks the order as failed and replies with a restart instruction when Eulen create-deposit fails", async function assertConfirmationFailureFlow() {

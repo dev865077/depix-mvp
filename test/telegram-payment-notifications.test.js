@@ -6,6 +6,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getDatabase } from "../src/db/client.js";
+import { createDeposit } from "../src/db/repositories/deposits-repository.js";
 import { createOrder } from "../src/db/repositories/orders-repository.js";
 
 import {
@@ -38,6 +39,17 @@ async function seedTelegramNotificationOrder() {
     splitAddress: "split_wallet_alpha",
     splitFee: "0.50",
     telegramChatId: "telegram_chat_alpha_001",
+    telegramCanonicalMessageId: 44,
+    telegramCanonicalMessageKind: "photo",
+  });
+  await createDeposit(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_alpha_notification_001",
+    orderId: "order_alpha_notification_001",
+    nonce: "nonce_alpha_notification_001",
+    qrCopyPaste: "0002010102122688pix-alpha-notification-001",
+    qrImageUrl: "https://example.com/qr/alpha-notification-001.png",
+    externalStatus: "depix_sent",
   });
 
   return db;
@@ -171,5 +183,66 @@ describe("telegram payment notifications", () => {
     expect(message).toContain("Pagamento confirmado em Alpha.");
     expect(message).toContain("R$");
     expect(message).toContain("concluído");
+  });
+
+  it("edits the canonical Telegram order message when payment confirmation arrives", async function assertCanonicalMessageEdit() {
+    const db = await seedTelegramNotificationOrder();
+    const telegramCalls = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+      telegramCalls.push({
+        url,
+        payload,
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: true,
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const result = await notifyTelegramOrderTransitionSafely({
+      env: TELEGRAM_NOTIFICATION_ENV,
+      db,
+      runtimeConfig: {
+        environment: "test",
+        appName: "depix-mvp",
+      },
+      tenant: TELEGRAM_NOTIFICATION_TENANT,
+      requestContext: {
+        requestId: "test-request-id",
+        method: "POST",
+        path: "/ops/alpha/reconcile/deposits",
+      },
+      orderId: "order_alpha_notification_001",
+      depositEntryId: "deposit_alpha_notification_001",
+      externalStatus: "depix_sent",
+      orderStatus: "paid",
+      orderCurrentStep: "completed",
+      previousExternalStatus: "pending",
+      previousOrderStatus: "pending",
+      previousOrderCurrentStep: "awaiting_payment",
+    });
+
+    expect(result).toEqual({
+      delivered: true,
+      skipped: false,
+      failed: false,
+      reason: "delivered",
+      kind: "payment_confirmed",
+    });
+    expect(telegramCalls).toHaveLength(1);
+    expect(telegramCalls[0].url).toContain("/editMessageCaption");
+    expect(telegramCalls[0].payload.message_id).toBe(44);
+    expect(telegramCalls[0].payload.caption).toContain("Pagamento confirmado em Alpha.");
+    expect(telegramCalls[0].payload.caption).toContain("Pix deste pedido:");
+    expect(telegramCalls[0].payload.caption).toContain("0002010102122688pix-alpha-notification-001");
   });
 });

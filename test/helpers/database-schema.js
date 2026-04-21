@@ -8,6 +8,8 @@ const CURRENT_SCHEMA_STATEMENTS = [
     channel TEXT NOT NULL DEFAULT 'telegram',
     product_type TEXT NOT NULL,
     telegram_chat_id TEXT,
+    telegram_canonical_message_id INTEGER,
+    telegram_canonical_message_kind TEXT,
     amount_in_cents INTEGER,
     wallet_address TEXT,
     current_step TEXT NOT NULL DEFAULT 'draft',

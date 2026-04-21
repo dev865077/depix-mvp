@@ -14,6 +14,8 @@ export interface OrderRecord {
   channel: Platform;
   productType: string;
   telegramChatId: string | null;
+  telegramCanonicalMessageId: number | null;
+  telegramCanonicalMessageKind: string | null;
   amountInCents: number | null;
   walletAddress: string | null;
   currentStep: OrderStep;
@@ -31,6 +33,8 @@ export interface CreateOrderInput {
   channel?: Platform;
   productType: string;
   telegramChatId?: string | null;
+  telegramCanonicalMessageId?: number | null;
+  telegramCanonicalMessageKind?: string | null;
   amountInCents?: number | null;
   walletAddress?: string | null;
   currentStep?: OrderStep;
@@ -45,6 +49,8 @@ export interface OrderPatch {
   channel?: Platform;
   productType?: string;
   telegramChatId?: string | null;
+  telegramCanonicalMessageId?: number | null;
+  telegramCanonicalMessageKind?: string | null;
   amountInCents?: number | null;
   walletAddress?: string | null;
   currentStep?: OrderStep;
