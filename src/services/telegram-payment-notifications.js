@@ -16,7 +16,9 @@ import { readTenantSecret } from "../config/tenants.js";
 import { getDepositByDepositEntryId } from "../db/repositories/deposits-repository.js";
 import { getOrderById } from "../db/repositories/orders-repository.js";
 import { log } from "../lib/logger.js";
+import { syncTelegramCanonicalMessage } from "./telegram-canonical-message.js";
 import { formatBrlAmountInCents } from "../telegram/brl-amount.js";
+import { buildTelegramCompletedCanonicalReply } from "../telegram/reply-flow.runtime.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
 
 const NOTIFIABLE_EXTERNAL_STATUSES = new Set([
@@ -341,7 +343,28 @@ export async function notifyTelegramOrderTransition(input) {
   });
 
   try {
-    await bot.api.sendMessage(aggregate.order.telegramChatId, message);
+    if (decision.kind === "payment_confirmed" && aggregate.deposit) {
+      await syncTelegramCanonicalMessage({
+        api: bot.api,
+        db: input.db,
+        runtimeConfig: input.runtimeConfig,
+        requestContext: input.requestContext,
+        tenant: input.tenant,
+        order: aggregate.order,
+        payload: {
+          kind: aggregate.order.telegramCanonicalMessageKind === "photo" && aggregate.deposit.qrImageUrl
+            ? "photo"
+            : "text",
+          text: buildTelegramCompletedCanonicalReply(input.tenant, aggregate.order, aggregate.deposit),
+          photoUrl: aggregate.deposit.qrImageUrl,
+        },
+        fallbackOnEditFailure: {
+          text: message,
+        },
+      });
+    } else {
+      await bot.api.sendMessage(aggregate.order.telegramChatId, message);
+    }
 
     log(input.runtimeConfig, {
       level: "info",

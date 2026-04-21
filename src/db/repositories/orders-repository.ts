@@ -39,6 +39,8 @@ const ORDER_COLUMNS_SQL = `
     channel AS channel,
     product_type AS productType,
     telegram_chat_id AS telegramChatId,
+    telegram_canonical_message_id AS telegramCanonicalMessageId,
+    telegram_canonical_message_kind AS telegramCanonicalMessageKind,
     amount_in_cents AS amountInCents,
     wallet_address AS walletAddress,
     current_step AS currentStep,
@@ -65,13 +67,15 @@ const INSERT_ORDER_SQL = `
     channel,
     product_type,
     telegram_chat_id,
+    telegram_canonical_message_id,
+    telegram_canonical_message_kind,
     amount_in_cents,
     wallet_address,
     current_step,
     status,
     split_address,
     split_fee
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const ORDER_UPDATE_COLUMNS = {
@@ -80,6 +84,8 @@ const ORDER_UPDATE_COLUMNS = {
   channel: "channel",
   productType: "product_type",
   telegramChatId: "telegram_chat_id",
+  telegramCanonicalMessageId: "telegram_canonical_message_id",
+  telegramCanonicalMessageKind: "telegram_canonical_message_kind",
   amountInCents: "amount_in_cents",
   walletAddress: "wallet_address",
   currentStep: "current_step",
@@ -106,6 +112,8 @@ function normalizeOrderInput(input: CreateOrderInput) {
     channel: toRequiredString(input.channel ?? "telegram"),
     productType: toRequiredString(input.productType),
     telegramChatId: toNullableString(input.telegramChatId),
+    telegramCanonicalMessageId: input.telegramCanonicalMessageId ?? null,
+    telegramCanonicalMessageKind: toNullableString(input.telegramCanonicalMessageKind),
     amountInCents: input.amountInCents ?? null,
     walletAddress: toNullableString(input.walletAddress),
     currentStep: toRequiredString(input.currentStep ?? "draft"),
@@ -134,6 +142,8 @@ export async function createOrder(db: D1Database, input: CreateOrderInput): Prom
     order.channel,
     order.productType,
     order.telegramChatId,
+    order.telegramCanonicalMessageId,
+    order.telegramCanonicalMessageKind,
     order.amountInCents,
     order.walletAddress,
     order.currentStep,
