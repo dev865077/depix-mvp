@@ -989,21 +989,7 @@ async function githubRequest(url, init = {}) {
     return null;
   }
 
-  const body = await response.text();
-
-  if (body.trim().length > 0) {
-    return JSON.parse(body);
-  }
-
-  if (typeof response.json === "function") {
-    try {
-      return await response.json();
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  return response.json();
 }
 
 /**
