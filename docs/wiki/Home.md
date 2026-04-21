@@ -47,6 +47,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a triagem de issues agora publica rota canonica na issue sem criar Discussion prematura
 - a triagem de issues agora tambem atualiza uma secao canônica gerenciada no corpo da issue, para que a propria issue amadureca via API antes de entrar em implementacao
 - quando a rota exigir planning, a planning review cria ou reutiliza uma unica Discussion via API, roda quatro papeis especializados, reescreve a secao canonica da issue com a sintese da rodada e, se ainda houver bloqueios, despacha automaticamente o refinement da issue antes de liberar Codex com `ready_for_codex: true`
+- child issues criadas pelo refinement tambem entram em triagem por dispatch explicito, sem depender apenas do trigger visual de abertura
 - a review de PR por IA agora reconcilia follow-up blockers contra o diff atual, evidencia explicita de arquivos de teste e `CI / Test` antes de descarregar bloqueios antigos
 - quando a thread final traz uma reply humana com cenario de validacao ou resolucao do bloqueio, essa evidencia pode ser usada no handoff do follow-up
 - quando restarem bloqueios de follow-up, a automacao publica memos deterministas de `Request changes` em vez de aprovacoes nao reconciliadas
@@ -99,21 +100,3 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - [Testes e Qualidade](Testes-e-Qualidade)
 - [Migracao TypeScript](Migracao-TypeScript)
 - [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)
-
-### Operacao
-
-- [Ambientes e Segredos](Ambientes-e-Segredos)
-- [Deploy e Runbooks](Deploy-e-Runbooks)
-- [Release 0.1 Readiness](Release-0.1-Readiness)
-
-### Governanca
-
-- [Governanca Tecnica](Governanca-Tecnica)
-- [ADRs](ADRs)
-
-## Fonte de verdade
-
-- Wiki: narrativa institucional, onboarding, mapa do sistema e leitura guiada
-- repositorio: implementacao real, comportamento corrente e contratos operacionais
-
-```

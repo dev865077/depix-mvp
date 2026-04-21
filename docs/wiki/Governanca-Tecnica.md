@@ -30,9 +30,11 @@
 - a issue em si passa a ser consolidada pela automacao via API: o corpo recebe uma secao canonica gerenciada que sintetiza estado, rota, blockers e handoff
 - quando a rota e `discussion_before_pr`, a triagem dispara explicitamente o workflow de planning por `workflow_dispatch`, em vez de depender de comentario criado pelo bot para acionar outro `issue_comment`
 - o workflow de planning foi endurecido para nao manter portas paralelas de entrada por `issues` ou `issue_comment`; o contrato canonico agora e a decisao da triagem + `workflow_dispatch`
+- child issues criadas durante refinement devem ser enviadas para triagem via `workflow_dispatch` antes da volta ao planning do pai
 - a planning review roda quatro papeis especializados: produto, technical, scrum e risk
 - quando a planning review termina em `Request changes`, o proximo ator canonico deixa de ser humano por padrao: o workflow `AI Issue Refinement` assume a issue, refina titulo/corpo/decomposicao via API e responde na thread da conclusao mais recente
 - a automacao de refinement pode criar ou reutilizar child issues concretas, reclassificar `epic:` falsa para `track:` e decidir entre rerodar o planning imediatamente ou parar em `issue_planning_blocked` quando o que restar for dependencia externa explicita
+- child issues criadas pela automacao nao devem depender apenas do disparo visual de issue aberta para entrar na lane de triagem
 - a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
 - em follow-up, a revisao deve tambem carregar os ultimos memos especialistas antes de formular novos bloqueios, para evitar mover o alvo da discussao
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
@@ -63,5 +65,3 @@
 ## Regra de longo prazo
 
 Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em issue, comentario ou conversa oral. Ela precisa ficar registrada em documentacao versionada.
-
-```

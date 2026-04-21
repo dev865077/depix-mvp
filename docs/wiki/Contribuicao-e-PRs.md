@@ -23,11 +23,13 @@
 - `direct_pr` so vale quando o escopo ja esta claro, limitado e executavel sem rodada de planning
 - `discussion_before_pr` vale quando ainda falta decisao compartilhada sobre escopo, decomposicao, arquitetura, operacao, risco ou dependencias
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
-- a triagem automatica tambem atualiza uma secao canônica gerenciada por API no corpo da propria issue; o texto humano continua acima dessa secao
+- a triagem automatica tambem atualiza uma secao canonica gerenciada por API no corpo da propria issue; o texto humano continua acima dessa secao
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
 - o planning nao deve ouvir `issues` nem `issue_comment` como entrada automatica paralela; esses gatilhos redundantes foram removidos para manter uma unica porta canonica de planejamento
 - quando o planning terminar em `Request changes`, o workflow `AI Issue Refinement` deve entrar automaticamente, refinar a issue via API, responder na thread da conclusao mais recente e decidir se o planning deve rerodar agora ou se a issue ja amadureceu ate um bloqueio externo explicito
+- o refinement pode criar child issues concretas e, quando isso acontecer, deve despachar a triagem desses child issues via `workflow_dispatch` antes de rerodar o planning do pai
+- as child issues criadas por refinement nao devem depender apenas do trigger visual de abertura para entrar em triagem
 - para issues antigas ou ja roteadas antes desse contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
@@ -59,37 +61,10 @@
 - a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel na lista do `pull_request`
 - o workflow de review nao deve depender de um trigger duplicado em `workflow_run` para publicar o check visivel
 - o gate de `discussion-review` deve permanecer travado ate o `CI / Test` canonico ficar verde
-- especialistas so devem executar depois que o CI canonico concluir com sucesso, para evitar confusao entre skip, cancelamento e revisao prematura
-- o contrato operacional da review deve preservar o check visivel mesmo quando a publicacao de comentarios de Discussion for adiada pelo gate de CI
+- especialistas so devem executar depois do `CI / Test` canonico concluir com sucesso
+- falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
+- quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
 
-## Corpo obrigatorio da PR
+## Regra de longo prazo
 
-- Objetivo
-- Item ligado
-- Escopo
-- Fora de escopo
-- Risco
-- Validacao executada
-- Impacto em documentacao
-
-## Regra extra para PR com IA
-
-Explicitar:
-
-- o que foi assumido
-- o que foi validado
-- o que nao foi validado
-- qual risco residual ficou aberto
-
-## Regra extra para PR TypeScript
-
-- preservar `src/index.ts` como entrypoint canonico
-- atualizar `Migracao-TypeScript` quando entrypoint, runner, comandos canonicos ou contratos de runtime mudarem
-
-## Antes de abrir o PR
-
-- confirmar que a branch nao depende de um gate oculto ou de uma segunda rota automatica para o mesmo check
-- confirmar que os checks visiveis no PR representam o fluxo canonico de CI e review
-- confirmar que qualquer review especializado so vai rodar depois do `CI / Test` verde quando esse for o contrato do workflow
-
-```
+Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em issue, comentario ou conversa oral. Ela precisa ficar registrada em documentacao versionada.
