@@ -116,7 +116,7 @@ export function readDepositEntryIdFromRecheckBody(body) {
 /**
  * Monta um raw payload deterministico para o evento de recheck.
  *
- * @param {{ depositEntryId: string, remoteStatus: { qrId?: string, status?: string, expiration?: string } }} input Dados reconciliados.
+ * @param {{ depositEntryId: string, remoteStatus: { bankTxId?: string, blockchainTxId?: string, qrId?: string, status?: string, expiration?: string } }} input Dados reconciliados.
  * @returns {string} JSON estavel para trilha de auditoria e idempotencia.
  */
 function buildDepositRecheckEventPayload(input) {
@@ -124,6 +124,8 @@ function buildDepositRecheckEventPayload(input) {
     source: RECHECK_DEPOSIT_STATUS_SOURCE,
     depositEntryId: input.depositEntryId,
     remoteStatus: {
+      bankTxId: input.remoteStatus.bankTxId ?? null,
+      blockchainTxId: input.remoteStatus.blockchainTxId ?? null,
       qrId: input.remoteStatus.qrId ?? null,
       status: input.remoteStatus.status ?? null,
       expiration: input.remoteStatus.expiration ?? null,
@@ -446,7 +448,7 @@ async function persistAggregateRepairAtomically(db, tenantId, depositEntryId, or
  *   eulenApiToken: string,
  *   depositEntryId: string
  * }} input Dependencias remotas.
- * @returns {Promise<{ qrId?: string, status?: string, expiration?: string }>} Status remoto reduzido.
+ * @returns {Promise<{ bankTxId?: string, blockchainTxId?: string, qrId?: string, status?: string, expiration?: string }>} Status remoto reduzido.
  */
 async function readRemoteDepositStatus(input) {
   const response = await getEulenDepositStatus(input.runtimeConfig, {
@@ -597,8 +599,8 @@ export async function processDepositRecheck(input) {
         qrId: mutationPlan.resultingQrId,
         source: RECHECK_DEPOSIT_STATUS_SOURCE,
         externalStatus: mutationPlan.appliedExternalStatus,
-        bankTxId: null,
-        blockchainTxId: null,
+        bankTxId: remoteStatus.bankTxId ?? null,
+        blockchainTxId: remoteStatus.blockchainTxId ?? null,
         rawPayload: eventPayload,
       },
       mutationPlan.depositPatch,
