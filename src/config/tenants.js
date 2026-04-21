@@ -233,10 +233,13 @@ function normalizeTenantOpsBindings(tenantId, input, stage) {
 function normalizeTenantConfig(tenantId, input, stage = DEFAULT_TENANT_REGISTRY_STAGE) {
   const context = createValidationContext(tenantId, stage);
   const tenantConfig = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}`, context);
+  const displayName = typeof tenantConfig.displayName === "undefined"
+    ? tenantId
+    : assertTenantString(tenantConfig.displayName, `TENANT_REGISTRY.${tenantId}.displayName`, context);
 
   return {
     tenantId,
-    displayName: assertTenantString(tenantConfig.displayName, `TENANT_REGISTRY.${tenantId}.displayName`, context),
+    displayName,
     eulenPartnerId: typeof tenantConfig.eulenPartnerId === "string" && tenantConfig.eulenPartnerId.trim().length > 0
       ? tenantConfig.eulenPartnerId.trim()
       : undefined,

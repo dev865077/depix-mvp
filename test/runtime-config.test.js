@@ -247,6 +247,16 @@ describe("runtime config", () => {
     expect(runtimeConfig.tenants.alpha.futureField).toBeUndefined();
   });
 
+  it("keeps legacy tenant registries working when displayName is omitted", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      TENANT_REGISTRY: JSON.stringify(createTenantRegistryObject({
+        displayName: undefined,
+      })),
+    }));
+
+    expect(runtimeConfig.tenants.alpha.displayName).toBe("alpha");
+  });
+
   it("fails closed on invalid JSON in TENANT_REGISTRY", () => {
     expectTenantRegistryError(
       { TENANT_REGISTRY: "{" },
