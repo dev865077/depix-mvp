@@ -5,14 +5,16 @@
  * O objetivo e manter o tenant explicitamente identificado desde a URL.
  */
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
 import { dispatchNonBlockingTask } from "../lib/background-tasks.js";
 import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
 import { notifyTelegramOrderTransitionSafely } from "../services/telegram-payment-notifications.js";
+import type { AppBindings, AppContext } from "../types/runtime";
 
-export const webhooksRouter = new Hono();
+export const webhooksRouter = new Hono<AppBindings>();
 
 /**
  * Placeholder do webhook principal de confirmacao de deposito da Eulen.
@@ -20,7 +22,7 @@ export const webhooksRouter = new Hono();
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resposta operacional do webhook.
  */
-export async function handleEulenDepositWebhook(c) {
+export async function handleEulenDepositWebhook(c: AppContext): Promise<Response> {
   const tenant = c.get("tenant");
   const db = c.get("db");
   const runtimeConfig = c.get("runtimeConfig");
@@ -88,7 +90,7 @@ export async function handleEulenDepositWebhook(c) {
       tenantId: tenant.tenantId,
       ...result.details,
     },
-    result.status,
+    result.status as ContentfulStatusCode,
   );
 }
 

@@ -3,7 +3,20 @@
  */
 import { Hono } from "hono";
 
-export const healthRouter = new Hono();
+import type { AppBindings, AppContext } from "../types/runtime";
+
+type HealthTenant = AppContext["var"]["runtimeConfig"]["tenants"][string];
+
+type HealthTenantInventory = Record<string, {
+  tenantId: string;
+  displayName: string;
+  eulenPartnerConfigured: boolean;
+  splitConfigConfigured: boolean;
+  secretBindingsConfigured: boolean;
+  opsDepositRecheckOverrideConfigured: boolean;
+}>;
+
+export const healthRouter = new Hono<AppBindings>();
 
 /**
  * Monta a versao publica do inventario de tenants exposto pelo healthcheck.
@@ -31,7 +44,7 @@ export const healthRouter = new Hono();
  *   opsDepositRecheckOverrideConfigured: boolean
  * }>} Inventario seguro para resposta HTTP.
  */
-export function redactTenantsForHealth(tenants) {
+export function redactTenantsForHealth(tenants: Record<string, HealthTenant>): HealthTenantInventory {
   return Object.fromEntries(
     Object.entries(tenants).map(([tenantId, tenant]) => [
       tenantId,
@@ -49,7 +62,7 @@ export function redactTenantsForHealth(tenants) {
   );
 }
 
-export function handleHealth(c) {
+export function handleHealth(c: AppContext): Response {
   const runtimeConfig = c.get("runtimeConfig");
   const tenantIds = Object.keys(runtimeConfig.tenants);
 

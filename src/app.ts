@@ -15,12 +15,7 @@ import { healthRouter } from "./routes/health.js";
 import { telegramRouter } from "./routes/telegram.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { opsRouter } from "./routes/ops.js";
-import type { AppContext, AppVariables, WorkerEnv } from "./types/runtime";
-
-type AppBindings = {
-  Bindings: WorkerEnv;
-  Variables: AppVariables;
-};
+import type { AppBindings, AppContext } from "./types/runtime";
 
 export function logAppError(c: AppContext, httpError: HTTPException): void {
   const runtimeConfig = c.get("runtimeConfig");
