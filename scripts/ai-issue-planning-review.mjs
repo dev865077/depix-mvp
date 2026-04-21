@@ -1434,6 +1434,9 @@ export function buildIssuePlanningAutomationSection(input) {
  */
 export function buildIssuePlanningUserPrompt(repository, issue, childIssues, issueComments, discussionContext) {
   const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
+  const referencedChildIssueCount = Array.isArray(childIssues) ? childIssues.length : 0;
+  const epicTitle = /^\s*epic\s*:/i.test(issue.title ?? "");
+  const epicTitleValid = !epicTitle || referencedChildIssueCount > 0;
   const childIssueSections = childIssues.length > 0
     ? childIssues.map((childIssue) => [
       `### #${childIssue.number} - ${childIssue.title}`,
@@ -1449,6 +1452,9 @@ export function buildIssuePlanningUserPrompt(repository, issue, childIssues, iss
     `Root issue: #${issue.number} - ${issue.title}`,
     `State: ${issue.state}`,
     `URL: ${issue.html_url ?? issue.url ?? "[unknown]"}`,
+    `Artifact kind hint: ${epicTitle ? "epic" : "issue"}`,
+    `Referenced child issue count: ${referencedChildIssueCount}`,
+    `Epic title valid: ${epicTitleValid}`,
     "",
     "## Root issue body",
     truncateText(humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no description provided]",

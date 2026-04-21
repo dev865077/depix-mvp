@@ -703,6 +703,9 @@ describe("ai issue planning review", () => {
     );
 
     expect(prompt).toContain("Root issue: #91 - epic");
+    expect(prompt).toContain("Artifact kind hint: issue");
+    expect(prompt).toContain("Referenced child issue count: 1");
+    expect(prompt).toContain("Epic title valid: true");
     expect(prompt).toContain("#90 - validar production");
     expect(prompt).toContain("Comentario de issue.");
     expect(prompt).toContain("Resposta operacional.");
@@ -711,6 +714,26 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("Final recommendation: `Request changes`");
     expect(prompt).toContain("Raiz");
     expect(prompt).not.toContain("<!-- ai-issue-automation:start -->");
+  });
+
+  it("marks epic titles without child issues as invalid planning artifacts in the prompt", () => {
+    const prompt = buildIssuePlanningUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 291,
+        title: "epic: release 0.1 readiness",
+        state: "open",
+        html_url: "https://github.com/dev865077/depix-mvp/issues/291",
+        body: "Checklist de prontidao.",
+      },
+      [],
+      [],
+      "",
+    );
+
+    expect(prompt).toContain("Artifact kind hint: epic");
+    expect(prompt).toContain("Referenced child issue count: 0");
+    expect(prompt).toContain("Epic title valid: false");
   });
 
 });

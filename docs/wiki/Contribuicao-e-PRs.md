@@ -16,6 +16,8 @@
 
 ## Fluxo de issue para PR
 
+- `epic` nao e sinonimo de item importante; use `epic` apenas quando o artefato agrupar varias sub-issues executaveis com dependencia e ordem explicitas
+- item unico, gap operacional, readiness track ou checklist de release nao deve usar prefixo `epic:`; nesses casos prefira issue normal, `track:` ou `gap:`
 - issue pequena, clara e de baixo risco pode seguir direto para branch e PR
 - a triagem automatica usa `impact` como sinal descritivo, nao como roteador rigido por si so
 - `direct_pr` so vale quando o escopo ja esta claro, limitado e executavel sem rodada de planning
@@ -29,6 +31,7 @@
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
+- se uma issue vier titulada como `epic:` sem varias child issues concretas, a planning review deve tratar isso como problema de backlog e pedir correcao
 - o planning review tem tres estados canonicos:
   - `Approve`: issue pronta para execucao
   - `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito

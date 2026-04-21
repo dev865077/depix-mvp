@@ -44,6 +44,7 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - nao puxar item com dependencia aberta
 - nao misturar feature funcional com refatoracao estrutural aleatoria
 - nao transformar visao futura em requisito de MVP sem issue, planning review e PR propria
+- nao inflar backlog com `epic:` falsa; `epic` so existe quando ha varias sub-issues executaveis e encadeadas
 
 ## Estado atual
 
