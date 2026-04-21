@@ -48,6 +48,18 @@ export function splitTestFilesByPool(testFiles) {
   }, { node: [], cloudflare: [] });
 }
 
+export function splitCliArguments(args) {
+  return args.reduce((result, arg) => {
+    if (arg.endsWith(".test.js")) {
+      result.testFiles.push(arg);
+      return result;
+    }
+
+    result.passthroughArgs.push(arg);
+    return result;
+  }, { testFiles: [], passthroughArgs: [] });
+}
+
 export function runVitest(args, options = {}) {
   const configArgs = options.cloudflare ? [] : ["--config", "vitest.node.config.js"];
   const result = spawnSync(vitestBin, ["--run", ...configArgs, ...args], {
@@ -59,48 +71,60 @@ export function runVitest(args, options = {}) {
   return result.status ?? 1;
 }
 
-export function runTestFileGroup(testFiles, options = {}) {
+export function runTestFileGroup(testFiles, options = {}, runVitestFn = runVitest) {
   if (testFiles.length === 0) {
     return 0;
   }
 
-  return runVitest(testFiles, options);
+  return runVitestFn(testFiles, options);
 }
 
-export function main(args = cliArgs) {
+export function main(
+  args = cliArgs,
+  {
+    listTestFilesFn = listTestFiles,
+    runVitestFn = runVitest,
+  } = {},
+) {
   if (args.length > 0) {
-    const absoluteCliTestFiles = args
-      .filter((arg) => arg.endsWith(".test.js"))
+    const { testFiles, passthroughArgs } = splitCliArguments(args);
+    const absoluteCliTestFiles = testFiles
       .map((arg) => join(process.cwd(), arg));
 
     if (absoluteCliTestFiles.length === 0) {
-      return runVitest(args);
+      return runVitestFn(args);
     }
 
     const groupedCliTests = splitTestFilesByPool(absoluteCliTestFiles);
-    const nodeArgs = groupedCliTests.node.map((testFile) => relative(process.cwd(), testFile));
-    const cloudflareArgs = groupedCliTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
+    const nodeArgs = [
+      ...passthroughArgs,
+      ...groupedCliTests.node.map((testFile) => relative(process.cwd(), testFile)),
+    ];
+    const cloudflareArgs = [
+      ...passthroughArgs,
+      ...groupedCliTests.cloudflare.map((testFile) => relative(process.cwd(), testFile)),
+    ];
 
-    const nodeStatus = runTestFileGroup(nodeArgs, { cloudflare: false });
+    const nodeStatus = runTestFileGroup(nodeArgs, { cloudflare: false }, runVitestFn);
 
     if (nodeStatus !== 0) {
       return nodeStatus;
     }
 
-    return runTestFileGroup(cloudflareArgs, { cloudflare: true });
+    return runTestFileGroup(cloudflareArgs, { cloudflare: true }, runVitestFn);
   }
 
-  const groupedSuiteTests = splitTestFilesByPool(listTestFiles(join(process.cwd(), "test")));
+  const groupedSuiteTests = splitTestFilesByPool(listTestFilesFn(join(process.cwd(), "test")));
   const nodeSuiteArgs = groupedSuiteTests.node.map((testFile) => relative(process.cwd(), testFile));
   const cloudflareSuiteArgs = groupedSuiteTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
 
-  const nodeStatus = runTestFileGroup(nodeSuiteArgs, { cloudflare: false });
+  const nodeStatus = runTestFileGroup(nodeSuiteArgs, { cloudflare: false }, runVitestFn);
 
   if (nodeStatus !== 0) {
     return nodeStatus;
   }
 
-  return runTestFileGroup(cloudflareSuiteArgs, { cloudflare: true });
+  return runTestFileGroup(cloudflareSuiteArgs, { cloudflare: true }, runVitestFn);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
