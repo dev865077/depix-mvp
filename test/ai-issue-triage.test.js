@@ -2,6 +2,7 @@
  * Testes das validacoes do triador automatico de issues.
  */
 import { describe, expect, it, vi } from "vitest";
+import issueTriageWorkflowText from "../.github/workflows/ai-issue-triage.yml?raw";
 
 import {
   assertValidIssueTriagePlan,
@@ -10,6 +11,7 @@ import {
   buildIssuePlanningDispatchRequest,
   buildIssueCommentBody,
   parseIssueTriageResponse,
+  resolveIssueForTriageEvent,
   resolveIssuePlanningDispatchRef,
   runIssueTriageWorkflow,
   shouldDispatchIssuePlanning,
@@ -18,6 +20,28 @@ import {
 } from "../scripts/ai-issue-triage.mjs";
 
 describe("ai issue triage validation", () => {
+  it("supports both visual issue events and API workflow_dispatch", () => {
+    expect(issueTriageWorkflowText).toContain("issues:");
+    expect(issueTriageWorkflowText).toContain("workflow_dispatch:");
+    expect(issueTriageWorkflowText).toContain("issue_number:");
+    expect(issueTriageWorkflowText).toContain("github.event.issue.number || github.event.inputs.issue_number");
+  });
+
+  it("resolves workflow_dispatch issues through the GitHub API lane", async () => {
+    const calls = [];
+    const issue = await resolveIssueForTriageEvent("dev865077/depix-mvp", {
+      inputs: { issue_number: "317" },
+    }, {
+      fetchIssue: async (repo, issueNumber) => {
+        calls.push([repo, issueNumber]);
+        return { number: issueNumber, title: "child issue", state: "open" };
+      },
+    });
+
+    expect(calls).toEqual([["dev865077/depix-mvp", 317]]);
+    expect(issue).toEqual({ number: 317, title: "child issue", state: "open" });
+  });
+
   it("parses plain and fenced JSON responses", () => {
     const plan = {
       impact: "baixo",
