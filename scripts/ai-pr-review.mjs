@@ -985,13 +985,49 @@ async function githubRequest(url, init = {}) {
     throw new Error(`GitHub API request failed (${response.status}): ${body}`);
   }
 
-  if (response.status === 204) {
+  return parseGitHubRestResponse(response);
+}
+
+/**
+ * Parse one successful GitHub REST response without misclassifying empty bodies.
+ *
+ * Real `Response` objects can be safely previewed with `clone()`. Test doubles
+ * often expose `json()` directly without a real stream body, so the fallback
+ * remains explicit for those mocks.
+ *
+ * @param {{ status?: number, clone?: () => { text: () => Promise<string> }, text?: () => Promise<string>, json?: () => Promise<any> }} response Response-like object.
+ * @returns {Promise<any>} Parsed payload or null for empty/no-content bodies.
+ */
+export async function parseGitHubRestResponse(response) {
+  if (response?.status === 204) {
     return null;
   }
 
-  const body = await response.text();
+  if (typeof response?.clone === "function") {
+    const preview = await response.clone().text();
 
-  return body.trim().length > 0 ? JSON.parse(body) : null;
+    if (preview.trim().length === 0) {
+      return null;
+    }
+
+    return response.json();
+  }
+
+  const body = typeof response?.text === "function" ? await response.text() : "";
+
+  if (body.trim().length > 0) {
+    return JSON.parse(body);
+  }
+
+  if (typeof response?.json === "function") {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -2066,17 +2102,23 @@ export async function waitForCiTestConclusion(
 ) {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15 * 60 * 1000;
   const pollIntervalMs = Number.isFinite(options.pollIntervalMs) ? options.pollIntervalMs : 5000;
+  const normalizedPollIntervalMs = Math.max(0, pollIntervalMs);
   const deadline = Date.now() + timeoutMs;
+  const maxAttempts = Math.max(1, Math.ceil(timeoutMs / Math.max(normalizedPollIntervalMs, 1)) + 1);
 
-  while (Date.now() <= deadline) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const state = getCiTestCheckState(await fetchPullRequestStatusCheckRollup(repository, pullRequestNumber));
 
     if (state.completed) {
       return state;
     }
 
+    if (Date.now() > deadline || attempt === maxAttempts - 1) {
+      break;
+    }
+
     await new Promise((resolve) => {
-      setTimeout(resolve, pollIntervalMs);
+      setTimeout(resolve, normalizedPollIntervalMs);
     });
   }
 
