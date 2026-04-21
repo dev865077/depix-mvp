@@ -37,6 +37,7 @@ import {
   isCiTestCheckGreen,
   isCompletedCiWorkflowRunEvent,
   normalizeSpecialistReviewMemo,
+  parseGitHubRestResponse,
   parseBlockingRoleContract,
   redactActionsLogSecrets,
   reconcileFollowUpTestableBlockers,
@@ -2017,6 +2018,20 @@ describe("ai pr review discussion rendering", () => {
       globalThis.fetch = originalFetch;
       delete process.env.GITHUB_TOKEN;
     }
+  });
+
+  it("parses GitHub REST responses safely across 204, empty clones, and json-only mocks", async () => {
+    await expect(parseGitHubRestResponse({ status: 204 })).resolves.toBeNull();
+    await expect(parseGitHubRestResponse({
+      status: 200,
+      clone: () => ({ text: async () => "" }),
+      json: async () => ({ unexpected: true }),
+    })).resolves.toBeNull();
+    await expect(parseGitHubRestResponse({
+      status: 200,
+      text: async () => "",
+      json: async () => ({ ok: true }),
+    })).resolves.toEqual({ ok: true });
   });
 
   it("keeps a follow-up blocker when the suggested test file is not in the diff", () => {
