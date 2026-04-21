@@ -29,6 +29,11 @@ Tambem existe uma flag operacional explicita:
 - `ENABLE_OPS_DEPOSITS_FALLBACK=true` para habilitar de fato `POST /ops/:tenantId/reconcile/deposits`
 - `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` para habilitar a reconciliação agendada via Cloudflare Cron Trigger
 
+Para o fluxo Telegram, existe tambem a configuracao de timeout de conversa aberta:
+
+- `TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES` controla por quantos minutos um pedido aberto em `amount`, `wallet` ou `confirmation` pode ficar sem atualizacao antes de ser expirado pelo runtime
+- se ausente, o runtime usa `30` minutos como valor padrao
+
 ## Como o runtime resolve isso
 
 O registro nao sensivel fica em `TENANT_REGISTRY`. Cada tenant aponta para nomes de bindings secretos, e o runtime materializa esses valores quando necessario.

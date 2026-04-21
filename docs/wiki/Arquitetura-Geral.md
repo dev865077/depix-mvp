@@ -47,6 +47,9 @@ flowchart LR
 - a maquina de progresso de pedidos foi migrada para TypeScript estrito, com contratos explicitos de estado, evento e contexto
 - o contrato de transicao da maquina foi preservado; a compatibilidade com consumidores JS ficou restrita a imports e ao ponto de entrada carregavel
 - a borda Telegram agora inclui reconsulta de deposito pendente antes de responder `/start` e `/status`, reaproveitando o caminho de reconciliacao ja existente para atualizar a resposta com o estado remoto quando a Eulen ja tiver finalizado o pagamento
+- o runtime do Telegram tambem expira conversas abertas antigas antes de consumir novas mensagens ou callbacks, para evitar que pedidos parados continuem aceitando interacoes como se estivessem ativos
+- `/iniciar` foi adicionado como alias de `/start` na borda Telegram
+- o tempo limite de conversas abertas do Telegram agora vem de configuracao de runtime tipada e tem valor padrao quando nao configurado
 
 ## Principios arquiteturais
 

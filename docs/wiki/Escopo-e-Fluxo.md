@@ -28,6 +28,10 @@
 - o fluxo Telegram agora coleta o endereco DePix/Liquid em `wallet` antes de avancar para `confirmation`
 - em `confirmation`, `sim`, `confirmar` e `ok` criam o deposito real; `cancelar` encerra o pedido
 - o fluxo Telegram tambem aceita `/cancel`, `cancelar`, `recomecar` e `/help` como controles de conversa para pedidos abertos em `amount`, `wallet` e `confirmation`
+- `/start` pode iniciar uma nova conversa ou retomar o pedido aberto mais recente
+- `/iniciar` funciona como alias de `/start`
+- se existir um pedido aberto em `amount`, `wallet` ou `confirmation` que ficou inativo por tempo demais, o runtime expira essa conversa antes de processar novas mensagens ou callbacks
+- quando a conversa expira, o usuario recebe uma mensagem indicando que o pedido anterior foi encerrado com seguranca e que a conversa recomeça do inicio
 - `/help` e somente informativo: pode ler o pedido aberto para contextualizar a resposta, mas nao cria pedido novo nem altera o pedido existente
 - `recomecar` reinicia com seguranca sem criar pedido novo quando nao houver contexto aberto
 - valores BRL simples aceitos no chat devem ser conservadores e nao ambíguos
