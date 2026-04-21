@@ -11,6 +11,14 @@ import { resolveTenantFromRequest, resolveTenantIdFromPath } from "../config/ten
 import { getDatabase } from "../db/client.js";
 import { log } from "../lib/logger.js";
 
+/** @typedef {import("../types/runtime").AppContext} AppContext */
+/** @typedef {import("hono").Next} Next */
+
+/**
+ * @param {AppContext} c
+ * @param {Next} next
+ * @returns {Promise<void>}
+ */
 export async function requestContextMiddleware(c, next) {
   const requestId = crypto.randomUUID();
   const requestStartedAt = Date.now();

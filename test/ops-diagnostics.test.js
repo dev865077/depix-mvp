@@ -176,7 +176,9 @@ describe("ops diagnostics routes", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBeTruthy();
     expect(body.response.asyncMode).toBe("true");
+    expect(String(fetchSpy.mock.calls[0][0])).toBe("https://depix.eulen.app/api/ping");
     expect(fetchSpy.mock.calls[0][1]?.headers.get("X-Async")).toBe("true");
   });
 
