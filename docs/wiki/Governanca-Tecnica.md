@@ -51,6 +51,9 @@
 - a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao
 - a conclusao do workflow `CI` deve acordar a lane de Discussion por `workflow_run`, para que a revisao de PR rode depois do resultado canonico de testes sem depender de operador procurando manualmente
 - o evento `workflow_run` nao deve acionar review direto; ele existe para reconciliar Discussions abertas contra o resultado final de `CI / Test`
+- o fluxo de review automatica de PR nao deve iniciar a Discussion durante `pull_request`; esse evento apenas prepara a classificacao e preserva os checks visiveis sem abrir a lane multi-comentario
+- a Discussion de review deve ser retomada por `workflow_run` somente depois que o `CI / Test` canonico estiver verde
+- a evidencia operacional precisa registrar o contrato de nao-cancelamento: o run que publica comentarios de Discussion nao deve ser cancelado por reuse de concurrency group entre eventos `pull_request` e `workflow_run`
 - falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
 - quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
 

@@ -78,31 +78,11 @@ Explicitar:
 
 ## Regra extra para PR TypeScript
 
-- preservar `src/index.ts` como entrypoint canonico do Worker, salvo issue explicita para mudar esse contrato
-- rodar `npm run typecheck` quando alterar `src/**/*.ts`, tipos gerados, entrypoints ou contratos compartilhados
-- rodar `npm run cf:types` quando alterar `wrangler.jsonc`, bindings, `Env` ou configuracao Cloudflare
-- rodar `npm test` quando alterar runtime, scripts, testes, automacoes ou docs que prometem contrato verificavel
-- usar [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript) para ondas sensiveis de bootstrap, rotas, webhooks, deploy e persistencia
-- manter [Migracao TypeScript](Migracao-TypeScript) como fonte de verdade do estado final da epic #186
+- preservar `src/index.ts` como entrypoi
 
-## AI PR review gate
+## Regra extra para review automatica de PR
 
-- PR pequena de baixo risco pode ficar no review direto quando muda apenas docs/testes, toca no maximo 3 arquivos, altera no maximo 120 linhas e cruza no maximo 2 areas de topo
-- PR pequena que ajusta somente workflow sem tocar permissoes, segredos, `GITHUB_TOKEN`, `pull_request_target` ou escopo de escrita tambem pode ficar no review direto
-- PR pequena que ajusta a propria automacao de review pode ficar no review direto quando se limita a workflow, `scripts/ai-pr-review.mjs`, testes focados e esta pagina, sem tocar permissoes, segredos ou tokens
-- PR que muda codigo de produto, workflow sensivel, configuracao critica, prompt operacional, script, integracao ou comportamento entra em Discussion antes do merge
-- PR grande de docs/testes tambem entra em Discussion, porque tamanho por si so aumenta risco de revisao
-- a Discussion e um artefato de revisao: produto/escopo, tecnica/arquitetura, risco/operacao e sintese final
-- a Discussion e append-only: cada execucao da automacao adiciona novos comentarios ate publicar um comentario final de status
-- comentarios antigos nunca devem ser editados ou removidos
-- a thread canonica da rodada seguinte e a reply humana na conclusao automatizada mais recente
-- a automacao le a conclusao anterior e as replies humanas nessa thread antes de emitir nova rodada
-- quando a PR passar numa rodada seguinte, a automacao deve responder na thread da conclusao explicando por que os bloqueios anteriores deixaram de valer
-- quando a PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
-- a lane de Discussion da PR tambem escuta `workflow_run` do workflow `CI`; isso evita depender de polling humano quando `CI / Test` termina depois de uma resposta na Discussion
-- `workflow_run` pode acordar somente a lane de Discussion; review direto nao deve ser duplicado por conclusao de CI
-- quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
-- em follow-up, os memos mais recentes dos especialistas devem ser considerados junto com a conclusao humana antes de consolidar novos bloqueios
-- em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada
-- na revisao automatica de PR, falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
-- quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
+- `pull_request` nao deve iniciar a Discussion: esse evento apenas prepara a classificacao e mantem a review visivel sem abrir a lane multi-comentario
+- a Discussion de review deve ser retomada por `workflow_run` depois que o `CI / Test` canonico terminar com sucesso
+- o contrato de revisao nao deve cancelar a execucao anterior ao publicar comentarios de Discussion, para evitar perder evidencias no mesmo grupo de concorrencia
+- a evidencia da automacao deve registrar explicitamente que a lane de Discussion foi deferida para o run canonico de CI, preservando o contrato de nao-cancelamento
