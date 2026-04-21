@@ -28,6 +28,7 @@ import {
   ORDER_PROGRESS_STATES,
   normalizePersistedOrderProgressStep,
 } from "../order-flow/order-progress-machine.js";
+import { createTelegramOrderDepositNonce } from "./telegram-order-nonce.js";
 
 const TELEGRAM_CONFIRMATION_FAILURE_MESSAGE = [
   "Nao consegui criar seu Pix agora.",
@@ -154,19 +155,6 @@ function createTelegramEulenDepositPayload(order, splitConfig) {
     depixSplitAddress: splitConfig.depixSplitAddress,
     splitFee: splitConfig.splitFee,
   };
-}
-
-/**
- * Gera a ancora idempotente da intencao financeira do pedido Telegram.
- *
- * Retries do mesmo `tenantId + orderId` reutilizam esse nonce no `X-Nonce`
- * para representar a mesma intencao de cobranca, nao uma nova cobranca.
- *
- * @param {{ tenantId: string, orderId: string }} input Identidade canonica.
- * @returns {string} Nonce estavel e sem dado sensivel.
- */
-function createTelegramOrderDepositNonce(input) {
-  return `telegram-order:${input.tenantId}:${input.orderId}`;
 }
 
 /**

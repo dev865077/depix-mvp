@@ -18,6 +18,7 @@ import { getDatabase } from "../src/db/client.js";
 import { createDeposit, getLatestDepositByOrderId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
+import { createTelegramOrderDepositNonce } from "../src/services/telegram-order-nonce.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
   buildTelegramHelpReply,
@@ -2497,9 +2498,14 @@ describe("telegram webhook reply flow", () => {
       .bind("alpha", "order_partial_recovery")
       .first();
 
+    const expectedNonce = createTelegramOrderDepositNonce({
+      tenantId: "alpha",
+      orderId: "order_partial_recovery",
+    });
+
     expect(eulenNonces).toEqual([
-      "telegram-order:alpha:order_partial_recovery",
-      "telegram-order:alpha:order_partial_recovery",
+      expectedNonce,
+      expectedNonce,
     ]);
     expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(2);
     expect(finalOrder).toEqual({
@@ -2507,14 +2513,14 @@ describe("telegram webhook reply flow", () => {
       status: "pending",
     });
     expect(savedDeposit?.depositEntryId).toBe("deposit_partial_recovery_001");
-    expect(savedDeposit?.nonce).toBe("telegram-order:alpha:order_partial_recovery");
+    expect(savedDeposit?.nonce).toBe(expectedNonce);
     expect(persistedDeposits?.count).toBe(1);
     expect(telegramMessages.some((message) => message?.includes("Pedido confirmado em Alpha."))).toBe(true);
 
     const serializedLogs = consoleSpy.mock.calls.map(([line]) => String(line)).join("\n");
 
     expect(serializedLogs).toContain("telegram_order_deposit_recovery_retryable");
-    expect(serializedLogs).toContain("telegram-order:alpha:order_partial_recovery");
+    expect(serializedLogs).toContain(expectedNonce);
     expect(serializedLogs).not.toContain("0002010102122688pix-partial-recovery-001");
     expect(serializedLogs).not.toContain("alpha-eulen-token");
     expect(serializedLogs).not.toContain("alpha-telegram-secret");
