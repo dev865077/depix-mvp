@@ -220,6 +220,43 @@ describe("qr flow evidence helpers", () => {
     });
   });
 
+  it("does not mark split proof as proved from an unrelated order event", function assertSplitProofCorrelation() {
+    expect(buildSplitProofReport(
+      [
+        {
+          order_id: "order_target",
+          split_address: "lq1split",
+          split_fee: "1.00%",
+        },
+      ],
+      [
+        {
+          order_id: "order_target",
+          external_status: "depix_sent",
+        },
+      ],
+      [
+        {
+          order_id: "order_target",
+          bank_tx_id: "fitbank_target",
+          blockchain_tx_id: null,
+        },
+        {
+          order_id: "order_other",
+          bank_tx_id: "fitbank_other",
+          blockchain_tx_id: "liquid_tx_other",
+        },
+      ],
+    )).toEqual({
+      status: "missing_onchain_tx",
+      orderIds: ["order_target"],
+      bankTxIds: ["fitbank_target"],
+      blockchainTxIds: [],
+      splitConfiguredOrders: 1,
+      settledOrders: 1,
+    });
+  });
+
   it("marks split proof as missing split config when the order never persisted split fields", function assertMissingSplitConfig() {
     expect(buildSplitProofReport(
       [

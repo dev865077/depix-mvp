@@ -736,9 +736,21 @@ export function buildSplitProofReport(orders, deposits, depositEvents) {
   const normalizedEvents = Array.isArray(depositEvents) ? depositEvents : [];
   const orderIds = collectDistinctTextValues(normalizedOrders, "order_id");
   const splitConfiguredOrders = normalizedOrders.filter(isSplitConfiguredOrder).length;
-  const settledOrders = normalizedDeposits.filter((deposit) => readTextValue(deposit, "external_status") === "depix_sent").length;
-  const bankTxIds = collectDistinctTextValues(normalizedEvents, "bank_tx_id");
-  const blockchainTxIds = collectDistinctTextValues(normalizedEvents, "blockchain_tx_id");
+  const relevantSettledOrderIds = collectDistinctTextValues(
+    normalizedDeposits.filter((deposit) => (
+      readTextValue(deposit, "external_status") === "depix_sent"
+      && orderIds.includes(readTextValue(deposit, "order_id") ?? "")
+    )),
+    "order_id",
+  );
+  const relevantEvents = normalizedEvents.filter((event) => relevantSettledOrderIds.includes(readTextValue(event, "order_id") ?? ""));
+  const bankTxIds = collectDistinctTextValues(relevantEvents, "bank_tx_id");
+  const blockchainTxIds = collectDistinctTextValues(relevantEvents, "blockchain_tx_id");
+  const provedOrderIds = collectDistinctTextValues(
+    relevantEvents.filter((event) => Boolean(readTextValue(event, "blockchain_tx_id"))),
+    "order_id",
+  );
+  const settledOrders = relevantSettledOrderIds.length;
 
   if (orderIds.length === 0) {
     return {
@@ -773,7 +785,7 @@ export function buildSplitProofReport(orders, deposits, depositEvents) {
     };
   }
 
-  if (blockchainTxIds.length > 0) {
+  if (settledOrders > 0 && provedOrderIds.length === settledOrders) {
     return {
       status: "proved",
       orderIds,
