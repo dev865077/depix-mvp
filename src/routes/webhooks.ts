@@ -94,5 +94,20 @@ export async function handleEulenDepositWebhook(c: AppContext): Promise<Response
   );
 }
 
+export function handleEulenDepositWebhookProbe(c: AppContext): Response {
+  return jsonError(
+    c,
+    405,
+    "webhook_method_not_allowed",
+    "Eulen deposit webhook is available and expects POST.",
+    {
+      expectedMethod: "POST",
+      receivedMethod: c.req.method,
+    },
+  );
+}
+
 // Este path foi escolhido como borda canonica do webhook por tenant.
+webhooksRouter.get("/eulen/:tenantId/deposit", handleEulenDepositWebhookProbe);
+webhooksRouter.on("HEAD", "/eulen/:tenantId/deposit", handleEulenDepositWebhookProbe);
 webhooksRouter.post("/eulen/:tenantId/deposit", handleEulenDepositWebhook);
