@@ -14,12 +14,63 @@
  */
 import { readSecretBindingValue } from "../config/tenants.js";
 import { log } from "../lib/logger.js";
+import type { WorkerEnv } from "../types/runtime";
 
 export const ENABLE_OPS_DEPOSIT_RECHECK_BINDING = "ENABLE_OPS_DEPOSIT_RECHECK";
 export const ENABLE_OPS_DEPOSITS_FALLBACK_BINDING = "ENABLE_OPS_DEPOSITS_FALLBACK";
 export const OPS_ROUTE_BEARER_TOKEN_BINDING = "OPS_ROUTE_BEARER_TOKEN";
 
-const DEPOSIT_RECHECK_OPERATION = {
+type OpsAuthScope = "tenant" | "global";
+
+export type OpsRouteOperation = {
+  runtimeKey: string;
+  featureFlagBindingName: string;
+  invalidFlagCode: string;
+  disabledCode: string;
+};
+
+type OpsRuntimeConfig = {
+  environment: string;
+  operations?: Record<string, {
+    enabled?: boolean;
+    featureFlag?: {
+      configured?: boolean;
+      recognized?: boolean;
+      rawValue?: string | null;
+    };
+  }>;
+};
+
+type OpsRouteTenant = {
+  tenantId: string;
+  opsBindings?: {
+    depositRecheckBearerToken?: string;
+  };
+};
+
+type OpsRouteAuthorizationInput = {
+  env: WorkerEnv | Record<string, unknown>;
+  runtimeConfig: OpsRuntimeConfig;
+  operation?: OpsRouteOperation;
+  authorizationHeader?: string;
+  requestId?: string;
+  tenant?: OpsRouteTenant;
+  tenantId?: string;
+  path?: string;
+};
+
+type ResolvedOpsBearerToken = {
+  bindingName: string;
+  authScope: OpsAuthScope;
+  token: string;
+};
+
+export type OpsRouteAuthorizationContext = {
+  bindingName: string;
+  authScope: OpsAuthScope;
+};
+
+const DEPOSIT_RECHECK_OPERATION: OpsRouteOperation = {
   runtimeKey: "depositRecheck",
   featureFlagBindingName: ENABLE_OPS_DEPOSIT_RECHECK_BINDING,
   invalidFlagCode: "ops_route_disabled_invalid_flag",
@@ -56,7 +107,7 @@ const DEPOSIT_RECHECK_OPERATION = {
  * }} input Dependencias e metadados da rota.
  * @returns {void}
  */
-export function assertOpsOperationEnabled(input) {
+export function assertOpsOperationEnabled(input: Pick<OpsRouteAuthorizationInput, "runtimeConfig" | "operation" | "tenantId">): void {
   const operation = input.operation ?? DEPOSIT_RECHECK_OPERATION;
   const featureFlag = input.runtimeConfig.operations?.[operation.runtimeKey]?.featureFlag;
 
@@ -92,6 +143,10 @@ export function assertOpsOperationEnabled(input) {
  * Erro controlado de autorizacao de rota operacional.
  */
 export class OpsRouteAuthorizationError extends Error {
+  status: number;
+  code: string;
+  details: Record<string, unknown>;
+
   /**
    * @param {number} status Status HTTP esperado na borda.
    * @param {string} code Codigo estavel.
@@ -99,7 +154,7 @@ export class OpsRouteAuthorizationError extends Error {
    * @param {Record<string, unknown>=} details Metadados adicionais.
    * @param {unknown} [cause] Erro original.
    */
-  constructor(status, code, message, details = {}, cause) {
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}, cause?: unknown) {
     super(message, { cause });
     this.name = "OpsRouteAuthorizationError";
     this.status = status;
@@ -122,7 +177,10 @@ export class OpsRouteAuthorizationError extends Error {
  * @param {{ tenantId: string, opsBindings?: { depositRecheckBearerToken?: string } } | undefined} tenant Tenant atual.
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global", token: string }>} Segredo esperado.
  */
-async function readExpectedOpsBearerToken(env, tenant) {
+async function readExpectedOpsBearerToken(
+  env: WorkerEnv | Record<string, unknown>,
+  tenant: OpsRouteTenant | undefined,
+): Promise<ResolvedOpsBearerToken> {
   const tenantScopedBindingName = tenant?.opsBindings?.depositRecheckBearerToken;
 
   if (tenantScopedBindingName) {
@@ -143,13 +201,7 @@ async function readExpectedOpsBearerToken(env, tenant) {
   };
 }
 
-/**
- * Extrai um token Bearer do header `Authorization`.
- *
- * @param {string | undefined} authorizationHeader Header bruto recebido.
- * @returns {string | undefined} Token limpo quando o formato e valido.
- */
-export function readBearerTokenFromAuthorizationHeader(authorizationHeader) {
+export function readBearerTokenFromAuthorizationHeader(authorizationHeader: string | undefined): string | undefined {
   if (!authorizationHeader || typeof authorizationHeader !== "string") {
     return undefined;
   }
@@ -174,7 +226,7 @@ export function readBearerTokenFromAuthorizationHeader(authorizationHeader) {
  * @param {string} right Segundo valor.
  * @returns {boolean} Verdadeiro quando os valores sao equivalentes.
  */
-export function constantTimeStringEquals(left, right) {
+export function constantTimeStringEquals(left: string, right: string): boolean {
   const maxLength = Math.max(left.length, right.length);
   let diff = left.length === right.length ? 0 : 1;
 
@@ -205,10 +257,10 @@ export function constantTimeStringEquals(left, right) {
  * }} input Dependencias e metadados da requisicao.
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
  */
-export async function authorizeOpsRequest(input) {
-  let expectedBearerToken;
-  let expectedBearerBindingName;
-  let expectedAuthScope;
+export async function authorizeOpsRequest(input: OpsRouteAuthorizationInput): Promise<OpsRouteAuthorizationContext> {
+  let expectedBearerToken: string | undefined;
+  let expectedBearerBindingName: string | undefined;
+  let expectedAuthScope: OpsAuthScope | undefined;
   const tenantScopedBindingName = input.tenant?.opsBindings?.depositRecheckBearerToken;
 
   try {
@@ -232,6 +284,19 @@ export async function authorizeOpsRequest(input) {
   }
 
   const providedBearerToken = readBearerTokenFromAuthorizationHeader(input.authorizationHeader);
+
+  if (!expectedBearerToken || !expectedBearerBindingName || !expectedAuthScope) {
+    throw new OpsRouteAuthorizationError(
+      503,
+      "ops_route_disabled",
+      "Operational route is disabled because its bearer token is not configured.",
+      {
+        bindingName: expectedBearerBindingName ?? tenantScopedBindingName ?? OPS_ROUTE_BEARER_TOKEN_BINDING,
+        environment: input.runtimeConfig.environment,
+        tenantId: input.tenantId,
+      },
+    );
+  }
 
   if (!providedBearerToken) {
     log(input.runtimeConfig, {
@@ -325,7 +390,7 @@ export async function authorizeOpsRequest(input) {
  * }} input Dependencias e metadados da requisicao.
  * @returns {Promise<{ bindingName: string, authScope: "tenant" | "global" }>} Contexto de auth selecionado.
  */
-export async function authorizeOpsRoute(input) {
+export async function authorizeOpsRoute(input: OpsRouteAuthorizationInput): Promise<OpsRouteAuthorizationContext> {
   assertOpsOperationEnabled(input);
 
   return authorizeOpsRequest(input);

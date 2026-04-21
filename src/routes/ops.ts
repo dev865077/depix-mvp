@@ -11,6 +11,7 @@
  * issue #42 continuam isoladas em `local-diagnostic-validation.js`.
  */
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
@@ -29,6 +30,7 @@ import {
   authorizeOpsRoute,
   ENABLE_OPS_DEPOSITS_FALLBACK_BINDING,
   OpsRouteAuthorizationError,
+  type OpsRouteOperation,
 } from "../services/ops-route-authorization.js";
 import { DepositsFallbackError, processDepositsFallback } from "../services/eulen-deposits-fallback.js";
 import { DepositRecheckError, processDepositRecheck } from "../services/eulen-deposit-recheck.js";
@@ -39,8 +41,53 @@ import {
   registerTelegramWebhookOps,
   TelegramWebhookOpsError,
 } from "../services/telegram-webhook-ops.js";
+import type { AppBindings, AppContext } from "../types/runtime";
 
-export const opsRouter = new Hono();
+type RouteMessages = {
+  authorizationFailed: string;
+  operationFailed: string;
+};
+
+type RouteErrorConstructor = new (
+  status: number,
+  code: string,
+  message: string,
+  details?: Record<string, unknown>,
+  cause?: unknown,
+) => Error;
+
+type ReconciliationRouteOptions = {
+  operation?: OpsRouteOperation;
+  databaseError?: {
+    code: string;
+    message: string;
+  };
+};
+
+type ReconciliationRouteContext = {
+  tenant: NonNullable<AppContext["var"]["tenant"]>;
+  db: D1Database;
+  runtimeConfig: AppContext["var"]["runtimeConfig"];
+  eulenApiToken: string;
+};
+
+type DepositsFallbackNotificationResult = {
+  outcome?: string;
+  status?: string;
+  orderId?: string;
+  depositEntryId?: string;
+  orderStatus?: string;
+  orderCurrentStep?: string;
+  previousExternalStatus?: string;
+  previousOrderStatus?: string;
+  previousOrderCurrentStep?: string;
+};
+
+export const opsRouter = new Hono<AppBindings>();
+
+function readOptionalEnvString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 /**
  * Converte erros conhecidos do service de diagnostico para JSON padronizado.
@@ -49,7 +96,7 @@ export const opsRouter = new Hono();
  * @param {unknown} error Erro capturado durante a execucao.
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
-function handleDiagnosticRouteError(c, error) {
+function handleDiagnosticRouteError(c: AppContext, error: unknown): Response {
   if (error instanceof DiagnosticServiceError) {
     return c.json({
       ok: false,
@@ -58,7 +105,7 @@ function handleDiagnosticRouteError(c, error) {
         message: error.message,
         ...(error.details ? { details: error.details } : {}),
       },
-    }, error.status);
+    }, error.status as ContentfulStatusCode);
   }
 
   throw error;
@@ -72,7 +119,7 @@ function handleDiagnosticRouteError(c, error) {
  * @param {{ authorizationFailed: string, operationFailed: string }} messages Mensagens estaveis de log.
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
-function handleTelegramWebhookOpsRouteError(c, error, messages) {
+function handleTelegramWebhookOpsRouteError(c: AppContext, error: unknown, messages: RouteMessages): Response {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (error instanceof OpsRouteAuthorizationError) {
@@ -118,7 +165,7 @@ function handleTelegramWebhookOpsRouteError(c, error, messages) {
  * @param {{ authorizationFailed: string, operationFailed: string }} messages Mensagens de log especificas da rota.
  * @returns {Response} Resposta pronta para a borda HTTP.
  */
-function handleReconciliationRouteError(c, error, messages) {
+function handleReconciliationRouteError(c: AppContext, error: unknown, messages: RouteMessages): Response {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (error instanceof OpsRouteAuthorizationError) {
@@ -171,7 +218,13 @@ function handleReconciliationRouteError(c, error, messages) {
  * @param {{ operation?: Record<string, string>, databaseError?: { code: string, message: string } }} [options] Contratos especificos da rota.
  * @returns {Promise<{ tenant: Record<string, unknown>, db: import("@cloudflare/workers-types").D1Database, runtimeConfig: Record<string, unknown>, eulenApiToken: string }>} Dependencias prontas.
  */
-async function resolveReconciliationRouteContext(c, authorizationLogMessage, dependencyError, ErrorClass, options = {}) {
+async function resolveReconciliationRouteContext(
+  c: AppContext,
+  authorizationLogMessage: string,
+  dependencyError: { code: string; message: string },
+  ErrorClass: RouteErrorConstructor,
+  options: ReconciliationRouteOptions = {},
+): Promise<ReconciliationRouteContext> {
   const tenant = c.get("tenant");
   const db = c.get("db");
   const runtimeConfig = c.get("runtimeConfig");
@@ -241,7 +294,7 @@ async function resolveReconciliationRouteContext(c, authorizationLogMessage, dep
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resultado da reconciliacao.
  */
-export async function handleDepositRecheck(c) {
+export async function handleDepositRecheck(c: AppContext): Promise<Response> {
   try {
     const { tenant, db, runtimeConfig, eulenApiToken } = await resolveReconciliationRouteContext(
       c,
@@ -288,7 +341,7 @@ export async function handleDepositRecheck(c) {
         tenantId: tenant.tenantId,
         ...result.details,
       },
-      result.status,
+      result.status as ContentfulStatusCode,
     );
   } catch (error) {
     return handleReconciliationRouteError(c, error, {
@@ -304,7 +357,7 @@ export async function handleDepositRecheck(c) {
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resultado da reconciliacao por janela.
  */
-export async function handleDepositsFallback(c) {
+export async function handleDepositsFallback(c: AppContext): Promise<Response> {
   try {
     const { tenant, db, runtimeConfig, eulenApiToken } = await resolveReconciliationRouteContext(
       c,
@@ -341,7 +394,11 @@ export async function handleDepositsFallback(c) {
      * task unico e longo demais e garante que uma falha outbound nao impeça o
      * agendamento das demais notificacoes desta janela.
      */
-    for (const entry of result.details.results ?? []) {
+    const fallbackResults = Array.isArray(result.details.results)
+      ? result.details.results as DepositsFallbackNotificationResult[]
+      : [];
+
+    for (const entry of fallbackResults) {
       await dispatchNonBlockingTask(c, notifyTelegramOrderTransitionSafely({
         env: c.env,
         db,
@@ -371,7 +428,7 @@ export async function handleDepositsFallback(c) {
         tenantId: tenant.tenantId,
         ...result.details,
       },
-      result.status,
+      result.status as ContentfulStatusCode,
     );
   } catch (error) {
     return handleReconciliationRouteError(c, error, {
@@ -391,7 +448,7 @@ export async function handleDepositsFallback(c) {
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Estado atual do webhook no Telegram.
  */
-export async function handleTelegramWebhookInfo(c) {
+export async function handleTelegramWebhookInfo(c: AppContext): Promise<Response> {
   try {
     const tenant = c.get("tenant");
     const runtimeConfig = c.get("runtimeConfig");
@@ -445,7 +502,7 @@ export async function handleTelegramWebhookInfo(c) {
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resultado da operacao de registro.
  */
-export async function handleTelegramWebhookRegistration(c) {
+export async function handleTelegramWebhookRegistration(c: AppContext): Promise<Response> {
   try {
     const tenant = c.get("tenant");
     const runtimeConfig = c.get("runtimeConfig");
@@ -509,7 +566,7 @@ export async function handleTelegramWebhookRegistration(c) {
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resultado do ping na Eulen.
  */
-export async function handleEulenPing(c) {
+export async function handleEulenPing(c: AppContext): Promise<Response> {
   try {
     const tenant = c.get("tenant");
     const runtimeConfig = c.get("runtimeConfig");
@@ -522,7 +579,7 @@ export async function handleEulenPing(c) {
     // sincrono da Eulen. O modo async explicito evita que um tenant saudavel
     // pareca indisponivel quando o upstream descarta a janela sync curta.
     return c.json(await pingEulenDiagnostic({
-      enableLocalDiagnostics: c.env.ENABLE_LOCAL_DIAGNOSTICS,
+      enableLocalDiagnostics: readOptionalEnvString(c.env.ENABLE_LOCAL_DIAGNOSTICS),
       env: c.env,
       tenant,
       runtimeConfig,
@@ -539,7 +596,7 @@ export async function handleEulenPing(c) {
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} IDs e payload persistido para a validacao.
  */
-export async function handleEulenCreateDeposit(c) {
+export async function handleEulenCreateDeposit(c: AppContext): Promise<Response> {
   try {
     const tenant = c.get("tenant");
     const runtimeConfig = c.get("runtimeConfig");
@@ -556,7 +613,7 @@ export async function handleEulenCreateDeposit(c) {
     const body = parseDiagnosticJsonBody(await c.req.text());
 
     return c.json(await createEulenDiagnosticDeposit({
-      enableLocalDiagnostics: c.env.ENABLE_LOCAL_DIAGNOSTICS,
+      enableLocalDiagnostics: readOptionalEnvString(c.env.ENABLE_LOCAL_DIAGNOSTICS),
       env: c.env,
       db,
       tenant,

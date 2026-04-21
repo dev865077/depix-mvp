@@ -52,4 +52,9 @@ export interface AppVariables {
   tenant: ResolvedTenant;
 }
 
-export type AppContext = Context<{ Bindings: WorkerEnv; Variables: AppVariables }>;
+export type AppBindings = {
+  Bindings: WorkerEnv;
+  Variables: AppVariables;
+};
+
+export type AppContext = Context<AppBindings>;

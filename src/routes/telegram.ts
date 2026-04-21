@@ -12,8 +12,9 @@ import { log } from "../lib/logger.js";
 import { normalizeTelegramWebhookError } from "../telegram/errors.js";
 import { parseTelegramRawUpdateEnvelope } from "../telegram/raw-update.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
+import type { AppBindings, AppContext } from "../types/runtime";
 
-export const telegramRouter = new Hono();
+export const telegramRouter = new Hono<AppBindings>();
 
 /**
  * Encaminha o webhook do Telegram para o runtime real do grammY.
@@ -21,7 +22,7 @@ export const telegramRouter = new Hono();
  * @param {import("hono").Context} c Contexto HTTP atual.
  * @returns {Promise<Response>} Resposta produzida pelo grammY.
  */
-export async function handleTelegramWebhook(c) {
+export async function handleTelegramWebhook(c: AppContext): Promise<Response> {
   const tenant = c.get("tenant");
   const runtimeConfig = c.get("runtimeConfig");
   const db = c.get("db");
@@ -47,7 +48,7 @@ export async function handleTelegramWebhook(c) {
   }
 
   const telegramRuntime = getTelegramRuntime(tenant);
-  let response;
+  let response: Response;
 
   try {
     const rawTelegramUpdateBody = await c.req.raw.clone().text();
