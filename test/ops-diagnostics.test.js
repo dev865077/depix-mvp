@@ -5,6 +5,7 @@
  * mapeamento de erro permaneçam estaveis. Isso protege a instrumentacao usada
  * na issue #42 sem depender de chamadas externas reais durante a suite.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

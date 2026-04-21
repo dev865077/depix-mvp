@@ -1,6 +1,7 @@
 /**
  * Testes unitarios do service de notificacao pos-pagamento no Telegram.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

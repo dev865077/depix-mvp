@@ -1,6 +1,7 @@
 /**
  * Testes do webhook principal de deposito da Eulen.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

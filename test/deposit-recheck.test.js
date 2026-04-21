@@ -1,6 +1,7 @@
 /**
  * Testes do recheck operacional de deposito via `deposit-status`.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

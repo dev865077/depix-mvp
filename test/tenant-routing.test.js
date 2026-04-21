@@ -1,6 +1,7 @@
 /**
  * Testes da fundacao multi-tenant do Worker.
  */
+// @vitest-pool cloudflare
 import { SELF, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 

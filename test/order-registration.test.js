@@ -1,6 +1,7 @@
 /**
  * Testes focados do service de registro e controle de pedidos Telegram.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 

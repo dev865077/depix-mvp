@@ -1,11 +1,14 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
+const CLOUDFLARE_POOL_MARKER = "@vitest-pool cloudflare";
+const CLOUDFLARE_POOL_MARKER_PATTERN = /^\s*\/\/\s*@vitest-pool cloudflare\s*$/mu;
 const cliArgs = process.argv.slice(2);
 const vitestBin = join(process.cwd(), "node_modules", ".bin", "vitest");
 
-function listTestFiles(directory) {
+export function listTestFiles(directory) {
   return readdirSync(directory)
     .flatMap((entry) => {
       const path = join(directory, entry);
@@ -29,11 +32,11 @@ function listTestFiles(directory) {
     });
 }
 
-function requiresCloudflarePool(testFile) {
-  return readFileSync(testFile, "utf8").includes("cloudflare:test");
+export function requiresCloudflarePool(testFile) {
+  return CLOUDFLARE_POOL_MARKER_PATTERN.test(readFileSync(testFile, "utf8"));
 }
 
-function splitTestFilesByPool(testFiles) {
+export function splitTestFilesByPool(testFiles) {
   return testFiles.reduce((groups, testFile) => {
     if (requiresCloudflarePool(testFile)) {
       groups.cloudflare.push(testFile);
@@ -45,7 +48,7 @@ function splitTestFilesByPool(testFiles) {
   }, { node: [], cloudflare: [] });
 }
 
-function runVitest(args, options = {}) {
+export function runVitest(args, options = {}) {
   const configArgs = options.cloudflare ? [] : ["--config", "vitest.node.config.js"];
   const result = spawnSync(vitestBin, ["--run", ...configArgs, ...args], {
     cwd: process.cwd(),
@@ -56,7 +59,7 @@ function runVitest(args, options = {}) {
   return result.status ?? 1;
 }
 
-function runTestFileGroup(testFiles, options = {}) {
+export function runTestFileGroup(testFiles, options = {}) {
   if (testFiles.length === 0) {
     return 0;
   }
@@ -64,36 +67,42 @@ function runTestFileGroup(testFiles, options = {}) {
   return runVitest(testFiles, options);
 }
 
-if (cliArgs.length > 0) {
-  const absoluteCliTestFiles = cliArgs
-    .filter((arg) => arg.endsWith(".test.js"))
-    .map((arg) => join(process.cwd(), arg));
+export function main(args = cliArgs) {
+  if (args.length > 0) {
+    const absoluteCliTestFiles = args
+      .filter((arg) => arg.endsWith(".test.js"))
+      .map((arg) => join(process.cwd(), arg));
 
-  if (absoluteCliTestFiles.length === 0) {
-    process.exit(runVitest(cliArgs));
+    if (absoluteCliTestFiles.length === 0) {
+      return runVitest(args);
+    }
+
+    const groupedCliTests = splitTestFilesByPool(absoluteCliTestFiles);
+    const nodeArgs = groupedCliTests.node.map((testFile) => relative(process.cwd(), testFile));
+    const cloudflareArgs = groupedCliTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
+
+    const nodeStatus = runTestFileGroup(nodeArgs, { cloudflare: false });
+
+    if (nodeStatus !== 0) {
+      return nodeStatus;
+    }
+
+    return runTestFileGroup(cloudflareArgs, { cloudflare: true });
   }
 
-  const groupedCliTests = splitTestFilesByPool(absoluteCliTestFiles);
-  const nodeArgs = groupedCliTests.node.map((testFile) => relative(process.cwd(), testFile));
-  const cloudflareArgs = groupedCliTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
+  const groupedSuiteTests = splitTestFilesByPool(listTestFiles(join(process.cwd(), "test")));
+  const nodeSuiteArgs = groupedSuiteTests.node.map((testFile) => relative(process.cwd(), testFile));
+  const cloudflareSuiteArgs = groupedSuiteTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
 
-  const nodeStatus = runTestFileGroup(nodeArgs, { cloudflare: false });
+  const nodeStatus = runTestFileGroup(nodeSuiteArgs, { cloudflare: false });
 
   if (nodeStatus !== 0) {
-    process.exit(nodeStatus);
+    return nodeStatus;
   }
 
-  process.exit(runTestFileGroup(cloudflareArgs, { cloudflare: true }));
+  return runTestFileGroup(cloudflareSuiteArgs, { cloudflare: true });
 }
 
-const groupedSuiteTests = splitTestFilesByPool(listTestFiles(join(process.cwd(), "test")));
-const nodeSuiteArgs = groupedSuiteTests.node.map((testFile) => relative(process.cwd(), testFile));
-const cloudflareSuiteArgs = groupedSuiteTests.cloudflare.map((testFile) => relative(process.cwd(), testFile));
-
-const nodeStatus = runTestFileGroup(nodeSuiteArgs, { cloudflare: false });
-
-if (nodeStatus !== 0) {
-  process.exit(nodeStatus);
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  process.exit(main());
 }
-
-process.exit(runTestFileGroup(cloudflareSuiteArgs, { cloudflare: true }));

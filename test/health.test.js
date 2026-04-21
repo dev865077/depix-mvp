@@ -1,6 +1,7 @@
 /**
  * Smoke test do healthcheck do Worker.
  */
+// @vitest-pool cloudflare
 import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

@@ -1,6 +1,7 @@
 /**
  * Testes do fallback operacional por janela via `/deposits`.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

@@ -8,6 +8,7 @@
  * - erros outbound sao mapeados para contrato HTTP local
  * - requests fora de escopo nao geram retry operacional desnecessario
  */
+// @vitest-pool cloudflare
 import { BotError, GrammyError, HttpError } from "grammy";
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

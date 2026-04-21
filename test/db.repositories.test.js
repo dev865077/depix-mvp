@@ -1,6 +1,7 @@
 /**
  * Testes de persistencia do MVP.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
