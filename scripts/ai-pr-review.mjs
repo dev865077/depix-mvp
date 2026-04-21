@@ -1601,6 +1601,36 @@ function isAutomationDiscussionCommentEvent(event) {
 }
 
 /**
+ * Extract the PR number attached to a GitHub Actions workflow_run event.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {number | null} Pull request number when the workflow run is linked to one PR.
+ */
+export function extractPullRequestNumberFromWorkflowRunEvent(event) {
+  const pullRequests = Array.isArray(event?.workflow_run?.pull_requests)
+    ? event.workflow_run.pull_requests
+    : [];
+  const [pullRequest] = pullRequests;
+  const pullRequestNumber = Number(pullRequest?.number);
+
+  return Number.isInteger(pullRequestNumber) && pullRequestNumber > 0
+    ? pullRequestNumber
+    : null;
+}
+
+/**
+ * Decide whether a workflow_run payload is eligible to wake PR review.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {boolean} True when CI completed for a pull request.
+ */
+export function isCompletedCiWorkflowRunEvent(event) {
+  return event?.workflow_run?.name === "CI"
+    && event?.workflow_run?.status === "completed"
+    && Boolean(extractPullRequestNumberFromWorkflowRunEvent(event));
+}
+
+/**
  * Detect one automation-authored reply in the conclusion thread.
  *
  * @param {any} reply Discussion reply payload.
@@ -2314,6 +2344,37 @@ async function resolvePullRequestContext(repository, event) {
     return {
       pullRequest: event.pull_request,
       discussion: null,
+    };
+  }
+
+  if (event.workflow_run) {
+    if (!isCompletedCiWorkflowRunEvent(event)) {
+      logOperationalEvent("ai_pr_review.skip", {
+        reason: "unsupported_workflow_run",
+        workflowName: event.workflow_run?.name ?? null,
+        workflowStatus: event.workflow_run?.status ?? null,
+      });
+      return null;
+    }
+
+    const pullRequestNumber = extractPullRequestNumberFromWorkflowRunEvent(event);
+    const pullRequest = await fetchPullRequest(repository, pullRequestNumber);
+
+    if (pullRequest.state !== "open" || pullRequest.draft === true) {
+      logOperationalEvent("ai_pr_review.skip", {
+        reason: "pull_request_not_reviewable",
+        pullRequestNumber,
+        pullRequestState: pullRequest.state,
+        draft: Boolean(pullRequest.draft),
+      });
+      return null;
+    }
+
+    const existingDiscussionContext = await resolveExistingDiscussionContext(repository, pullRequestNumber);
+
+    return {
+      pullRequest,
+      discussion: existingDiscussionContext?.discussion ?? null,
     };
   }
 
@@ -3083,12 +3144,15 @@ export function buildAutomationEvidenceContext(inputs) {
   if (
     hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
     && prReviewWorkflow.includes("discussion_comment:")
+    && prReviewWorkflow.includes("workflow_run:")
+    && prReviewWorkflow.includes("- CI")
     && prReviewWorkflow.includes("discussion-review:")
     && prReviewWorkflow.includes("Wait for canonical CI / Test conclusion")
+    && prReviewWorkflow.includes("github.event_name != 'workflow_run'")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, `discussion-review` explicitly waits for the canonical `CI / Test` conclusion before publishing, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, `workflow_run` wakes the `discussion-review` lane reactively after the canonical `CI / Test` result completes, direct review is not duplicated on `workflow_run`, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
     );
   }
 

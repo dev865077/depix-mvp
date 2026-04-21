@@ -90,6 +90,8 @@ Explicitar:
 - a automacao le a conclusao anterior e as replies humanas nessa thread antes de emitir nova rodada
 - quando a PR passar numa rodada seguinte, a automacao deve responder na thread da conclusao explicando por que os bloqueios anteriores deixaram de valer
 - quando a PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
+- a lane de Discussion da PR tambem escuta `workflow_run` do workflow `CI`; isso evita depender de polling humano quando `CI / Test` termina depois de uma resposta na Discussion
+- `workflow_run` pode acordar somente a lane de Discussion; review direto nao deve ser duplicado por conclusao de CI
 - quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
 - em follow-up, os memos mais recentes dos especialistas devem ser considerados junto com a conclusao humana antes de consolidar novos bloqueios
 - em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada

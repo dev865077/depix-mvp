@@ -30,10 +30,12 @@ import {
   extractDiscussionUrlFromComment,
   extractFollowUpPriorityPaths,
   extractFollowUpTestableBlockers,
+  extractPullRequestNumberFromWorkflowRunEvent,
   extractReviewRecommendation,
   getCiTestCheckState,
   getReviewGateFailure,
   isCiTestCheckGreen,
+  isCompletedCiWorkflowRunEvent,
   parseBlockingRoleContract,
   redactActionsLogSecrets,
   reconcileFollowUpTestableBlockers,
@@ -1897,6 +1899,41 @@ describe("ai pr review discussion rendering", () => {
     )).toBe(false);
   });
 
+  it("recognizes completed CI workflow_run events as reactive PR review wakeups", () => {
+    const event = {
+      workflow_run: {
+        name: "CI",
+        status: "completed",
+        conclusion: "success",
+        pull_requests: [{ number: 281 }],
+      },
+    };
+
+    expect(extractPullRequestNumberFromWorkflowRunEvent(event)).toBe(281);
+    expect(isCompletedCiWorkflowRunEvent(event)).toBe(true);
+    expect(isCompletedCiWorkflowRunEvent({
+      workflow_run: {
+        name: "AI PR Review",
+        status: "completed",
+        pull_requests: [{ number: 281 }],
+      },
+    })).toBe(false);
+    expect(isCompletedCiWorkflowRunEvent({
+      workflow_run: {
+        name: "CI",
+        status: "in_progress",
+        pull_requests: [{ number: 281 }],
+      },
+    })).toBe(false);
+    expect(extractPullRequestNumberFromWorkflowRunEvent({
+      workflow_run: {
+        name: "CI",
+        status: "completed",
+        pull_requests: [],
+      },
+    })).toBeNull();
+  });
+
   it("waits for the canonical CI / Test check to complete before discussion review", async () => {
     const runStates = [
       { workflow_runs: [{ name: "CI", status: "in_progress", conclusion: null }] },
@@ -2329,7 +2366,7 @@ describe("ai pr review discussion rendering", () => {
     expect(partialEvidence[0].missingSignals).toContain("ci_test_green");
   });
 
-  it("pins the pull-request CI wait and discussion-review write permissions in the workflow", () => {
+  it("pins the reactive CI workflow_run trigger and discussion-review write permissions", () => {
     const evidence = buildAutomationEvidenceContext({
       files: [
         { filename: ".github/workflows/ai-pr-review.yml" },
@@ -2344,9 +2381,12 @@ describe("ai pr review discussion rendering", () => {
       prReviewWorkflow: [
         "on:",
         "  discussion_comment:",
+        "  workflow_run:",
+        "      - CI",
         "jobs:",
         "  discussion-review:",
         "  Wait for canonical CI / Test conclusion",
+        "github.event_name != 'workflow_run'",
         "    permissions:",
         "      discussions: write",
       ].join("\n"),
@@ -2375,7 +2415,7 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewTests: [
         "keeps Blocked planning-only by rejecting it in PR review recommendations",
-        "pins the pull-request CI wait and discussion-review write permissions in the workflow",
+        "pins the reactive CI workflow_run trigger and discussion-review write permissions",
       ].join("\n"),
       planningTests: "pins planning workflow outputs in the operator summary",
       triageTests: [
@@ -2386,6 +2426,7 @@ describe("ai pr review discussion rendering", () => {
 
     expect(evidence).toContain("## Automation contract evidence");
     expect(evidence).toContain("discussion-review");
+    expect(evidence).toContain("workflow_run");
     expect(evidence).toContain("CI / Test");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
