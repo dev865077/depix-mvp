@@ -86,8 +86,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - janela: depositos Telegram pendentes nas ultimas 2 horas, com `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
 - fonte de verdade: chamada direta ao service idempotente `processDepositRecheck`, que consulta `deposit-status`
 - trilha local: eventos `deposit_events.source = "recheck_deposit_status"`
-- controle de overlap: antes da chamada remota, o cron faz claim condicional trocando temporariamente `deposits.external_status` para `pending_scheduled_recheck`; execucoes concorrentes ou retries nao processam a mesma linha fresca duas vezes
-- recuperacao de claim: falha antes de aplicar a verdade remota solta o claim de volta para `pending`; claims antigos podem ser retomados apos a janela de stale configurada no service
+- controle de overlap: antes da chamada remota, o cron grava um claim condicional em `scheduled_deposit_reconciliation_claims`; execucoes concorrentes ou retries nao processam a mesma linha fresca duas vezes
+- isolamento de estado: o lock do cron fica fora de `deposits.external_status`, entao leitores/escritores normais continuam vendo apenas o status de negocio do deposito
+- recuperacao de claim: o claim e removido ao final do processamento, com ou sem erro; claims antigos podem ser retomados apos a janela de stale configurada no service
 - notificacao: quando a reconciliacao muda o estado visivel para pagamento confirmado, a camada Telegram tenta notificar em modo fail-soft
 - falha isolada: erro em um deposito ou tenant e logado e nao interrompe os demais
 - idempotencia: reexecucao com a mesma verdade remota nao duplica `deposit_events`

@@ -159,6 +159,7 @@ async function claimScheduledDeposit(input) {
     input.deposit.externalStatus,
     input.deposit.updatedAt,
     new Date().toISOString(),
+    input.claimStaleBeforeIso,
   );
 }
 
@@ -168,7 +169,6 @@ async function releaseScheduledDepositClaim(input) {
       input.db,
       input.tenant.tenantId,
       input.deposit.depositEntryId,
-      new Date().toISOString(),
     );
   } catch (error) {
     const summarizedError = summarizeError(error);
@@ -289,13 +289,6 @@ async function reconcileScheduledTenant(input) {
         tenantSummary.notificationSkipped += 1;
       }
     } catch (error) {
-      if (claimed) {
-        await releaseScheduledDepositClaim({
-          ...input,
-          deposit,
-        });
-      }
-
       tenantSummary.failed += 1;
       const summarizedError = summarizeError(error);
 
@@ -311,6 +304,13 @@ async function reconcileScheduledTenant(input) {
           cause: summarizedError.message,
         },
       });
+    } finally {
+      if (claimed) {
+        await releaseScheduledDepositClaim({
+          ...input,
+          deposit,
+        });
+      }
     }
   }
 

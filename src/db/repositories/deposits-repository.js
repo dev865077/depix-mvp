@@ -19,7 +19,6 @@ import { getAllowedPatchEntries } from "../client.js";
  * nomes diferentes para a mesma barreira.
  */
 export const DEPOSITS_TENANT_ORDER_UNIQUE_INDEX = "deposits_tenant_order_unique_idx";
-export const SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS = "pending_scheduled_recheck";
 /**
  * Erro estruturado para tentativa de criar mais de um deposito no mesmo pedido.
  *
@@ -258,16 +257,17 @@ export async function listPendingTelegramDepositsForScheduledReconciliation(
     INNER JOIN orders o
       ON o.tenant_id = d.tenant_id
      AND o.order_id = d.order_id
+    LEFT JOIN scheduled_deposit_reconciliation_claims c
+      ON c.tenant_id = d.tenant_id
+     AND c.deposit_entry_id = d.deposit_entry_id
     WHERE d.tenant_id = ?
       AND o.channel = 'telegram'
       AND o.current_step = 'awaiting_payment'
       AND o.status = 'pending'
+      AND d.external_status = 'pending'
       AND (
-        d.external_status = 'pending'
-        OR (
-          d.external_status = ?
-          AND julianday(d.updated_at) < julianday(?)
-        )
+        c.claimed_at IS NULL
+        OR julianday(c.claimed_at) < julianday(?)
       )
       AND (
         julianday(d.updated_at) >= julianday(?)
@@ -277,7 +277,6 @@ export async function listPendingTelegramDepositsForScheduledReconciliation(
     LIMIT ?
   `).bind(
         tenantId,
-        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
         staleClaimBeforeIso,
         sinceIso,
         sinceIso,
@@ -299,6 +298,7 @@ export async function listPendingTelegramDepositsForScheduledReconciliation(
  * @param {string} expectedExternalStatus Status visto pela selecao.
  * @param {string} expectedUpdatedAt Timestamp visto pela selecao.
  * @param {string} claimedAtIso Momento do claim.
+ * @param {string} staleClaimBeforeIso Claims anteriores a este instante podem ser retomados.
  * @returns {Promise<boolean>} Verdadeiro quando o claim foi adquirido.
  */
 export async function claimPendingTelegramDepositForScheduledReconciliation(
@@ -308,45 +308,68 @@ export async function claimPendingTelegramDepositForScheduledReconciliation(
     expectedExternalStatus,
     expectedUpdatedAt,
     claimedAtIso,
+    staleClaimBeforeIso,
 ) {
-    const result = await db.prepare(`
-    UPDATE deposits
-    SET external_status = ?, updated_at = ?
+    await db.prepare(`
+    DELETE FROM scheduled_deposit_reconciliation_claims
     WHERE tenant_id = ?
       AND deposit_entry_id = ?
-      AND external_status = ?
-      AND updated_at = ?
+      AND julianday(claimed_at) < julianday(?)
   `).bind(
-        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
+        tenantId,
+        depositEntryId,
+        staleClaimBeforeIso,
+    ).run();
+    const result = await db.prepare(`
+    INSERT INTO scheduled_deposit_reconciliation_claims (
+      tenant_id,
+      deposit_entry_id,
+      claimed_at
+    )
+    SELECT ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1
+      FROM deposits
+      WHERE tenant_id = ?
+        AND deposit_entry_id = ?
+        AND external_status = ?
+        AND updated_at = ?
+    )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM scheduled_deposit_reconciliation_claims
+        WHERE tenant_id = ?
+          AND deposit_entry_id = ?
+      )
+  `).bind(
+        tenantId,
+        depositEntryId,
         claimedAtIso,
         tenantId,
         depositEntryId,
         expectedExternalStatus,
         expectedUpdatedAt,
+        tenantId,
+        depositEntryId,
     ).run();
     return Number(result.meta?.changes ?? 0) === 1;
 }
 /**
- * Solta um claim agendado quando o recheck falha antes de aplicar a verdade remota.
+ * Solta um claim agendado ao fim do processamento, com ou sem erro.
  *
  * @param {D1Database} db Database D1.
  * @param {string} tenantId Tenant atual.
  * @param {string} depositEntryId Deposito alvo.
- * @param {string} releasedAtIso Momento de release.
  * @returns {Promise<boolean>} Verdadeiro quando uma linha foi liberada.
  */
-export async function releaseScheduledDepositReconciliationClaim(db, tenantId, depositEntryId, releasedAtIso) {
+export async function releaseScheduledDepositReconciliationClaim(db, tenantId, depositEntryId) {
     const result = await db.prepare(`
-    UPDATE deposits
-    SET external_status = 'pending', updated_at = ?
+    DELETE FROM scheduled_deposit_reconciliation_claims
     WHERE tenant_id = ?
       AND deposit_entry_id = ?
-      AND external_status = ?
   `).bind(
-        releasedAtIso,
         tenantId,
         depositEntryId,
-        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
     ).run();
     return Number(result.meta?.changes ?? 0) === 1;
 }

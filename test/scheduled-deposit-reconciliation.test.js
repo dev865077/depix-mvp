@@ -9,9 +9,12 @@ import { readRuntimeConfig } from "../src/config/runtime.js";
 import { getDatabase } from "../src/db/client.js";
 import { listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import {
+  claimPendingTelegramDepositForScheduledReconciliation,
   createDeposit,
   getDepositByDepositEntryId,
   listPendingTelegramDepositsForScheduledReconciliation,
+  releaseScheduledDepositReconciliationClaim,
+  updateDepositByDepositEntryId,
 } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
 import { runScheduledDepositReconciliation } from "../src/services/scheduled-deposit-reconciliation.js";
@@ -146,6 +149,16 @@ async function countDepositEvents(depositEntryId, tenantId = "alpha") {
   const events = await listDepositEventsByDepositEntryId(env.DB, tenantId, depositEntryId);
 
   return events.length;
+}
+
+async function countScheduledClaims(depositEntryId, tenantId = "alpha") {
+  const result = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM scheduled_deposit_reconciliation_claims
+    WHERE tenant_id = ? AND deposit_entry_id = ?
+  `).bind(tenantId, depositEntryId).first();
+
+  return Number(result?.total ?? 0);
 }
 
 function mockDepositStatus(fetchStatuses) {
@@ -360,6 +373,8 @@ describe("scheduled deposit reconciliation", () => {
     expect((await getDepositByDepositEntryId(env.DB, "alpha", "deposit_failure"))?.externalStatus).toBe("pending");
     expect(await countDepositEvents("deposit_success")).toBe(1);
     expect(await countDepositEvents("deposit_failure")).toBe(0);
+    expect(await countScheduledClaims("deposit_success")).toBe(0);
+    expect(await countScheduledClaims("deposit_failure")).toBe(0);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
@@ -478,9 +493,47 @@ describe("scheduled deposit reconciliation", () => {
     expect(overlapDeposit?.externalStatus).toBe("depix_sent");
     expect(overlapOrder?.status).toBe("paid");
     expect(await countDepositEvents("deposit_overlap")).toBe(1);
+    expect(await countScheduledClaims("deposit_overlap")).toBe(0);
     expect(eulenCalls).toBe(1);
     expect(telegramCalls).toBe(1);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the scheduled claim outside the deposit business status and never clobbers newer truth on release", async function assertClaimIsolation() {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await resetDatabaseSchema();
+    await seedDepositAggregate({
+      orderId: "order_claim_isolation",
+      depositEntryId: "deposit_claim_isolation",
+      updatedAt: "2026-04-21T09:22:00.000Z",
+    });
+
+    const depositBeforeClaim = await getDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_isolation");
+
+    expect(await claimPendingTelegramDepositForScheduledReconciliation(
+      env.DB,
+      "alpha",
+      "deposit_claim_isolation",
+      depositBeforeClaim?.externalStatus ?? "pending",
+      depositBeforeClaim?.updatedAt ?? "2026-04-21T09:22:00.000Z",
+      "2026-04-21T10:01:00.000Z",
+      "2026-04-21T09:51:00.000Z",
+    )).toBe(true);
+
+    const depositDuringClaim = await getDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_isolation");
+
+    expect(depositDuringClaim?.externalStatus).toBe("pending");
+    expect(await countScheduledClaims("deposit_claim_isolation")).toBe(1);
+
+    await updateDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_isolation", {
+      externalStatus: "depix_sent",
+    });
+    await releaseScheduledDepositReconciliationClaim(env.DB, "alpha", "deposit_claim_isolation");
+
+    const depositAfterRelease = await getDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_isolation");
+
+    expect(depositAfterRelease?.externalStatus).toBe("depix_sent");
+    expect(await countScheduledClaims("deposit_claim_isolation")).toBe(0);
   });
 
   it("keeps repeated pending rechecks idempotent", async function assertPendingRecheckIdempotency() {
