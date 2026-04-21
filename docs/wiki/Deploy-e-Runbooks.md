@@ -48,7 +48,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 - o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
 - o relatorio de evidencia agora inclui `deposit_events` sem `raw_payload`
-- o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `/health.operations.depositRecheck` e `/health.operations.depositsFallback`
+- o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `health.configuration.operations.depositRecheck` e `health.configuration.operations.depositsFallback`; para compatibilidade, o formato legado em `health.operations` continua aceito
 - o relatorio de evidencia agora expõe uma secao `splitProof` para explicitar lacunas de split-audit e distinguir estados como `missing_split_config`, `pending_settlement`, `missing_onchain_tx` e `proved`
 - o coletor de evidencia tambem inclui os campos persistidos de split nas ordens consultadas para sustentar esse resumo auditavel
 - a validacao de tipos do Worker passou a ter comando canonico via `npm run typecheck`
@@ -91,17 +91,3 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - elegibilidade: depositos Telegram pendentes em `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
 - janela maxima: somente depositos atualizados nas ultimas 2 horas entram na selecao automatica
 - limite por rodada: ate 5 depositos por tenant
-- anti-overlap: cada deposito precisa adquirir claim antes do recheck; execucoes concorrentes perdem limpo e nao duplicam evento nem notificacao
-- fonte de verdade remota: `deposit-status`, a mesma do recheck operacional
-- parada da automacao: quando o pedido sai de `awaiting_payment/pending`, sai da janela, falha a claim ou cai em erro seguro de correlacao
-- fallback manual: `POST /ops/:tenantId/recheck/deposit` continua sendo o caminho para um `depositEntryId` especifico quando a agenda nao aplicar
-
-## Fallback operacional por janela
-
-- pre-condicao de rollout: `ENABLE_OPS_DEPOSITS_FALLBACK=true`
-- payload minimo seguro para validacao controlada: `{ "limit": 1 }`
-- header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
-- fonte de verdade remota: `deposits`
-- trilha local: evento `deposit_events.source = "recheck_deposits_list"` por linha reparada ou deduplicada
-- efeito esperado: reparar linhas pendentes por `qrId` e aplicar o status reconciliado em `deposits` e `orders`
-- se a lista remota nao trouxer linhas elegiveis, a rota responde sem mutar o agregado
