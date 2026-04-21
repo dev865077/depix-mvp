@@ -70,6 +70,8 @@ Estado atual:
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
+- a hidratacao de `qrId` agora e fail-closed: quando o webhook encontra um `qrId` desconhecido, o runtime so hidrata um deposito pendente se `deposit-status.qrId` bater exatamente com o `qrId` do webhook
+- se o `qrId` remoto nao for exatamente o mesmo `qrId` do webhook, o deposito, a ordem e os eventos permanecem inalterados
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
 - o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
 - a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
