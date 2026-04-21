@@ -31,7 +31,7 @@ export const ENVIRONMENT_WORKER_HOSTS = Object.freeze({
  *
  * @type {ReadonlySet<string>}
  */
-const SUPPORTED_OPTION_KEYS = new Set(["env", "tenant", "since", "limit", "issue"]);
+const SUPPORTED_OPTION_KEYS = new Set(["env", "tenant", "since", "limit", "issue", "order-id", "deposit-entry-id"]);
 
 /**
  * Nome da variavel de ambiente que permite ao operador apontar um Wrangler
@@ -87,6 +87,8 @@ export function buildHealthUrl(environment) {
  *   environment: "test" | "production",
  *   tenantId: string | null,
  *   sinceIso: string | null,
+ *   orderId: string | null,
+ *   depositEntryId: string | null,
  *   limit: number,
  *   issueNumber: number
  * }} Opcoes normalizadas.
@@ -121,6 +123,8 @@ export function readEvidenceCliOptions(argv) {
   const environment = normalizeRemoteEnvironment(values.get("env") ?? "production");
   const tenantId = values.get("tenant")?.trim() || null;
   const sinceIso = values.get("since")?.trim() || null;
+  const orderId = values.get("order-id")?.trim() || null;
+  const depositEntryId = values.get("deposit-entry-id")?.trim() || null;
   const issueNumber = Number.parseInt(values.get("issue") ?? "90", 10);
   const limit = Number.parseInt(values.get("limit") ?? "5", 10);
 
@@ -144,6 +148,8 @@ export function readEvidenceCliOptions(argv) {
     environment,
     tenantId,
     sinceIso,
+    orderId,
+    depositEntryId,
     limit,
     issueNumber,
   };
@@ -359,6 +365,7 @@ export function createQrFlowEvidenceCollector(dependencies) {
     const migrationsStatus = runWrangler(buildMigrationsListArgs(options.environment));
     const orders = runD1Query(options.environment, buildLatestOrdersQuery(options));
     const deposits = runD1Query(options.environment, buildLatestDepositsQuery(options));
+    const depositEvents = runD1Query(options.environment, buildLatestDepositEventsQuery(options));
     const health = await fetchHealth(options.environment);
     const gitCommit = runCommand("git", ["rev-parse", "HEAD"]).trim();
 
@@ -368,13 +375,17 @@ export function createQrFlowEvidenceCollector(dependencies) {
       generatedAt: now().toISOString(),
       tenantId: options.tenantId,
       sinceIso: options.sinceIso,
+      orderId: options.orderId,
+      depositEntryId: options.depositEntryId,
       workerUrl: ENVIRONMENT_WORKER_HOSTS[options.environment],
       gitCommit,
       deploymentStatus,
       migrationsStatus,
       health,
+      opsReadiness: buildOpsReadinessReport(health),
       orders,
       deposits,
+      depositEvents,
     });
   }
 
@@ -509,6 +520,7 @@ function formatUnknownError(error) {
  * @param {{
  *   tenantId: string | null,
  *   sinceIso: string | null,
+ *   orderId?: string | null,
  *   alias: string
  * }} input Filtros opcionais.
  * @returns {string} Fragmento SQL sem a palavra `WHERE`.
@@ -527,21 +539,39 @@ export function buildTelegramWhereClause(input) {
     );
   }
 
+  if (input.orderId) {
+    clauses.push(`${input.alias}.order_id = '${escapeSqlLiteral(input.orderId)}'`);
+  }
+
   return clauses.join(" AND ");
 }
 
 /**
  * Monta a consulta das ultimas orders do canal Telegram.
  *
- * @param {{ tenantId: string | null, sinceIso: string | null, limit: number }} input Filtros opcionais.
+ * @param {{ tenantId: string | null, sinceIso: string | null, orderId?: string | null, depositEntryId?: string | null, limit: number }} input Filtros opcionais.
  * @returns {string} SQL pronto para `wrangler d1 execute`.
  */
 export function buildLatestOrdersQuery(input) {
+  const whereClause = buildTelegramWhereClause({ ...input, alias: "o" });
+  const depositFilterClause = input.depositEntryId
+    ? [
+      "EXISTS (",
+      "  SELECT 1",
+      "  FROM deposits d",
+      "  WHERE d.tenant_id = o.tenant_id",
+      "    AND d.order_id = o.order_id",
+      `    AND d.deposit_entry_id = '${escapeSqlLiteral(input.depositEntryId)}'`,
+      ")",
+    ].join("\n")
+    : null;
+
   return [
     "SELECT",
     "  o.order_id,",
     "  o.tenant_id,",
     "  o.channel,",
+    "  o.telegram_chat_id,",
     "  o.current_step,",
     "  o.status,",
     "  o.amount_in_cents,",
@@ -549,7 +579,7 @@ export function buildLatestOrdersQuery(input) {
     "  o.created_at,",
     "  o.updated_at",
     "FROM orders o",
-    `WHERE ${buildTelegramWhereClause({ ...input, alias: "o" })}`,
+    `WHERE ${[whereClause, depositFilterClause].filter(Boolean).join(" AND ")}`,
     "ORDER BY julianday(o.updated_at) DESC, julianday(o.created_at) DESC",
     `LIMIT ${input.limit};`,
   ].join("\n");
@@ -558,7 +588,7 @@ export function buildLatestOrdersQuery(input) {
 /**
  * Monta a consulta das ultimas deposits correlacionadas com orders do Telegram.
  *
- * @param {{ tenantId: string | null, sinceIso: string | null, limit: number }} input Filtros opcionais.
+ * @param {{ tenantId: string | null, sinceIso: string | null, orderId?: string | null, depositEntryId?: string | null, limit: number }} input Filtros opcionais.
  * @returns {string} SQL pronto para `wrangler d1 execute`.
  */
 export function buildLatestDepositsQuery(input) {
@@ -573,6 +603,14 @@ export function buildLatestDepositsQuery(input) {
     clauses.push(
       `(julianday(d.updated_at) >= julianday('${escapeSqlLiteral(input.sinceIso)}') OR julianday(d.created_at) >= julianday('${escapeSqlLiteral(input.sinceIso)}'))`,
     );
+  }
+
+  if (input.orderId) {
+    clauses.push(`d.order_id = '${escapeSqlLiteral(input.orderId)}'`);
+  }
+
+  if (input.depositEntryId) {
+    clauses.push(`d.deposit_entry_id = '${escapeSqlLiteral(input.depositEntryId)}'`);
   }
 
   return [
@@ -595,6 +633,104 @@ export function buildLatestDepositsQuery(input) {
 }
 
 /**
+ * Monta a consulta dos eventos de deposito correlacionados ao fluxo Telegram.
+ *
+ * `raw_payload` fica deliberadamente fora da selecao para manter o relatorio
+ * pronto para issue/PR sem vazar payload financeiro bruto.
+ *
+ * @param {{ tenantId: string | null, sinceIso: string | null, orderId?: string | null, depositEntryId?: string | null, limit: number }} input Filtros opcionais.
+ * @returns {string} SQL pronto para `wrangler d1 execute`.
+ */
+export function buildLatestDepositEventsQuery(input) {
+  /** @type {string[]} */
+  const clauses = ["o.channel = 'telegram'"];
+
+  if (input.tenantId) {
+    clauses.push(`e.tenant_id = '${escapeSqlLiteral(input.tenantId)}'`);
+  }
+
+  if (input.sinceIso) {
+    clauses.push(`julianday(e.received_at) >= julianday('${escapeSqlLiteral(input.sinceIso)}')`);
+  }
+
+  if (input.orderId) {
+    clauses.push(`e.order_id = '${escapeSqlLiteral(input.orderId)}'`);
+  }
+
+  if (input.depositEntryId) {
+    clauses.push(`e.deposit_entry_id = '${escapeSqlLiteral(input.depositEntryId)}'`);
+  }
+
+  if (!input.orderId && !input.depositEntryId) {
+    clauses.push([
+      "EXISTS (",
+      "  SELECT 1",
+      "  FROM deposits d",
+      "  WHERE d.tenant_id = e.tenant_id",
+      "    AND d.order_id = e.order_id",
+      "    AND d.deposit_entry_id = e.deposit_entry_id",
+      ")",
+    ].join("\n"));
+  }
+
+  return [
+    "SELECT",
+    "  e.id,",
+    "  e.tenant_id,",
+    "  e.order_id,",
+    "  e.deposit_entry_id,",
+    "  e.qr_id,",
+    "  e.source,",
+    "  e.external_status,",
+    "  e.bank_tx_id,",
+    "  e.blockchain_tx_id,",
+    "  e.received_at",
+    "FROM deposit_events e",
+    "INNER JOIN orders o ON o.tenant_id = e.tenant_id AND o.order_id = e.order_id",
+    `WHERE ${clauses.join(" AND ")}`,
+    "ORDER BY julianday(e.received_at) DESC, e.id DESC",
+    `LIMIT ${input.limit};`,
+  ].join("\n");
+}
+
+/**
+ * Extrai do health apenas o contrato operacional necessario para o relatorio.
+ *
+ * @param {Record<string, unknown>} health Payload de `/health`.
+ * @returns {{ depositRecheck: { state: string, ready: boolean }, depositsFallback: { state: string, ready: boolean } }} Readiness redigido.
+ */
+export function buildOpsReadinessReport(health) {
+  const operations = health && typeof health.operations === "object" && health.operations !== null
+    ? health.operations
+    : {};
+
+  return {
+    depositRecheck: normalizeOperationReadiness(operations.depositRecheck),
+    depositsFallback: normalizeOperationReadiness(operations.depositsFallback),
+  };
+}
+
+/**
+ * Normaliza uma entrada de readiness operacional sem preservar campos extras.
+ *
+ * @param {unknown} value Entrada de `health.operations`.
+ * @returns {{ state: string, ready: boolean }} Readiness seguro para Markdown.
+ */
+function normalizeOperationReadiness(value) {
+  if (!value || typeof value !== "object") {
+    return {
+      state: "missing",
+      ready: false,
+    };
+  }
+
+  return {
+    state: typeof value.state === "string" ? value.state : "unknown",
+    ready: value.ready === true,
+  };
+}
+
+/**
  * Renderiza um relatorio Markdown pronto para issue ou comentario de PR.
  *
  * @param {{
@@ -603,19 +739,25 @@ export function buildLatestDepositsQuery(input) {
  *   generatedAt: string,
  *   tenantId: string | null,
  *   sinceIso: string | null,
+ *   orderId: string | null,
+ *   depositEntryId: string | null,
  *   workerUrl: string,
  *   gitCommit: string,
  *   deploymentStatus: string,
  *   migrationsStatus: string,
  *   health: Record<string, unknown>,
+ *   opsReadiness: { depositRecheck: { state: string, ready: boolean }, depositsFallback: { state: string, ready: boolean } },
  *   orders: Array<Record<string, unknown>>,
- *   deposits: Array<Record<string, unknown>>
+ *   deposits: Array<Record<string, unknown>>,
+ *   depositEvents: Array<Record<string, unknown>>
  * }} report Dados consolidados.
  * @returns {string} Markdown final.
  */
 export function formatEvidenceMarkdown(report) {
   const scopeLine = report.tenantId ? `tenant: \`${report.tenantId}\`` : "tenant: `todos`";
   const sinceLine = report.sinceIso ? `desde: \`${report.sinceIso}\`` : "desde: `sem corte temporal`";
+  const orderLine = report.orderId ? `order: \`${report.orderId}\`` : "order: `sem filtro`";
+  const depositLine = report.depositEntryId ? `depositEntryId: \`${report.depositEntryId}\`` : "depositEntryId: `sem filtro`";
 
   return [
     `## Evidencia controlada - issue #${report.issueNumber}`,
@@ -626,11 +768,19 @@ export function formatEvidenceMarkdown(report) {
     `- gerado em: \`${report.generatedAt}\``,
     `- ${scopeLine}`,
     `- ${sinceLine}`,
+    `- ${orderLine}`,
+    `- ${depositLine}`,
     "",
     "### Health",
     "",
     "```json",
     JSON.stringify(report.health, null, 2),
+    "```",
+    "",
+    "### Ops readiness",
+    "",
+    "```json",
+    JSON.stringify(report.opsReadiness, null, 2),
     "```",
     "",
     "### Deployment status",
@@ -655,6 +805,12 @@ export function formatEvidenceMarkdown(report) {
     "",
     "```json",
     JSON.stringify(report.deposits, null, 2),
+    "```",
+    "",
+    "### Deposit events correlacionados",
+    "",
+    "```json",
+    JSON.stringify(report.depositEvents, null, 2),
     "```",
   ].join("\n");
 }
