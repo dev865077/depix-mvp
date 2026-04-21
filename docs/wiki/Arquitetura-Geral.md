@@ -34,6 +34,8 @@ flowchart LR
 ## Estado atual do `main`
 
 - `Hono` e middleware multi-tenant ja existem
+- as rotas HTTP centrais `health`, `ops`, `telegram` e `webhooks` ja estao em TypeScript
+- o glue de autorizacao operacional das rotas `ops` ja esta em TypeScript
 - runtime Telegram em `grammY` ja recebe despacho real do webhook
 - o inbound do Telegram agora e normalizado antes de entrar no runtime, com contrato explicito para `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
 - payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`

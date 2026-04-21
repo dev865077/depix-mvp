@@ -24,10 +24,12 @@ Ponto de entrada canonico do Worker. Permanece importavel como bootstrap princip
 
 Borda HTTP canonica:
 
-- `health.js`
-- `telegram.js`
-- `webhooks.js`
-- `ops.js`
+- `health.ts`
+- `telegram.ts`
+- `webhooks.ts`
+- `ops.ts`
+
+As rotas centrais ja foram migradas para TypeScript, junto com o glue de autorizacao operacional usado em `ops`.
 
 ### `src/config/`
 
