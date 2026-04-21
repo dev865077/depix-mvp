@@ -357,6 +357,31 @@ export async function assertStructuredDepositStatusValidationError() {
   });
 }
 
+export async function assertDepositStatusResponseShape() {
+  await expect(resolveEulenDepositStatusResponse({
+    ok: true,
+    status: 200,
+    nonce: "nonce_status_ok",
+    asyncMode: "false",
+    headers: {},
+    data: {
+      response: {
+        bankTxId: "fitbank_123",
+        blockchainTxID: "liquid_tx_123",
+        qrId: "qr_123",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      },
+    },
+  })).resolves.toEqual({
+    bankTxId: "fitbank_123",
+    blockchainTxId: "liquid_tx_123",
+    qrId: "qr_123",
+    status: "depix_sent",
+    expiration: "2026-04-18T04:00:00Z",
+  });
+}
+
 describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
@@ -387,5 +412,6 @@ describe("eulen client", () => {
   it("normalizes asynchronous Eulen responses into the standard response envelope", assertAsyncResponseResolution);
   it("maps asynchronous Eulen business errors to standardized client errors", assertAsyncBusinessErrorMapping);
   it("fails closed with a structured response error when create-deposit payload is invalid", assertStructuredCreateResponseValidationError);
+  it("keeps bank and blockchain tx ids from deposit-status responses", assertDepositStatusResponseShape);
   it("fails closed with a structured response error when deposit-status payload is invalid", assertStructuredDepositStatusValidationError);
 });

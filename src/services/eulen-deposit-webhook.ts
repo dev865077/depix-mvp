@@ -339,12 +339,21 @@ export function normalizeEulenDepositStatusPayload(
   }
 
   const normalizedPayload = {
+    bankTxId: readOptionalStringField(candidate, "bankTxId", "response", requestId),
+    blockchainTxId: readOptionalStringField(candidate, "blockchainTxID", "response", requestId)
+      ?? readOptionalStringField(candidate, "blockchainTxId", "response", requestId),
     qrId: readOptionalStringField(candidate, "qrId", "response", requestId),
     status: readOptionalStringField(candidate, "status", "response", requestId),
     expiration: readOptionalStringField(candidate, "expiration", "response", requestId),
   };
 
-  if (!normalizedPayload.qrId && !normalizedPayload.status && !normalizedPayload.expiration) {
+  if (
+    !normalizedPayload.bankTxId
+    && !normalizedPayload.blockchainTxId
+    && !normalizedPayload.qrId
+    && !normalizedPayload.status
+    && !normalizedPayload.expiration
+  ) {
     throw new EulenPayloadValidationError("Eulen deposit-status response did not expose any supported field.", {
       source: "response",
       reason: "response_missing_supported_fields",

@@ -44,6 +44,8 @@ export interface EulenCreateDepositResponsePayload {
 
 export interface EulenDepositStatusResponsePayload {
   [key: string]: unknown;
+  bankTxId?: string;
+  blockchainTxId?: string;
   qrId?: string;
   status?: string;
   expiration?: string;
@@ -367,6 +369,26 @@ export function assertEulenDepositStatusResponsePayload(
   }
 
   const normalizedPayload = {
+    bankTxId: readOptionalTrimmedString(candidate.bankTxId, {
+      source: "response",
+      reason: "field_must_be_string",
+      field: "bankTxId",
+      requestId,
+      path: "/deposit-status",
+    }),
+    blockchainTxId: readOptionalTrimmedString(candidate.blockchainTxID, {
+      source: "response",
+      reason: "field_must_be_string",
+      field: "blockchainTxID",
+      requestId,
+      path: "/deposit-status",
+    }) ?? readOptionalTrimmedString(candidate.blockchainTxId, {
+      source: "response",
+      reason: "field_must_be_string",
+      field: "blockchainTxId",
+      requestId,
+      path: "/deposit-status",
+    }),
     qrId: readOptionalTrimmedString(candidate.qrId, {
       source: "response",
       reason: "field_must_be_string",
@@ -390,7 +412,13 @@ export function assertEulenDepositStatusResponsePayload(
     }),
   };
 
-  if (!normalizedPayload.qrId && !normalizedPayload.status && !normalizedPayload.expiration) {
+  if (
+    !normalizedPayload.bankTxId
+    && !normalizedPayload.blockchainTxId
+    && !normalizedPayload.qrId
+    && !normalizedPayload.status
+    && !normalizedPayload.expiration
+  ) {
     throw buildInvalidPayloadError("Eulen deposit-status response did not expose any supported field.", {
       source: "response",
       reason: "response_missing_supported_fields",

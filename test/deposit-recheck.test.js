@@ -193,6 +193,8 @@ describe("deposit recheck route", () => {
       if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_entry_alpha_001") {
         return new Response(JSON.stringify({
           response: {
+            bankTxId: "fitbank_123",
+            blockchainTxID: "liquid_tx_123",
             qrId: "qr_alpha_001",
             status: "depix_sent",
             expiration: "2026-04-18T04:00:00Z",
@@ -238,6 +240,8 @@ describe("deposit recheck route", () => {
     expect(updatedOrder?.currentStep).toBe("completed");
     expect(savedEvents).toHaveLength(1);
     expect(savedEvents[0]?.source).toBe("recheck_deposit_status");
+    expect(savedEvents[0]?.bankTxId).toBe("fitbank_123");
+    expect(savedEvents[0]?.blockchainTxId).toBe("liquid_tx_123");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toMatchObject({
       chat_id: "alpha_telegram_chat_001",
