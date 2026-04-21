@@ -220,7 +220,7 @@ function createAwaitingPaymentConflictDatabase(db, winner) {
 /**
  * Monta um update de callback query.
  *
- * @param {{ chatId: number, fromId: number, updateId?: number }} input Dados do update.
+ * @param {{ chatId: number, fromId: number, updateId?: number, data?: string }} input Dados do update.
  * @returns {string} JSON do update pronto para o webhook.
  */
 function createTelegramCallbackQueryUpdate(input) {
@@ -234,7 +234,7 @@ function createTelegramCallbackQueryUpdate(input) {
         first_name: "Pedro",
       },
       chat_instance: "chat-instance-1",
-      data: "noop",
+      data: input.data ?? "noop",
       message: {
         message_id: 11,
         date: 1713434403,
@@ -1516,6 +1516,18 @@ describe("telegram webhook reply flow", () => {
     expect(thirdReply.text).toContain(`Endereço: ${SIDESWAP_LQ_ADDRESS}`);
     expect(thirdReply.text).toContain("Se estiver tudo certo, envie: sim, confirmar ou ok.");
     expect(thirdReply.text).toContain("Se quiser encerrar este pedido, envie: cancelar.");
+    expect(thirdReply.reply_markup?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Confirmar",
+          callback_data: "depix:confirm",
+        },
+        {
+          text: "Cancelar",
+          callback_data: "depix:cancel",
+        },
+      ],
+    ]);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
@@ -2249,6 +2261,18 @@ describe("telegram webhook reply flow", () => {
     expect(photoReply?.payload.caption).toContain("Pague com o QR acima ou com o Pix copia e cola abaixo.");
     expect(photoReply?.payload.caption).toContain("Se precisar revisar o proximo passo, envie /help.");
     expect(photoReply?.payload.caption).not.toContain("Expiracao:");
+    expect(photoReply?.payload.reply_markup?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Ver status",
+          callback_data: "depix:status",
+        },
+        {
+          text: "Ajuda",
+          callback_data: "depix:help",
+        },
+      ],
+    ]);
     expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-alpha-001");
     expect(replayReply.payload.text).toContain("já está aguardando pagamento");
     expect(fetchSpy).toHaveBeenCalled();
@@ -3542,6 +3566,143 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(currentOrder).toBeNull();
     expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
+  });
+
+  it("confirms the order from confirmation when the user presses the inline CTA", async function assertInlineConfirmationFlow() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const telegramCalls = [];
+    const eulenCalls = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockInlineConfirmation(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        eulenCalls.push(payload);
+
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_entry_alpha_inline_001",
+            qrCopyPaste: "0002010102122688pix-alpha-inline-001",
+            qrImageUrl: "https://example.com/qr/alpha-inline-001.png",
+            expiration: null,
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/answerCallbackQuery")) {
+        telegramCalls.push({
+          kind: "callback",
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        telegramCalls.push({
+          kind: url.includes("/sendPhoto") ? "photo" : "message",
+          payload,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 61,
+            date: 1713434461,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in inline confirmation flow: ${url}`);
+    });
+
+    for (const [text, updateId] of [
+      ["/start", 501],
+      ["10,50", 502],
+      [SIDESWAP_LQ_ADDRESS, 503],
+    ]) {
+      await app.request(
+        "https://example.com/telegram/alpha/webhook",
+        {
+          method: "POST",
+          headers: requestHeaders,
+          body: createTelegramTextUpdate({
+            text,
+            chatId: 9505,
+            fromId: 955,
+            updateId,
+          }),
+        },
+        workerEnv,
+      );
+    }
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramCallbackQueryUpdate({
+          chatId: 9505,
+          fromId: 955,
+          updateId: 504,
+          data: "depix:confirm",
+        }),
+      },
+      workerEnv,
+    );
+
+    const finalOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "955");
+    const callbackReply = telegramCalls.find((entry) => entry.kind === "callback");
+    const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
+
+    expect(response.status).toBe(200);
+    expect(eulenCalls).toHaveLength(1);
+    expect(callbackReply?.payload.text).toBe("Confirmando pedido.");
+    expect(finalOrder?.currentStep).toBe("awaiting_payment");
+    expect(finalOrder?.status).toBe("pending");
+    expect(photoReply?.payload.reply_markup?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Ver status",
+          callback_data: "depix:status",
+        },
+        {
+          text: "Ajuda",
+          callback_data: "depix:help",
+        },
+      ],
+    ]);
   });
 
   it("logs and acknowledges unsupported updates without a reply channel", async function assertNoReplySurfaceFallback() {

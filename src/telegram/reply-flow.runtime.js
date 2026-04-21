@@ -90,11 +90,11 @@ export function installTelegramReplyFlow(bot, input) {
       const reconciled = await reconcileTelegramAwaitingPaymentOrder(ctx, input, orderSession.order, deposit, "start");
 
       if (reconciled.order.currentStep !== orderSession.order.currentStep || reconciled.order.status !== orderSession.order.status) {
-        await ctx.reply(buildTelegramStatusReply(input.tenant, reconciled.order, reconciled.deposit));
+        await replyTelegramStatus(ctx, input.tenant, reconciled.order, reconciled.deposit);
         return;
       }
 
-      await ctx.reply(buildTelegramOrderStepReply(input.tenant, reconciled.order));
+      await replyTelegramOrderStep(ctx, input.tenant, reconciled.order);
     },
   ));
 
@@ -119,6 +119,14 @@ export function installTelegramReplyFlow(bot, input) {
     "cancel_command",
     async function replyToCancelCommand(ctx) {
       await handleTelegramCancelRequest(ctx, input, "command");
+    },
+  ));
+
+  bot.callbackQuery(/^depix:(confirm|cancel|status|help)$/u, createLoggedTelegramHandler(
+    input,
+    "inline_action_reply",
+    async function replyToInlineAction(ctx) {
+      await handleTelegramInlineAction(ctx, input);
     },
   ));
 
@@ -164,7 +172,7 @@ export function installTelegramReplyFlow(bot, input) {
             return;
           }
 
-          await ctx.reply(buildTelegramOrderStepReply(input.tenant, amountSession.order));
+          await replyTelegramOrderStep(ctx, input.tenant, amountSession.order);
           return;
         }
 
@@ -183,7 +191,7 @@ export function installTelegramReplyFlow(bot, input) {
             return;
           }
 
-          await ctx.reply(buildTelegramOrderStepReply(input.tenant, walletSession.order));
+          await replyTelegramOrderStep(ctx, input.tenant, walletSession.order);
           return;
         }
 
@@ -192,44 +200,15 @@ export function installTelegramReplyFlow(bot, input) {
           || orderSession.order.currentStep === ORDER_PROGRESS_STATES.CREATING_DEPOSIT
         ) {
           if (isTelegramConfirmationDecision(normalizedText)) {
-            try {
-              const confirmationSession = await confirmTelegramOrder({
-                env: input.env,
-                db: input.db,
-                tenant: input.tenant,
-                runtimeConfig: input.runtimeConfig,
-                order: orderSession.order,
-              });
-
-              logTelegramConfirmationDecision(ctx, input, "confirm", confirmationSession.order, {
-                accepted: confirmationSession.accepted,
-                conflict: confirmationSession.conflict,
-                depositEntryId: confirmationSession.deposit?.depositEntryId,
-              });
-
-              if (confirmationSession.deposit) {
-                await sendTelegramDepositReadyReply(ctx, input.tenant, confirmationSession.order, confirmationSession.deposit);
-                return;
-              }
-
-              await ctx.reply(buildTelegramOrderStepReply(input.tenant, confirmationSession.order));
-              return;
-            } catch (error) {
-              if (error instanceof TelegramOrderConfirmationError) {
-                logTelegramConfirmationFailure(ctx, input, orderSession.order, error);
-                await ctx.reply(error.userMessage);
-                return;
-              }
-
-              throw error;
-            }
+            await handleTelegramConfirmRequest(ctx, input, orderSession.order, "text");
+            return;
           }
 
-          await ctx.reply(buildTelegramConfirmationPrompt(orderSession.order));
+          await replyTelegramConfirmationPrompt(ctx, orderSession.order);
           return;
         }
 
-        await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
+        await replyTelegramOrderStep(ctx, input.tenant, orderSession.order);
       },
     ),
   );
@@ -441,6 +420,80 @@ export function buildTelegramStatusReply(tenant, order, deposit = null) {
         "Encontrei seu pedido, mas ele esta em um estado que nao pede acao sua agora.",
       ].join("\n");
   }
+}
+
+function buildTelegramInlineKeyboard(rows) {
+  return {
+    inline_keyboard: rows,
+  };
+}
+
+function buildTelegramConfirmationReplyMarkup() {
+  return buildTelegramInlineKeyboard([
+    [
+      {
+        text: "Confirmar",
+        callback_data: "depix:confirm",
+      },
+      {
+        text: "Cancelar",
+        callback_data: "depix:cancel",
+      },
+    ],
+  ]);
+}
+
+function buildTelegramAwaitingPaymentReplyMarkup() {
+  return buildTelegramInlineKeyboard([
+    [
+      {
+        text: "Ver status",
+        callback_data: "depix:status",
+      },
+      {
+        text: "Ajuda",
+        callback_data: "depix:help",
+      },
+    ],
+  ]);
+}
+
+function buildTelegramReplyMarkupForOrder(order) {
+  switch (order?.currentStep) {
+    case ORDER_PROGRESS_STATES.CONFIRMATION:
+    case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
+      return buildTelegramConfirmationReplyMarkup();
+    case ORDER_PROGRESS_STATES.AWAITING_PAYMENT:
+      return buildTelegramAwaitingPaymentReplyMarkup();
+    default:
+      return undefined;
+  }
+}
+
+function buildTelegramReplyOptionsForOrder(order) {
+  const replyMarkup = buildTelegramReplyMarkupForOrder(order);
+
+  return replyMarkup
+    ? {
+      reply_markup: replyMarkup,
+    }
+    : undefined;
+}
+
+async function replyTelegramOrderStep(ctx, tenant, order) {
+  const options = buildTelegramReplyOptionsForOrder(order);
+  await ctx.reply(buildTelegramOrderStepReply(tenant, order), options);
+}
+
+async function replyTelegramConfirmationPrompt(ctx, order) {
+  await ctx.reply(buildTelegramConfirmationPrompt(order), {
+    reply_markup: buildTelegramConfirmationReplyMarkup(),
+  });
+}
+
+async function replyTelegramStatus(ctx, tenant, order, deposit = null) {
+  const options = buildTelegramReplyOptionsForOrder(order);
+  await ctx.reply(buildTelegramStatusReply(tenant, order, deposit), options);
 }
 
 /**
@@ -809,22 +862,28 @@ function buildTelegramPixCopyPasteReply(deposit) {
 async function sendTelegramDepositReadyReply(ctx, tenant, order, deposit) {
   const caption = buildTelegramDepositReadyCaption(tenant, order, deposit);
   const copyPasteReply = buildTelegramPixCopyPasteReply(deposit);
+  const awaitingPaymentReplyMarkup = buildTelegramAwaitingPaymentReplyMarkup();
 
   if (typeof deposit?.qrImageUrl === "string" && deposit.qrImageUrl.length > 0) {
     try {
       await ctx.replyWithPhoto(deposit.qrImageUrl, {
         caption,
+        reply_markup: awaitingPaymentReplyMarkup,
       });
       await ctx.reply(copyPasteReply);
       return;
     } catch {
-      await ctx.reply(caption);
+      await ctx.reply(caption, {
+        reply_markup: awaitingPaymentReplyMarkup,
+      });
       await ctx.reply(copyPasteReply);
       return;
     }
   }
 
-  await ctx.reply(caption);
+  await ctx.reply(caption, {
+    reply_markup: awaitingPaymentReplyMarkup,
+  });
   await ctx.reply(copyPasteReply);
 }
 
@@ -1110,7 +1169,8 @@ async function handleTelegramHelpRequest(ctx, input, source) {
     status: openOrder?.status,
   });
 
-  await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder));
+  const options = buildTelegramReplyOptionsForOrder(openOrder);
+  await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder), options);
 }
 
 /**
@@ -1186,7 +1246,41 @@ async function handleTelegramStatusRequest(ctx, input, source) {
     recheckCode: reconciled.result?.code,
   });
 
-  await ctx.reply(buildTelegramStatusReply(input.tenant, reconciled.order, reconciled.deposit));
+  await replyTelegramStatus(ctx, input.tenant, reconciled.order, reconciled.deposit);
+}
+
+async function handleTelegramConfirmRequest(ctx, input, order, source) {
+  try {
+    const confirmationSession = await confirmTelegramOrder({
+      env: input.env,
+      db: input.db,
+      tenant: input.tenant,
+      runtimeConfig: input.runtimeConfig,
+      order,
+    });
+
+    logTelegramConfirmationDecision(ctx, input, "confirm", confirmationSession.order, {
+      accepted: confirmationSession.accepted,
+      conflict: confirmationSession.conflict,
+      depositEntryId: confirmationSession.deposit?.depositEntryId,
+      source,
+    });
+
+    if (confirmationSession.deposit) {
+      await sendTelegramDepositReadyReply(ctx, input.tenant, confirmationSession.order, confirmationSession.deposit);
+      return;
+    }
+
+    await replyTelegramOrderStep(ctx, input.tenant, confirmationSession.order);
+  } catch (error) {
+    if (error instanceof TelegramOrderConfirmationError) {
+      logTelegramConfirmationFailure(ctx, input, order, error);
+      await ctx.reply(error.userMessage);
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function readLatestDepositForTelegramOrder(input, order) {
@@ -1313,7 +1407,7 @@ async function handleTelegramCancelRequest(ctx, input, source) {
     return;
   }
 
-  await ctx.reply(buildTelegramOrderStepReply(input.tenant, canceledSession.order));
+  await replyTelegramOrderStep(ctx, input.tenant, canceledSession.order);
 }
 
 /**
@@ -1411,11 +1505,68 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   }
 
   if (!restartedSession.restarted || !restartedSession.order) {
-    await ctx.reply(buildTelegramOrderStepReply(input.tenant, restartedSession.previousOrder));
+    await replyTelegramOrderStep(ctx, input.tenant, restartedSession.previousOrder);
     return;
   }
 
   await ctx.reply(buildTelegramRestartedReply(input.tenant));
+}
+
+async function handleTelegramInlineAction(ctx, input) {
+  const action = String(ctx.callbackQuery?.data ?? "").slice("depix:".length);
+
+  switch (action) {
+    case "help":
+      await ctx.answerCallbackQuery({
+        text: "Ajuda atualizada.",
+      });
+      await handleTelegramHelpRequest(ctx, input, "callback");
+      return;
+    case "status":
+      await ctx.answerCallbackQuery({
+        text: "Status atualizado.",
+      });
+      await handleTelegramStatusRequest(ctx, input, "callback");
+      return;
+    case "cancel":
+      await ctx.answerCallbackQuery({
+        text: "Cancelando pedido.",
+      });
+      await handleTelegramCancelRequest(ctx, input, "callback");
+      return;
+    case "confirm": {
+      const openOrder = await getExistingTelegramConversationOrder(ctx, input);
+
+      if (!openOrder) {
+        await ctx.answerCallbackQuery({
+          text: "Nao encontrei pedido aberto.",
+        });
+        await ctx.reply(buildTelegramAmountPrompt(input.tenant));
+        return;
+      }
+
+      if (
+        openOrder.currentStep !== ORDER_PROGRESS_STATES.CONFIRMATION
+        && openOrder.currentStep !== ORDER_PROGRESS_STATES.CREATING_DEPOSIT
+      ) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido ja atualizado.",
+        });
+        await replyTelegramOrderStep(ctx, input.tenant, openOrder);
+        return;
+      }
+
+      await ctx.answerCallbackQuery({
+        text: "Confirmando pedido.",
+      });
+      await handleTelegramConfirmRequest(ctx, input, openOrder, "callback");
+      return;
+    }
+    default:
+      await ctx.answerCallbackQuery({
+        text: buildTelegramUnsupportedCallbackReply(input.tenant),
+      });
+  }
 }
 
 /**
