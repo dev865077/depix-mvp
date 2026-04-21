@@ -10,7 +10,7 @@
 - `npm run db:query:local`
 - `npm run deploy:test`
 - `npm run deploy:production`
-- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO]`
+- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO] [--order-id ORDER_ID] [--deposit-entry-id DEPOSIT_ENTRY_ID] [--limit N]`
 
 ## Hosts publicos canonicos
 
@@ -41,6 +41,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
+- o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
+- o relatorio de evidencia agora inclui `deposit_events` sem `raw_payload`
+- o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `/health.operations.depositRecheck` e `/health.operations.depositsFallback`
 - a validacao de tipos do Worker passou a ter comando canonico via `npm run typecheck`
 - a verificacao de tipos gerados do Cloudflare Worker passou a ser parte do fluxo de manutencao com `npm run cf:types`
 
@@ -92,17 +95,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - no `register-webhook`, `publicBaseUrl` e obrigatoria no corpo JSON; a rota nao infere host automaticamente para evitar registrar o bot contra a origin errada
 - migracao operacional: os endpoints antigos de diagnostico local nao sao mais a ferramenta de suporte para webhook; o contrato canonico agora e sempre `/ops/:tenantId/telegram/*` com bearer operacional e `publicBaseUrl` explicita quando houver comparacao ou mutacao de endpoint
 - em `production`, sempre confirmar explicitamente a base publica desejada antes de chamar `register-webhook`
-- se o ambiente nao materializar `telegramBotToken` ou `telegramWebhookSecret`, a rota falha fechada com `503 telegram_webhook_dependency_unavailable`
-- se o bearer estiver ausente ou invalido, responde `401 ops_authorization_required` ou `403 ops_authorization_invalid`
-
-## Rollout de `orders.telegram_chat_id`
-
-- o destino do chat para notificacoes assincronas nao deve ser inferido do `user_id`
-- o campo `telegram_chat_id` e o contrato de persistencia do destino
-- pedidos legados sem `telegram_chat_id` continuam validos, mas nao possuem destino assincrono seguro ate receberem novo update Telegram do mesmo tenant, usuario e canal
-- emissao assincrona futura deve tratar `telegram_chat_id = NULL` como skip controlado e evidencia operacional, nunca como fallback implicito para `user_id`
-
-## Rollback
-
-- o rollback de uma mudanca tecnica deve preservar o estado da base e a compatibilidade com a wiki enquanto a PR nao for revertida por completo
-- mudancas em `typecheck`, `tsconfig.json` e tipos gerados do Worker devem voltar juntas quando a fundamentacao TypeScript precisar ser desfeita
+- se o ambiente nao materializar `telegramBotToken` ou `telegramWebhookSecretToken`, a rota deve falhar fechado e o runbook nao deve tentar contornar isso com credenciais hardcoded
