@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSplitProofReport,
   buildD1ExecuteArgs,
   buildDeploymentStatusArgs,
   buildHealthUrl,
@@ -80,6 +81,8 @@ describe("qr flow evidence helpers", () => {
     expect(ordersQuery).toContain("o.order_id = 'order_123'");
     expect(ordersQuery).toContain("d.deposit_entry_id = 'deposit_123'");
     expect(ordersQuery).toContain("o.telegram_chat_id");
+    expect(ordersQuery).toContain("o.split_address");
+    expect(ordersQuery).toContain("o.split_fee");
     expect(ordersQuery).toContain("julianday(o.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(ordersQuery).toContain("LIMIT 2;");
     expect(depositsQuery).toContain("INNER JOIN orders o ON o.order_id = d.order_id");
@@ -151,6 +154,96 @@ describe("qr flow evidence helpers", () => {
     });
     expect(JSON.stringify(readiness)).not.toContain("must-not-render");
     expect(JSON.stringify(readiness)).not.toContain("tenantOverrides");
+  });
+
+  it("marks split proof as missing onchain tx when only the fiat-side trace exists", function assertSplitProofGap() {
+    expect(buildSplitProofReport(
+      [
+        {
+          order_id: "order_1",
+          split_address: "lq1split",
+          split_fee: "1.00%",
+        },
+      ],
+      [
+        {
+          order_id: "order_1",
+          external_status: "depix_sent",
+        },
+      ],
+      [
+        {
+          order_id: "order_1",
+          bank_tx_id: "fitbank_123",
+          blockchain_tx_id: null,
+        },
+      ],
+    )).toEqual({
+      status: "missing_onchain_tx",
+      orderIds: ["order_1"],
+      bankTxIds: ["fitbank_123"],
+      blockchainTxIds: [],
+      splitConfiguredOrders: 1,
+      settledOrders: 1,
+    });
+  });
+
+  it("marks split proof as proved when an onchain tx id exists", function assertSplitProofProved() {
+    expect(buildSplitProofReport(
+      [
+        {
+          order_id: "order_1",
+          split_address: "lq1split",
+          split_fee: "1.00%",
+        },
+      ],
+      [
+        {
+          order_id: "order_1",
+          external_status: "depix_sent",
+        },
+      ],
+      [
+        {
+          order_id: "order_1",
+          bank_tx_id: "fitbank_123",
+          blockchain_tx_id: "liquid_tx_123",
+        },
+      ],
+    )).toEqual({
+      status: "proved",
+      orderIds: ["order_1"],
+      bankTxIds: ["fitbank_123"],
+      blockchainTxIds: ["liquid_tx_123"],
+      splitConfiguredOrders: 1,
+      settledOrders: 1,
+    });
+  });
+
+  it("marks split proof as missing split config when the order never persisted split fields", function assertMissingSplitConfig() {
+    expect(buildSplitProofReport(
+      [
+        {
+          order_id: "order_1",
+          split_address: null,
+          split_fee: null,
+        },
+      ],
+      [
+        {
+          order_id: "order_1",
+          external_status: "pending",
+        },
+      ],
+      [],
+    )).toEqual({
+      status: "missing_split_config",
+      orderIds: ["order_1"],
+      bankTxIds: [],
+      blockchainTxIds: [],
+      splitConfiguredOrders: 0,
+      settledOrders: 0,
+    });
   });
 
   it("builds the Wrangler command shapes used by the executable script", function assertWranglerCommandShapes() {
@@ -363,9 +456,19 @@ describe("qr flow evidence helpers", () => {
           ready: false,
         },
       },
+      splitProof: {
+        status: "missing_onchain_tx",
+        orderIds: ["order_1"],
+        bankTxIds: ["fitbank_123"],
+        blockchainTxIds: [],
+        splitConfiguredOrders: 1,
+        settledOrders: 1,
+      },
       orders: [
         {
           order_id: "order_1",
+          split_address: "lq1split",
+          split_fee: "1.00%",
         },
       ],
       deposits: [
@@ -388,6 +491,8 @@ describe("qr flow evidence helpers", () => {
     expect(markdown).toContain("order: `order_1`");
     expect(markdown).toContain("depositEntryId: `dep_1`");
     expect(markdown).toContain("### Ops readiness");
+    expect(markdown).toContain("### Split proof");
+    expect(markdown).toContain("\"status\": \"missing_onchain_tx\"");
     expect(markdown).toContain("\"order_id\": \"order_1\"");
     expect(markdown).toContain("\"deposit_entry_id\": \"dep_1\"");
     expect(markdown).toContain("### Deposit events correlacionados");

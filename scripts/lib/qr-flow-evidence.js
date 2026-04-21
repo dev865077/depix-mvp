@@ -368,6 +368,7 @@ export function createQrFlowEvidenceCollector(dependencies) {
     const depositEvents = runD1Query(options.environment, buildLatestDepositEventsQuery(options));
     const health = await fetchHealth(options.environment);
     const gitCommit = runCommand("git", ["rev-parse", "HEAD"]).trim();
+    const splitProof = buildSplitProofReport(orders, deposits, depositEvents);
 
     return formatEvidenceMarkdown({
       issueNumber: options.issueNumber,
@@ -383,6 +384,7 @@ export function createQrFlowEvidenceCollector(dependencies) {
       migrationsStatus,
       health,
       opsReadiness: buildOpsReadinessReport(health),
+      splitProof,
       orders,
       deposits,
       depositEvents,
@@ -576,6 +578,8 @@ export function buildLatestOrdersQuery(input) {
     "  o.status,",
     "  o.amount_in_cents,",
     "  o.wallet_address,",
+    "  o.split_address,",
+    "  o.split_fee,",
     "  o.created_at,",
     "  o.updated_at",
     "FROM orders o",
@@ -711,6 +715,97 @@ export function buildOpsReadinessReport(health) {
 }
 
 /**
+ * Deriva um resumo auditavel da prova de split usando apenas os rastros
+ * persistidos hoje no sistema.
+ *
+ * @param {Array<Record<string, unknown>>} orders Orders correlacionadas.
+ * @param {Array<Record<string, unknown>>} deposits Depositos correlacionados.
+ * @param {Array<Record<string, unknown>>} depositEvents Eventos correlacionados.
+ * @returns {{
+ *   status: "not_applicable" | "missing_split_config" | "pending_settlement" | "proved" | "missing_onchain_tx" | "missing_financial_trace",
+ *   orderIds: string[],
+ *   bankTxIds: string[],
+ *   blockchainTxIds: string[],
+ *   splitConfiguredOrders: number,
+ *   settledOrders: number
+ * }} Resumo auditavel de split.
+ */
+export function buildSplitProofReport(orders, deposits, depositEvents) {
+  const normalizedOrders = Array.isArray(orders) ? orders : [];
+  const normalizedDeposits = Array.isArray(deposits) ? deposits : [];
+  const normalizedEvents = Array.isArray(depositEvents) ? depositEvents : [];
+  const orderIds = collectDistinctTextValues(normalizedOrders, "order_id");
+  const splitConfiguredOrders = normalizedOrders.filter(isSplitConfiguredOrder).length;
+  const settledOrders = normalizedDeposits.filter((deposit) => readTextValue(deposit, "external_status") === "depix_sent").length;
+  const bankTxIds = collectDistinctTextValues(normalizedEvents, "bank_tx_id");
+  const blockchainTxIds = collectDistinctTextValues(normalizedEvents, "blockchain_tx_id");
+
+  if (orderIds.length === 0) {
+    return {
+      status: "not_applicable",
+      orderIds,
+      bankTxIds,
+      blockchainTxIds,
+      splitConfiguredOrders: 0,
+      settledOrders: 0,
+    };
+  }
+
+  if (splitConfiguredOrders === 0) {
+    return {
+      status: "missing_split_config",
+      orderIds,
+      bankTxIds,
+      blockchainTxIds,
+      splitConfiguredOrders,
+      settledOrders,
+    };
+  }
+
+  if (settledOrders === 0) {
+    return {
+      status: "pending_settlement",
+      orderIds,
+      bankTxIds,
+      blockchainTxIds,
+      splitConfiguredOrders,
+      settledOrders,
+    };
+  }
+
+  if (blockchainTxIds.length > 0) {
+    return {
+      status: "proved",
+      orderIds,
+      bankTxIds,
+      blockchainTxIds,
+      splitConfiguredOrders,
+      settledOrders,
+    };
+  }
+
+  if (bankTxIds.length > 0) {
+    return {
+      status: "missing_onchain_tx",
+      orderIds,
+      bankTxIds,
+      blockchainTxIds,
+      splitConfiguredOrders,
+      settledOrders,
+    };
+  }
+
+  return {
+    status: "missing_financial_trace",
+    orderIds,
+    bankTxIds,
+    blockchainTxIds,
+    splitConfiguredOrders,
+    settledOrders,
+  };
+}
+
+/**
  * Normaliza uma entrada de readiness operacional sem preservar campos extras.
  *
  * @param {unknown} value Entrada de `health.operations`.
@@ -731,6 +826,45 @@ function normalizeOperationReadiness(value) {
 }
 
 /**
+ * @param {Array<Record<string, unknown>>} rows Linhas candidatas.
+ * @param {string} field Campo textual.
+ * @returns {string[]} Valores distintos em ordem de aparicao.
+ */
+function collectDistinctTextValues(rows, field) {
+  const seen = new Set();
+
+  return rows.reduce((values, row) => {
+    const value = readTextValue(row, field);
+
+    if (!value || seen.has(value)) {
+      return values;
+    }
+
+    seen.add(value);
+    return [...values, value];
+  }, []);
+}
+
+/**
+ * @param {Record<string, unknown>} order Linha de order.
+ * @returns {boolean} `true` quando o split materializado existe na order.
+ */
+function isSplitConfiguredOrder(order) {
+  return Boolean(readTextValue(order, "split_address")) && Boolean(readTextValue(order, "split_fee"));
+}
+
+/**
+ * @param {Record<string, unknown>} row Linha arbitraria.
+ * @param {string} field Campo textual.
+ * @returns {string | null} Texto limpo ou `null`.
+ */
+function readTextValue(row, field) {
+  const value = typeof row?.[field] === "string" ? row[field].trim() : "";
+
+  return value.length > 0 ? value : null;
+}
+
+/**
  * Renderiza um relatorio Markdown pronto para issue ou comentario de PR.
  *
  * @param {{
@@ -747,6 +881,14 @@ function normalizeOperationReadiness(value) {
  *   migrationsStatus: string,
  *   health: Record<string, unknown>,
  *   opsReadiness: { depositRecheck: { state: string, ready: boolean }, depositsFallback: { state: string, ready: boolean } },
+ *   splitProof: {
+ *     status: string,
+ *     orderIds: string[],
+ *     bankTxIds: string[],
+ *     blockchainTxIds: string[],
+ *     splitConfiguredOrders: number,
+ *     settledOrders: number
+ *   },
  *   orders: Array<Record<string, unknown>>,
  *   deposits: Array<Record<string, unknown>>,
  *   depositEvents: Array<Record<string, unknown>>
@@ -781,6 +923,12 @@ export function formatEvidenceMarkdown(report) {
     "",
     "```json",
     JSON.stringify(report.opsReadiness, null, 2),
+    "```",
+    "",
+    "### Split proof",
+    "",
+    "```json",
+    JSON.stringify(report.splitProof, null, 2),
     "```",
     "",
     "### Deployment status",
