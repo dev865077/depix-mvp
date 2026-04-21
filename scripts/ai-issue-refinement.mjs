@@ -825,7 +825,15 @@ async function linkGitHubSubIssue(repoFullName, parentIssueNumber, childIssue) {
 
 async function linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssueNumber, childIssue) {
   if (!Number.isInteger(childIssue?.id)) {
-    throw new Error(`Cannot link child issue #${childIssue?.number ?? "unknown"} as a native sub-issue because the REST issue id is missing.`);
+    const message = `Cannot link child issue #${childIssue?.number ?? "unknown"} as a native sub-issue because the REST issue id is missing.`;
+
+    logOperationalEvent("ai_issue_refinement.sub_issue.link_fallback", {
+      parentIssueNumber,
+      childIssueNumber: childIssue?.number ?? null,
+      reason: message,
+    });
+
+    return { linked: false, reason: message };
   }
 
   const request = buildGitHubSubIssueLinkRequest(repoFullName, parentIssueNumber, childIssue.id);
@@ -836,15 +844,16 @@ async function linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parent
       parentIssueNumber,
       childIssueNumber: childIssue.number,
     });
+    return { linked: true, reason: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    logOperationalEvent("ai_issue_refinement.sub_issue.link_failed", {
+    logOperationalEvent("ai_issue_refinement.sub_issue.link_fallback", {
       parentIssueNumber,
       childIssueNumber: childIssue.number,
-      error: message,
+      reason: message,
     });
-    throw new Error(`Unable to link issue #${childIssue.number} as a native sub-issue of #${parentIssueNumber}: ${message}`);
+    return { linked: false, reason: message };
   }
 }
 
@@ -1050,8 +1059,8 @@ export async function createOrReuseChildIssuesWithRequest(requestGitHub, repoFul
     const existingIssue = existingByTitle.get(titleKey);
 
     if (existingIssue) {
-      createdIssues.push(existingIssue);
-      await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, existingIssue);
+      const subIssueLink = await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, existingIssue);
+      createdIssues.push({ ...existingIssue, subIssueLink });
       continue;
     }
 
@@ -1072,8 +1081,8 @@ export async function createOrReuseChildIssuesWithRequest(requestGitHub, repoFul
     });
 
     existingByTitle.set(titleKey, createdIssue);
-    createdIssues.push(createdIssue);
-    await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, createdIssue);
+    const subIssueLink = await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, createdIssue);
+    createdIssues.push({ ...createdIssue, subIssueLink });
   }
 
   return createdIssues;

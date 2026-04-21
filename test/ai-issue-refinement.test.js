@@ -245,7 +245,7 @@ describe("ai issue refinement", () => {
     ]);
   });
 
-  it("fails child creation when native sub-issue linking fails", async () => {
+  it("falls back visibly when native sub-issue linking fails after child creation", async () => {
     const requestGitHub = async (url, init = {}) => {
       if (url.includes("/issues?state=all&per_page=100&page=1")) {
         return [];
@@ -267,12 +267,22 @@ describe("ai issue refinement", () => {
       throw new Error(`Unexpected GitHub request: ${url}`);
     };
 
-    await expect(createOrReuseChildIssuesWithRequest(
+    const createdIssues = await createOrReuseChildIssuesWithRequest(
       requestGitHub,
       "dev865077/depix-mvp",
       { number: 291, title: "track: root", body: "Root." },
       [{ title: "sub-issue: validate callback proof", body: "Body." }],
-    )).rejects.toThrow("Unable to link issue #301 as a native sub-issue of #291");
+    );
+
+    expect(createdIssues).toEqual([
+      expect.objectContaining({
+        number: 301,
+        subIssueLink: {
+          linked: false,
+          reason: "GitHub API request failed (403)",
+        },
+      }),
+    ]);
   });
 
   it("builds prompt and canonical issue outputs for refinement", () => {
