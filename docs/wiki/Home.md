@@ -12,6 +12,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - borda HTTP em `Hono`
 - runtime de bot em `grammY`
 - persistencia em `D1` para `orders`, `deposits` e `deposit_events`
+- contratos explicitos de persistencia em TypeScript para a borda D1
 - integracao com a Eulen para criacao, confirmacao e recheck de depositos
 - ambientes de `test` e `production` no Cloudflare
 - documentacao tecnica versionada em `docs/`
@@ -23,6 +24,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o webhook do Telegram ja faz despacho real para `grammY`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
+- os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o webhook principal da Eulen ja existe com validacao, idempotencia base e persistencia
 - o recheck operacional de deposito ja existe via `POST /ops/:tenantId/recheck/deposit`
 - o fallback por janela via `POST /ops/:tenantId/reconcile/deposits` ja reconcilia linhas compactas da Eulen por `qrId`

@@ -31,7 +31,7 @@ Runtime, tenants e resolucao de bindings.
 
 ### `src/types/`
 
-Contratos de dominio e runtime compartilhados entre o parser de tenancy e as areas que consomem o registry.
+Contratos de dominio e persistencia compartilhados entre o parser de tenancy e as areas que consomem o registry.
 
 ### `src/order-flow/`
 
@@ -43,7 +43,7 @@ Bootstrap e cache do runtime Telegram.
 
 ### `src/db/`
 
-Client do `D1` e repositories operacionais.
+Client do `D1` e repositories operacionais. O boundary do banco usa helpers tipados e modelos de persistencia explicitos para `orders`, `deposits` e `deposit_events`.
 
 ### `src/clients/`
 

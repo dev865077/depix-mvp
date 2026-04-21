@@ -42,6 +42,16 @@
 - `raw_payload`
 - `tenant_id`
 
+### Modelos de persistencia em TypeScript
+
+Os contratos usados pelos repositories de D1 foram explicitados em `src/types/persistence.ts`.
+
+- `OrderRecord` e `CreateOrderInput` cobrem leitura e escrita da tabela `orders`
+- `DepositRecord` e `CreateDepositInput` cobrem leitura e escrita da tabela `deposits`
+- `DepositEventRecord` e `CreateDepositEventInput` cobrem leitura e escrita da tabela `deposit_events`
+- `OrderPatch` e `DepositPatch` definem os patches permitidos nas atualizacoes parciais
+- `HydrateOrderTelegramChatResult` e `UpdateOrderWithStepGuardResult` explicita os resultados estruturados usados pelo fluxo de pedidos
+
 ### `deposit_order_duplicate_quarantine`
 
 - guarda linhas historicas retiradas de `deposits` quando uma migration encontra mais de um deposito para o mesmo `tenant_id + order_id`
@@ -92,10 +102,7 @@
 
 ## Guardas de transicao
 
-Atualizacoes vindas da maquina de pedidos devem usar `tenant_id`, `order_id` e
-`current_step` no `WHERE`. Isso evita stale writes: se outro request ja avancou
-o pedido, a segunda escrita nao altera a linha e a aplicacao pode observar o
-conflito.
+Atualizacoes vindas da maquina de pedidos devem usar `tenant_id`, `order_id` e `current_step` no `WHERE`. Isso evita stale writes: se outro request ja avancou o pedido, a segunda escrita nao altera a linha e a aplicacao pode observar o conflito.
 
 O helper `updateOrderByIdWithStepGuard()` separa explicitamente:
 
@@ -107,9 +114,7 @@ O helper `updateOrderByIdWithStepGuard()` separa explicitamente:
 
 O modelo canonico do projeto distingue dois IDs externos:
 
-- `depositEntryId`: `response.id` retornado pela Eulen no `POST /deposit`
-- `qrId`: identificador do QR/deposito usado em webhook, `deposit-status` e `deposits`
+- `depositEntryId`: identificador local da cobranca criada
+- `qrId`: identificador externo que pode chegar depois via webhook ou recheck
 
-O banco local persiste os dois papeis separadamente. `depositEntryId` nasce na criacao da cobranca; `qrId` pode ser hidratado depois via webhook ou recheck.
-
-Quando a confirmacao do Telegram precisar reaproveitar um deposito local existente, ela deve ler a linha canonica ja persistida em `deposits` e nao chamar a Eulen de novo.
+Esses campos nao devem ser tratados como sinonimos.
