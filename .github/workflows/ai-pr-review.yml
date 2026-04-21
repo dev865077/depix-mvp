@@ -11,11 +11,6 @@ on:
     types:
       - created
       - edited
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
 
 permissions:
   actions: read
@@ -26,7 +21,7 @@ permissions:
   statuses: read
 
 concurrency:
-  group: ai-pr-review-${{ github.event.pull_request.number || github.event.discussion.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: ai-pr-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.discussion.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -93,7 +88,7 @@ jobs:
 
   discussion-review:
     needs: classify
-    if: github.event_name != 'pull_request' && needs.classify.outputs.requires_discussion == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read

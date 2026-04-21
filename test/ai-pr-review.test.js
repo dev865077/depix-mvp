@@ -37,6 +37,7 @@ import {
   isCiTestCheckGreen,
   isCompletedCiWorkflowRunEvent,
   normalizeSpecialistReviewMemo,
+  normalizeOrRepairSpecialistReviewMemo,
   parseGitHubRestResponse,
   parseBlockingRoleContract,
   redactActionsLogSecrets,
@@ -48,6 +49,7 @@ import {
   summarizeDiscussionBlockingContracts,
   summarizePullRequestScope,
   waitForCiTestConclusion,
+  workflowHasVisibleDiscussionReviewCiGate,
   collectFollowUpEvidenceRecords,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -1099,6 +1101,65 @@ describe("ai pr review discussion rendering", () => {
       malformedBlockingMemo,
       (reason) => malformedReasons.push(reason),
     )).toContain("Malformed blocker contract from Technical and architecture");
+    expect(malformedReasons).toEqual(["Missing required section: ## Blocker contract."]);
+  });
+
+  it("repairs malformed blocking specialist memos before publishing synthetic blockers", async () => {
+    const malformedBlockingMemo = [
+      "## Perspective",
+      "One blocker remains.",
+      "",
+      "## Findings",
+      "- The blocker exists.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+    const repairedMemo = [
+      "## Perspective",
+      "The blocker is real and now has a machine-checkable contract.",
+      "",
+      "## Findings",
+      "- The visible PR discussion check must run after CI is green.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Blocker contract",
+      "Testability: Testable",
+      "Behavior protected: Visible PR discussion check waits for green CI.",
+      "Suggested test file: test/ai-pr-review.test.js",
+      "Minimum scenario: Evaluate a discussion-review job after CI is green.",
+      "Essential assertions: The discussion-review job is not skipped and produces a visible verdict.",
+      "Resolution rule: Merge only after the visible check runs and publishes the verdict.",
+      "Why this test resolves the blocker: It proves the visible PR review gate remains observable after CI.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+    const malformedReasons = [];
+
+    const normalizedMemo = await normalizeOrRepairSpecialistReviewMemo(
+      "Technical and architecture",
+      malformedBlockingMemo,
+      async (reason) => {
+        expect(reason).toBe("Missing required section: ## Blocker contract.");
+        return repairedMemo;
+      },
+      (reason) => malformedReasons.push(reason),
+    );
+
+    expect(normalizedMemo).toBe(repairedMemo);
+    expect(parseBlockingRoleContract(normalizedMemo).status).toBe("valid");
     expect(malformedReasons).toEqual(["Missing required section: ## Blocker contract."]);
   });
 
@@ -2426,7 +2487,32 @@ describe("ai pr review discussion rendering", () => {
     expect(partialEvidence[0].missingSignals).toContain("ci_test_green");
   });
 
-  it("pins the reactive CI workflow_run trigger and discussion-review write permissions", () => {
+  it("pins the visible pull_request discussion-review check and CI await step before specialists", () => {
+    const prReviewWorkflow = [
+      "on:",
+      "  pull_request:",
+      "  discussion_comment:",
+      "concurrency:",
+      "  group: ai-pr-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.discussion.number || github.run_id }}",
+      "jobs:",
+      "  discussion-review:",
+      "    permissions:",
+      "      discussions: write",
+      "    steps:",
+      "      - name: Wait for canonical CI / Test conclusion",
+      "        env:",
+      "          AI_PR_REVIEW_MODE: await_ci",
+      "      - name: Run multi-bot Discussion PR review",
+      "        env:",
+      "          AI_PR_REVIEW_MODE: discussion",
+    ].join("\n");
+
+    expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow)).toBe(true);
+    expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow.replace(
+      "          AI_PR_REVIEW_MODE: await_ci\n      - name: Run multi-bot Discussion PR review\n        env:\n",
+      "",
+    ))).toBe(false);
+
     const evidence = buildAutomationEvidenceContext({
       files: [
         { filename: ".github/workflows/ai-pr-review.yml" },
@@ -2438,19 +2524,7 @@ describe("ai pr review discussion rendering", () => {
         { filename: "test/ai-issue-planning-review.test.js" },
         { filename: "test/ai-issue-triage.test.js" },
       ],
-      prReviewWorkflow: [
-        "on:",
-        "  discussion_comment:",
-        "  workflow_run:",
-        "      - CI",
-        "jobs:",
-        "  discussion-review:",
-        "  Wait for canonical CI / Test conclusion",
-        "github.event_name != 'pull_request'",
-        "github.event_name != 'workflow_run'",
-        "    permissions:",
-        "      discussions: write",
-      ].join("\n"),
+      prReviewWorkflow,
       planningWorkflow: [
         "outputs:",
         "  planning_status:",
@@ -2476,7 +2550,8 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewTests: [
         "keeps Blocked planning-only by rejecting it in PR review recommendations",
-        "pins the reactive CI workflow_run trigger and discussion-review write permissions",
+        "pins the visible pull_request discussion-review check and CI await step before specialists",
+        "repairs malformed blocking specialist memos before publishing synthetic blockers",
       ].join("\n"),
       planningTests: "pins planning workflow outputs in the operator summary",
       triageTests: [
@@ -2487,8 +2562,8 @@ describe("ai pr review discussion rendering", () => {
 
     expect(evidence).toContain("## Automation contract evidence");
     expect(evidence).toContain("discussion-review");
-    expect(evidence).toContain("workflow_run");
-    expect(evidence).toContain("CI / Test");
+    expect(evidence).toContain("AI_PR_REVIEW_MODE=await_ci");
+    expect(evidence).toContain("AI_PR_REVIEW_MODE=discussion");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
     expect(evidence).toContain("medio -> direct_pr");
