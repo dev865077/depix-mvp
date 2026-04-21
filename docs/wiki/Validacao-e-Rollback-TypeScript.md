@@ -1,8 +1,6 @@
 # Validacao e Rollback TypeScript
 
-Esta pagina e o contrato operacional da issue #204 para as ondas sensiveis da
-migracao TypeScript. Ela define quais comandos, smokes, gates e acoes minimas
-de rollback precisam existir antes de considerar cada onda segura.
+Esta pagina e o contrato operacional da issue #204 para as ondas sensiveis da migracao TypeScript. Ela define quais comandos, smokes, gates e acoes minimas de rollback precisam existir antes de considerar cada onda segura.
 
 ## Regra geral
 
@@ -24,114 +22,52 @@ de rollback precisam existir antes de considerar cada onda segura.
 | Borda Eulen | #203 | client Eulen, webhook de deposito, payload externo e correlacao | `npm test`; `npm test -- test/eulen-client.test.js test/eulen-webhook.test.js` | webhook Eulen rejeita segredo invalido; payload invalido falha fechado; tenant mismatch continua bloqueado | Go somente se contrato externo invalido nao atravessar para persistencia | Reverter a PR da borda Eulen; nao misturar com rollback de Telegram ou rotas `/ops` |
 | Bootstrap e contexto HTTP | #199 | `src/index.ts`, `Env`, contexto Hono e middleware de runtime | `npm run typecheck`; `npm run cf:types`; `npm test`; `npm run dev` | Worker local sobe; `GET /health` funciona com `runtimeConfig`; rotas com tenant desconhecido falham fechado | Go somente se boot local, health e roteamento basico ficarem verdes | Reverter a PR de bootstrap/contexto; se o Worker nao subir, esta e a primeira PR a reverter |
 | Rotas e middleware HTTP | #184 | `health`, `ops`, `telegram`, `webhooks` e resolucao de tenant | `npm test`; `npm test -- test/health.test.js test/ops-telegram-webhook.test.js test/tenant-routing.test.js` | `GET /health` redige segredos; `/ops` sem bearer nega acesso; webhook com tenant invalido falha fechado | Go somente se os caminhos HTTP positivos e negativos permanecerem explicitos | Reverter a PR de rotas/middleware; nao misturar com rollback de services internos |
-| Utilitarios HTTP e erro | #200 | helpers HTTP, mapeamento de erro e autorizacao operacional tipada | `npm run typecheck`; `npm test`; `npm test -- test/health.test.js test/ops-telegram-webhook.test.js test/deposit-recheck.test.js` | erros continuam com `code` estavel; `/ops` sem token retorna erro operacional esperado; token invalido nao chama upstream | Go somente se erros publicos e logs estruturados preservarem contrato | Reverter a PR dos utilitarios; nao alterar services de negocio no mesmo rollback |
-| Runtime/scripts finais | #196 | entrypoint final, cleanup de JS duplicado, runner e compatibilidade operacional | `npm run typecheck`; `npm run cf:types`; `npm test`; `npm run dev`; `npx wrangler deploy --dry-run --env test`; `npx wrangler deploy --dry-run --env production` | `GET /health` local; dry-run de `test`; dry-run de `production`; imports Node suportados por `node --import tsx` | Go somente se runtime local, CI e dry-runs provarem que `src/index.ts` e o entrypoint canonico | Reverter a PR de cleanup/runtime; nao restaurar arquivos JS individualmente sem reverter a onda |
+| Utilitarios HTTP e erro | #200 | helpers HTTP, mapeamento de erro e autorizacao operacional tipada | `npm run typecheck`; `npm test`; `npm test -- test/health.test.js test/ops-telegram-webhook.test.js` | respostas de erro continuam tipadas; comportamento operacional segue fail-closed | Go somente se helpers e contratos de erro continuarem consistentes | Reverter a PR de utilitarios HTTP; nao incluir mudancas de rota no mesmo rollback |
+| Tipos gerados e limpeza final | #196 | tipos gerados, limpeza de runtime legado e ajuste final de compatibilidade | `npm run typecheck`; `npm run cf:types`; `npm test`; `git diff --check` | nenhum import legado quebra o bootstrap; o runtime continua subindo localmente | Go somente se nao restar quebra de compatibilidade ou ruido de diff | Reverter a PR final; se houver quebra de bootstrap, parar nesta onda e nao seguir adiante |
 
-## Smokes HTTP canonicos
+## Comandos base obrigatorios
 
-Os smokes abaixo sao canonicos para ondas que alteram bootstrap, rotas,
-middleware, autorizacao operacional ou entrypoint.
+Antes de promover qualquer onda sensivel, a PR deve evidenciar o conjunto aplicavel abaixo:
 
-### Boot local e health
+- `npm run typecheck`
+- `npm test`
+- `npm run cf:types`
+- `npm run dev -- --local --port 8791`
+- `git diff --check`
 
-1. Subir o Worker local:
+Nem toda onda precisa de todos os comandos acima, mas toda PR precisa listar o subconjunto executado e explicar por que ele cobre a superficie alterada.
 
-```bash
-npm run dev -- --local --port 8790
-```
+## Smokes e validacao operacional
 
-2. Validar health:
+- `GET /health` para confirmar boot e redacao de segredos
+- validacao HTTP do caminho alterado, com sucesso e falha fechada
+- validacao local de bootstrap para ondas que tocam entrada do Worker
+- validacao de contrato de erro para ondas que alteram bordas, helpers ou autorizacao
 
-```bash
-curl -fsS http://127.0.0.1:8790/health
-```
+## Gates stop/go
 
-Passa quando a resposta e JSON valido com `status: "ok"` e sem nomes de
-bindings secretos no inventario publico de tenants.
+Stop quando houver qualquer um destes sinais:
 
-### `/ops` sem bearer
+- comando obrigatorio falhou
+- smoke obrigatorio falhou
+- cobertura listada na PR nao corresponde a superficie alterada
+- a PR mistura ondas que deveriam ser revertidas separadamente
+- o rollback proposto depende de outra mudanca nao relacionada
 
-Executar contra o Worker local:
+Go somente quando:
 
-```bash
-curl -sS -o /tmp/depix-ops-smoke.json -w "%{http_code}" \
-  -X POST http://127.0.0.1:8790/ops/alpha/recheck/deposit \
-  -H "content-type: application/json" \
-  --data '{"depositEntryId":"smoke"}'
-```
+- os comandos exigidos pela onda estiverem verdes
+- os smokes obrigatorios estiverem verdes
+- o rollback minimo estiver claro e isolado
+- a PR nao depender de contrato operacional implícito
 
-Passa quando a rota nao executa upstream e responde erro controlado. Em ambiente
-local com a feature flag desabilitada, `503 ops_route_disabled` e esperado. Em
-ambiente com a flag habilitada e sem bearer, `401 ops_authorization_required` e
-esperado.
+## Rollback minimo por onda
 
-### Webhook com tenant ou payload invalido
+- reverter somente a PR da onda afetada
+- nao embutir correcao de outra onda no mesmo revert
+- se a reversao precisar de ajuste adicional, documentar a dependencia e parar a promocao
+- se a onda afetar bootstrap, confirmar que o Worker ainda sobe antes de prosseguir para a proxima
 
-As rotas de webhook devem falhar fechado quando o tenant nao existe ou quando o
-payload nao respeita o contrato externo.
+## Uso prático
 
-Comandos de cobertura obrigatoria:
-
-```bash
-npm test -- test/tenant-routing.test.js
-npm test -- test/telegram-webhook-reply.test.js
-npm test -- test/eulen-webhook.test.js
-```
-
-Passa quando tenants desconhecidos nao viram sucesso, payload invalido retorna
-erro estruturado e nenhum caminho invalido grava agregado financeiro.
-
-## Gates objetivos
-
-Uma onda esta pronta para merge quando:
-
-- todos os comandos obrigatorios da linha da matriz estao verdes
-- todos os smokes obrigatorios da linha da matriz estao verdes ou cobertos por suite focada indicada
-- `CI / Test` esta verde na PR
-- a review automatizada de PR esta verde ou a Discussion canonica terminou em `pr_ready_to_merge`
-- a PR nao mistura superficie fora da linha da matriz
-
-Uma onda esta pronta para promocao operacional quando:
-
-- a PR ja foi mergeada
-- o CI em `main` ficou verde apos o merge
-- dry-run de Wrangler passa quando a onda altera entrypoint, bindings, runtime ou deploy
-- o operador consegue apontar qual PR isolada deve ser revertida em caso de incidente
-
-## Evidencia minima por PR
-
-Cada PR de onda sensivel deve declarar no corpo:
-
-- issue ligada
-- superficie alterada
-- comandos executados
-- smokes executados ou suite focada equivalente
-- risco residual
-- caminho de rollback
-
-Para #204, a evidencia esperada e documental: esta pagina deve existir, estar
-linkada na wiki e listar comandos, smokes, gates e rollback por onda.
-
-## Ordem de rollback
-
-1. Identificar a onda que introduziu a regressao.
-2. Confirmar que a regressao pertence a superficie daquela onda.
-3. Reverter a PR isolada da onda.
-4. Rodar os comandos obrigatorios da propria onda revertida.
-5. Rodar os smokes HTTP canonicos se a onda tocou bootstrap, rotas, middleware, autorizacao ou entrypoint.
-6. Registrar no follow-up da issue ou PR qual evidencia provou a recuperacao.
-
-Se duas ondas parecem culpadas, reverter primeiro a onda mais recente que tocou a
-superficie quebrada. Nao aplicar hotfix amplo antes de confirmar que o revert
-isolado nao resolve.
-
-## Excecoes
-
-Arquivos JavaScript podem permanecer quando forem:
-
-- scripts operacionais `.mjs`
-- configs esperadas pelo ecossistema
-- helpers de teste sem valor claro de tipagem imediata
-- modulos JS ainda sem equivalente TypeScript validado
-
-Essas excecoes devem ser documentadas no fechamento final da epic em #185.
+Use esta pagina como checklist de liberacao para as ondas sensiveis da migracao TypeScript. A referencia final de consolidacao da migracao continua em #185.

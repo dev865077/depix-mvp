@@ -91,33 +91,10 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - trilha local: eventos `deposit_events.source = "recheck_deposit_status"`
 - controle de overlap: antes da chamada remota, o cron grava um claim condicional em `scheduled_deposit_reconciliation_claims`; execucoes concorrentes ou retries nao processam a mesma linha fresca duas vezes
 - isolamento de estado: o lock do cron fica fora de `deposits.external_status`, entao leitores/escritores normais continuam vendo apenas o status de negocio do deposito
-- recuperacao de claim: o claim e removido ao final do processamento, com ou sem erro; claims antigos podem ser retomados apos a janela de stale configurada no service
-- notificacao: quando a reconciliacao muda o estado visivel para pagamento confirmado, a camada Telegram tenta notificar em modo fail-soft
-- falha isolada: erro em um deposito ou tenant e logado e nao interrompe os demais
-- idempotencia: reexecucao com a mesma verdade remota nao duplica `deposit_events`
-
-## Operacao do cron
-
-- para desligar runtime sem deploy de codigo, mantenha `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false`
-- em `test`, o cron e versionado no `wrangler.jsonc`; a validacao de rollout deve considerar o caminho do Worker e o estado de `/health`
-- em `production`, o cron permanece ausente por design nesta PR; nao use o ambiente para habilitacao manual antecipada
-- se o scheduler apresentar overlap ou repeticao, verifique primeiro claims antigos em `scheduled_deposit_reconciliation_claims` antes de suspeitar de duplicacao em `deposits`
-- a operacao nao deve usar `OPS_ROUTE_BEARER_TOKEN` para o cron; o gating e feito por flag, D1 e bindings por tenant
-- a leitura de readiness do cron deve vir de `/health.operations.scheduledDepositReconciliation`
-
-## Runbook minimo
-
-1. Confirmar `GET /health`.
-2. Verificar `scheduledDepositReconciliation.state`.
-3. Validar se `test` possui cron ativo e `production` continua sem triggers.
-4. Rodar `npm run typecheck` e `npm test` antes de promover qualquer ajuste de runtime.
-5. Em caso de incidente, revisar logs do Worker e o estado da tabela `scheduled_deposit_reconciliation_claims`.
+- recuperacao de claim: o claim e removido ao final do processamento, com ou sem erro; claims antigos podem ser retomados apos a janela de seguranca
 
 ## Migracao TypeScript
 
-O contrato de validacao operacional e rollback das ondas da migracao TypeScript
-fica em [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript).
+O contrato de validacao operacional e rollback das ondas da migracao TypeScript fica em [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript).
 
-Use esse runbook antes de promover qualquer onda que altere bootstrap, rotas,
-webhooks, autorizacao operacional, entrypoint, tipos gerados ou cleanup final de
-runtime.
+Use esse runbook antes de promover qualquer onda que altere bootstrap, rotas, webhooks, autorizacao operacional, entrypoint, tipos gerados ou cleanup final de runtime.
