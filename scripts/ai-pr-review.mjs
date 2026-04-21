@@ -3359,15 +3359,19 @@ export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
   const missingPullRequestGuardIndex = prReviewWorkflow.indexOf("Could not resolve the linked pull request");
   const resolverFailureIndex = prReviewWorkflow.indexOf("exit 1", missingPullRequestGuardIndex);
   const pullRequestApiIndex = prReviewWorkflow.indexOf('gh api "repos/${REPOSITORY}/pulls/${pr_number}"');
-  const checkoutRefIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha");
-  const unsafeGithubShaFallbackIndex = prReviewWorkflow.indexOf("|| github.sha", checkoutRefIndex);
+  const discussionCheckoutIndex = prReviewWorkflow.indexOf("Checkout discussion pull request head", pullRequestApiIndex);
+  const discussionOnlyRefIndex = prReviewWorkflow.indexOf("ref: ${{ steps.discussion-pr-head.outputs.sha }}", discussionCheckoutIndex);
+  const unsafePullRequestFallbackIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha", discussionCheckoutIndex);
+  const unsafeGithubShaFallbackIndex = prReviewWorkflow.indexOf("|| github.sha", discussionCheckoutIndex);
 
   return discussionCommentIndex >= 0
     && resolverIndex > discussionCommentIndex
     && missingPullRequestGuardIndex > resolverIndex
     && resolverFailureIndex > missingPullRequestGuardIndex
     && pullRequestApiIndex > resolverIndex
-    && checkoutRefIndex > pullRequestApiIndex
+    && discussionCheckoutIndex > pullRequestApiIndex
+    && discussionOnlyRefIndex > discussionCheckoutIndex
+    && unsafePullRequestFallbackIndex < 0
     && unsafeGithubShaFallbackIndex < 0;
 }
 
