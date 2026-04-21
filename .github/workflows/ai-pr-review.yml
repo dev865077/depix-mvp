@@ -93,7 +93,7 @@ jobs:
 
   discussion-review:
     needs: classify
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'true'
+    if: github.event_name != 'pull_request' && needs.classify.outputs.requires_discussion == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read

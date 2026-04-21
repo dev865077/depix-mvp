@@ -2446,6 +2446,7 @@ describe("ai pr review discussion rendering", () => {
         "jobs:",
         "  discussion-review:",
         "  Wait for canonical CI / Test conclusion",
+        "github.event_name != 'pull_request'",
         "github.event_name != 'workflow_run'",
         "    permissions:",
         "      discussions: write",

@@ -3221,11 +3221,12 @@ export function buildAutomationEvidenceContext(inputs) {
     && prReviewWorkflow.includes("- CI")
     && prReviewWorkflow.includes("discussion-review:")
     && prReviewWorkflow.includes("Wait for canonical CI / Test conclusion")
+    && prReviewWorkflow.includes("github.event_name != 'pull_request'")
     && prReviewWorkflow.includes("github.event_name != 'workflow_run'")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, `workflow_run` wakes the `discussion-review` lane reactively after the canonical `CI / Test` result completes, direct review is not duplicated on `workflow_run`, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
+      "- Current PR review workflow state: `pull_request` classifies the PR without starting the Discussion lane, `workflow_run` wakes `discussion-review` reactively after the canonical `CI / Test` result completes, direct review is not duplicated on `workflow_run`, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
     );
   }
 
