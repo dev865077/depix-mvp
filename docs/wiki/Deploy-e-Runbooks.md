@@ -121,44 +121,49 @@ Campos esperados:
 Chamadas negativas obrigatorias antes de qualquer uso autorizado:
 
 ```bash
-curl -sS -o /tmp/depix-recheck-missing-auth.json -w "%{http_code}\n" \
-  -X POST "$TEST_HOST/ops/alpha/recheck/deposit" \
-  -H "content-type: application/json" \
-  --data '{"depositEntryId":"validation-only"}'
-
-curl -sS -o /tmp/depix-fallback-invalid-auth.json -w "%{http_code}\n" \
-  -X POST "$TEST_HOST/ops/alpha/reconcile/deposits" \
-  -H "content-type: application/json" \
-  -H "authorization: Bearer invalid" \
-  --data '{"limit":1}'
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$TEST_HOST/ops/alpha/recheck/deposit" -H 'Content-Type: application/json' -d '{"depositEntryId":"example"}'
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$TEST_HOST/ops/alpha/reconcile/deposits" -H 'Content-Type: application/json' -d '{"limit":1}'
 ```
 
-Repita o mesmo contrato em `production` antes da janela controlada.
+Resultados esperados sem Bearer:
 
-Condição de abort:
+- `401` para as duas rotas
+- nenhuma resposta deve expor segredo, token ou header sensivel
 
-- se `/health` nao estiver `ready`, nao execute chamada autorizada
-- se chamada sem bearer nao retornar `401`, nao execute chamada autorizada
-- se bearer invalido nao retornar `403`, nao execute chamada autorizada
-- se a chamada autorizada nao tiver fixture segura, registre apenas readiness e auth negativa e execute a chamada real dentro da issue #124 ou #125 com evidencia D1 antes/depois
+Com token invalido, o esperado e `403`.
 
-## Reconciliacao agendada de depositos
+Se a negativa nao responder como esperado, abortar o uso autorizado, registrar a falha e corrigir configuracao antes de prosseguir.
 
-- pre-condicao de rollout: `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`
-- mecanismo: Cloudflare Cron Triggers no Worker Module via `scheduled(controller, env, ctx)`
-- contrato async: o handler usa `ctx.waitUntil(...)`; nao cria rota HTTP e nao depende de bearer `/ops`
-- ambiente `test`: cron `*/15 * * * *` em UTC
-- ambiente `production`: `triggers.crons = []` nesta PR; habilitacao real fica para a issue #126
-- selecao por tenant: no maximo 5 depositos por execucao
-- janela: depositos Telegram pendentes nas ultimas 2 horas, com `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
-- fonte de verdade: chamada direta ao service idempotente `processDepositRecheck`, que consulta `deposit-status`
-- trilha local: eventos `deposit_events.source = "recheck_deposit_status"`
-- controle de overlap: antes da chamada remota, o cron grava um claim condicional em `scheduled_deposit_reconciliation_claims`; execucoes concorrentes ou retries nao processam a mesma linha fresca duas vezes
-- isolamento de estado: o lock do cron fica fora de `deposits.external_status`, entao leitores/escritores normais continuam vendo apenas o status de negocio do deposito
-- recuperacao de claim: o claim e removido ao final do processamento, com ou sem erro; claims antigos podem ser retomados apos a janela de seguranca
+### Ordem segura de validacao em production
 
-## Migracao TypeScript
+1. checar `health` sem autenticacao
+2. rodar chamadas negativas sem Bearer
+3. confirmar `401` e `403` conforme o caso
+4. usar payload pequeno e janela controlada
+5. registrar `requestId` e resultado observavel
+6. parar imediatamente se o retorno remoto ou a persistencia divergir do contrato esperado
 
-O contrato de validacao operacional e rollback das ondas da migracao TypeScript fica em [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript).
+## Condicoes de abort
 
-Use esse runbook antes de promover qualquer onda que altere bootstrap, rotas, webhooks, autorizacao operacional, entrypoint, tipos gerados ou cleanup final de runtime.
+Abortar a validacao ou o rollout quando ocorrer qualquer um destes casos:
+
+- `GET /health` nao mostrar readiness esperado para `depositRecheck` ou `depositsFallback`
+- o header Bearer nao for exigido pelas rotas operacionais
+- o segredo operacional nao estiver presente em `test` ou `production`
+- a negative-auth nao retornar `401` e `403` conforme o contrato
+- a Eulen retornar contrato invalido ou inconsistente
+- a resposta remota exigir volume maior que o planejado para a janela de validacao
+- houver divergencia entre o estado remoto e a persistencia local que indique risco de escrita parcial
+- qualquer evidencia operativa sugerir exposure de segredo, token ou binding sensivel
+
+## Runbook de uso autorizado
+
+- manter a janela pequena
+- usar `requestId` na coleta de evidencia
+- validar primeiro a negativa, depois a autorizacao
+- interromper ao primeiro desvio de contrato
+- registrar a ocorrencia no backlog ou na issue ligada antes de repetir a execucao
+
+## Observacao de operacao
+
+A validacao remota real de `/health` e negative-auth acontece apos merge/deploy, porque a PR precisa estar em `main` para alterar os ambientes publicados.
