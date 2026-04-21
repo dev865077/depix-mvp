@@ -35,6 +35,8 @@ flowchart LR
 
 - `Hono` e middleware multi-tenant ja existem
 - runtime Telegram em `grammY` ja recebe despacho real do webhook
+- o inbound do Telegram agora e normalizado antes de entrar no runtime, com contrato explicito para `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
+- payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bootstrap do Worker foi migrado para TypeScript em `src/index.ts`
 - a fronteira canonica de tipos do runtime ficou consolidada em `src/types/runtime.ts`
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado

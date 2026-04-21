@@ -13,6 +13,8 @@ Estado atual:
 - runtime `grammY` bootstrapado existe
 - rota canonica existe
 - o webhook ja despacha o update real para o runtime do tenant
+- o inbound do Telegram agora passa por normalizacao com contrato explicito antes de chegar ao fluxo do bot
+- o update inbound invalido falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot ja tem um fluxo inicial de resposta para `/start`, `/help` e mensagens de texto
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
 - ao receber `/help`, o runtime pode ler o pedido aberto para contextualizar a resposta, mas nao cria nem muta pedidos
@@ -87,20 +89,4 @@ Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-dep
 
 Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
 
-No recheck operacional, a mesma politica vale para `deposit-status`: conflito de ownership de `qrId` devolve `deposit_qr_id_conflict`, e divergencia com um `qrId` ja correlacionado no deposito alvo devolve `deposit_qr_id_mismatch`.
-
-O write path do recheck foi desenhado para manter auditoria e agregado alinhados: o evento `recheck_deposit_status` e os updates em `deposits`/`orders` sao persistidos no mesmo batch do D1.
-
-Regra de precedencia atual: se o agregado local ja estiver concluido por `depix_sent`, um `deposit-status` atrasado com estado inferior nao sobrescreve o estado local; a rota responde `deposit_status_regression`.
-
-No fallback por `deposits`, a correlacao e feita por `qrId` porque o endpoint remoto retorna uma lista compacta. Linhas sem `qrId` local correspondente sao ignoradas com resultado `skipped`, e linhas que tentariam regredir um agregado concluido tambem nao escrevem no banco. Quando a linha e aplicavel, o runtime grava `deposit_events.source = "recheck_deposits_list"` junto dos updates em `deposits` e `orders`.
-
-Quando a conciliacao define um estado de pagamento confirmado, o service de notificacao pode derivar o `chat.id` persistido no pedido e disparar a mensagem de confirmacao. Esse envio nao substitui a verdade financeira: e apenas um side effect humano, separado do commit principal.
-
-## Split em deposit
-
-Toda chamada real de `deposit` deve carregar split do tenant. O codigo nao aceita endereco ou fee de split vindos do operador na rota operacional; ele resolve `depixSplitAddress` e `splitFee` a partir dos bindings secretos do tenant.
-
-Antes de chamar a Eulen, o diagnostico valida se o split foi materializado e se nao parece placeholder. Isso evita transformar erro de configuracao local em erro 520 upstream.
-
-O `depixSplitAddress` aceita o endereco DePix/Liquid do tenant, e `splitFee` segue o formato percentural esperado pela Eulen.
+No recheck operacio

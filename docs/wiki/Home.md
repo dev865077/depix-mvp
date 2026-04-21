@@ -24,6 +24,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `Hono` ja e a borda HTTP real do Worker
 - a fundacao multi-tenant ja existe no `main`
 - o webhook do Telegram ja faz despacho real para `grammY`
+- o inbound do Telegram agora normaliza um contrato explicito de update com `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
+- payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
