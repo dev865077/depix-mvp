@@ -45,6 +45,11 @@ const SUPPORTED_SPLIT_ADDRESS_KINDS = new Set([
   "documented-depix",
   "liquid-confidential",
 ]);
+const FAIL_CLOSED_RECOVERY_ERROR_CODES = new Set([
+  "telegram_order_awaiting_payment_conflict_terminal",
+  "telegram_order_awaiting_payment_missing",
+  "telegram_order_existing_deposit_invalid",
+]);
 
 /**
  * Erro controlado do service de confirmacao.
@@ -681,6 +686,19 @@ export async function confirmTelegramOrder(input) {
         orderId: creatingDepositOrder.orderId,
         tenantId: input.tenant.tenantId,
       };
+      throw error;
+    }
+
+    if (
+      error instanceof TelegramOrderConfirmationError
+      && FAIL_CLOSED_RECOVERY_ERROR_CODES.has(error.code)
+    ) {
+      await markTelegramOrderConfirmationFailure({
+        db: input.db,
+        tenant: input.tenant,
+        order: creatingDepositOrder,
+        reason: error.code,
+      });
       throw error;
     }
 

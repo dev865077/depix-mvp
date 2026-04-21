@@ -167,6 +167,56 @@ function createOnceFailingBatchDatabase(db, error) {
 }
 
 /**
+ * Simula um vencedor concorrente terminal exatamente antes da tentativa de
+ * reparar um pedido com deposito local para `awaiting_payment`.
+ *
+ * @param {D1Database} db Binding D1 real do teste.
+ * @param {{ tenantId: string, orderId: string, currentStep: string, status: string }} winner Estado vencedor persistido.
+ * @returns {D1Database} Binding proxy.
+ */
+function createAwaitingPaymentConflictDatabase(db, winner) {
+  let shouldConflict = true;
+
+  return {
+    prepare(sql) {
+      const prepared = db.prepare(sql);
+
+      return {
+        bind(...args) {
+          const bound = prepared.bind(...args);
+
+          return {
+            first: async function firstWithAwaitingPaymentConflict() {
+              const isAwaitingPaymentGuard = shouldConflict
+                && String(sql).includes("UPDATE orders")
+                && String(sql).includes("AND current_step = ?")
+                && args.includes("awaiting_payment")
+                && args.includes("creating_deposit");
+
+              if (isAwaitingPaymentGuard) {
+                shouldConflict = false;
+                await db
+                  .prepare("UPDATE orders SET current_step = ?, status = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+                  .bind(winner.currentStep, winner.status, new Date().toISOString(), winner.tenantId, winner.orderId)
+                  .run();
+              }
+
+              return bound.first();
+            },
+            run: bound.run?.bind(bound),
+            all: bound.all?.bind(bound),
+            raw: bound.raw?.bind(bound),
+          };
+        },
+      };
+    },
+    dump: db.dump?.bind(db),
+    exec: db.exec?.bind(db),
+    batch: db.batch.bind(db),
+  };
+}
+
+/**
  * Monta um update de callback query.
  *
  * @param {{ chatId: number, fromId: number, updateId?: number }} input Dados do update.
@@ -2087,6 +2137,118 @@ describe("telegram webhook reply flow", () => {
     expect(persistedDeposits?.count).toBe(1);
     expect(photoReply?.payload.photo).toBe("https://example.com/qr/existing-retry-001.png");
     expect(copyPasteReply?.payload.text).toContain("0002010102122688pix-existing-retry-001");
+  });
+
+  it("fails closed when an existing local deposit loses the order state race", async function assertExistingDepositTerminalConflictFailsClosed() {
+    const app = createApp();
+    const telegramMessages = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTerminalConflictRecovery(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        throw new Error("terminal conflict recovery must not create another Eulen deposit");
+      }
+
+      if (url.includes("/sendPhoto")) {
+        throw new Error("terminal conflict recovery must not return a confirmable deposit photo");
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramMessages.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: telegramMessages.length,
+            date: 1713434451,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in terminal conflict recovery flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_existing_deposit_terminal_conflict",
+      userId: "878",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8708",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "creating_deposit",
+      status: "processing",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_terminal_conflict_001",
+      qrId: null,
+      orderId: "order_existing_deposit_terminal_conflict",
+      nonce: "telegram-order:alpha:order_existing_deposit_terminal_conflict",
+      qrCopyPaste: "0002010102122688pix-terminal-conflict-001",
+      qrImageUrl: "https://example.com/qr/terminal-conflict-001.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T06:00:00Z",
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8708,
+          fromId: 878,
+          updateId: 77,
+        }),
+      },
+      createWorkerEnv({
+        DB: createAwaitingPaymentConflictDatabase(
+          getDatabase(env),
+          {
+            tenantId: "alpha",
+            orderId: "order_existing_deposit_terminal_conflict",
+            currentStep: "canceled",
+            status: "canceled",
+          },
+        ),
+      }),
+    );
+    const savedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_existing_deposit_terminal_conflict")
+      .first();
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_existing_deposit_terminal_conflict")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(0);
+    expect(savedOrder).toEqual({
+      currentStep: "canceled",
+      status: "canceled",
+    });
+    expect(persistedDeposits?.count).toBe(1);
+    expect(telegramMessages.join("\n")).toContain("Nao consegui criar seu Pix agora.");
+    expect(telegramMessages.join("\n")).not.toContain("Pix copia e cola:");
+    expect(telegramMessages.join("\n")).not.toContain("0002010102122688pix-terminal-conflict-001");
   });
 
   it("serializes concurrent confirmations before the Eulen create-deposit call", async function assertConcurrentConfirmationUsesOrderLease() {
