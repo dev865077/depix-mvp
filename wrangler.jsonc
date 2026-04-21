@@ -73,6 +73,11 @@
           "secret_name": "test-alpha-depix-split-fee"
         },
         {
+          "binding": "OPS_ROUTE_BEARER_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-ops-route-bearer-token"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "test-beta-telegram-bot-token"
@@ -109,6 +114,8 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
+        "ENABLE_OPS_DEPOSIT_RECHECK": "true",
+        "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
         "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
         "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfigBindings\":{\"depixSplitAddress\":\"ALPHA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"ALPHA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfigBindings\":{\"depixSplitAddress\":\"BETA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"BETA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
       }
@@ -157,6 +164,11 @@
           "secret_name": "production-alpha-depix-split-fee"
         },
         {
+          "binding": "OPS_ROUTE_BEARER_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-ops-route-bearer-token"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "production-beta-telegram-bot-token"
@@ -193,6 +205,8 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
+        "ENABLE_OPS_DEPOSIT_RECHECK": "true",
+        "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
         "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "false",
         "TENANT_REGISTRY": "{\"alpha\":{\"displayName\":\"Alpha\",\"eulenPartnerId\":\"partner-alpha\",\"splitConfigBindings\":{\"depixSplitAddress\":\"ALPHA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"ALPHA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"ALPHA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"ALPHA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"ALPHA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"ALPHA_EULEN_WEBHOOK_SECRET\"}},\"beta\":{\"displayName\":\"Beta\",\"eulenPartnerId\":\"partner-beta\",\"splitConfigBindings\":{\"depixSplitAddress\":\"BETA_DEPIX_SPLIT_ADDRESS\",\"splitFee\":\"BETA_DEPIX_SPLIT_FEE\"},\"secretBindings\":{\"telegramBotToken\":\"BETA_TELEGRAM_BOT_TOKEN\",\"telegramWebhookSecret\":\"BETA_TELEGRAM_WEBHOOK_SECRET\",\"eulenApiToken\":\"BETA_EULEN_API_TOKEN\",\"eulenWebhookSecret\":\"BETA_EULEN_WEBHOOK_SECRET\"}}}"
       }
