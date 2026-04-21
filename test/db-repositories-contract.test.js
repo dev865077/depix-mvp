@@ -6,7 +6,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { getDatabase } from "../src/db/client.js";
-import { createDepositEvent } from "../src/db/repositories/deposit-events-repository.js";
+import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
 import { createDeposit, DepositOrderUniquenessError } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 
@@ -290,6 +290,13 @@ describe("db repository typed contracts", () => {
     const db = getDatabase(env);
     await ensureSchema(db);
 
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_contract_003",
+      userId: "user_contract_003",
+      productType: "depix",
+    });
+
     const createdEvent = await createDepositEvent(db, {
       tenantId: "alpha",
       orderId: "order_contract_003",
@@ -301,6 +308,18 @@ describe("db repository typed contracts", () => {
       blockchainTxId: null,
       rawPayload: "{\"status\":\"paid\"}",
     });
+    const secondEvent = await createDepositEvent(db, {
+      tenantId: "alpha",
+      orderId: "order_contract_003",
+      depositEntryId: "deposit_entry_contract_003",
+      qrId: null,
+      source: "recheck",
+      externalStatus: "depix_sent",
+      bankTxId: null,
+      blockchainTxId: null,
+      rawPayload: "{\"status\":\"depix_sent\"}",
+    });
+    const listedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_contract_003");
 
     expect(createdEvent).toMatchObject({
       tenantId: "alpha",
@@ -315,5 +334,30 @@ describe("db repository typed contracts", () => {
     });
     expect(typeof createdEvent?.id).toBe("number");
     expect(typeof createdEvent?.receivedAt).toBe("string");
+    expect(listedEvents).toHaveLength(2);
+    expect(listedEvents[0]).toMatchObject({
+      id: secondEvent?.id,
+      tenantId: "alpha",
+      orderId: "order_contract_003",
+      depositEntryId: "deposit_entry_contract_003",
+      qrId: null,
+      source: "recheck",
+      externalStatus: "depix_sent",
+      bankTxId: null,
+      blockchainTxId: null,
+      rawPayload: "{\"status\":\"depix_sent\"}",
+    });
+    expect(listedEvents[1]).toMatchObject({
+      id: createdEvent?.id,
+      tenantId: "alpha",
+      orderId: "order_contract_003",
+      depositEntryId: "deposit_entry_contract_003",
+      qrId: null,
+      source: "webhook",
+      externalStatus: "paid",
+      bankTxId: "bank-contract-003",
+      blockchainTxId: null,
+      rawPayload: "{\"status\":\"paid\"}",
+    });
   });
 });
