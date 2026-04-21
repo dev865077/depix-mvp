@@ -31,14 +31,14 @@ import {
 import { createTelegramOrderDepositNonce } from "./telegram-order-nonce.js";
 
 const TELEGRAM_CONFIRMATION_FAILURE_MESSAGE = [
-  "Nao consegui criar seu Pix agora.",
+  "Não consegui criar seu Pix agora.",
   "Seu pedido foi encerrado com falha para evitar duplicidade silenciosa.",
-  "Envie /start para recomecar com seguranca.",
+  "Envie /start para recomecar com segurança.",
 ].join("\n\n");
 
 const TELEGRAM_CONFIRMATION_RECOVERY_MESSAGE = [
-  "Seu Pix ainda esta em recuperacao segura.",
-  "Nao vou criar outra cobranca enquanto termino de reconciliar este pedido.",
+  "Seu Pix ainda está em recuperação segura.",
+  "Não vou criar outra cobrança enquanto termino de reconciliar este pedido.",
   "Envie confirmar novamente em alguns segundos.",
 ].join("\n\n");
 

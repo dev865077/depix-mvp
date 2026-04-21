@@ -339,17 +339,17 @@ export function buildTelegramHelpReply(tenant, order) {
 export function buildTelegramStatusReply(tenant, order, deposit = null) {
   if (!order) {
     return [
-      `Nao encontrei pedido recente em ${tenant.displayName}.`,
+      `Não encontrei pedido recente em ${tenant.displayName}.`,
       "Envie /start para começar uma compra de DePix com Pix.",
     ].join("\n\n");
   }
 
   const amountLine = Number.isSafeInteger(order.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
-    : "Valor: ainda nao informado";
+    : "Valor: ainda não informado";
   const statusLine = typeof order.status === "string" && order.status.length > 0
     ? `Status interno: ${order.status}`
-    : "Status interno: nao informado";
+    : "Status interno: não informado";
   const header = `Status do seu pedido em ${tenant.displayName}.`;
 
   switch (order.currentStep) {
@@ -358,21 +358,21 @@ export function buildTelegramStatusReply(tenant, order, deposit = null) {
         header,
         amountLine,
         statusLine,
-        "Proximo passo: envie o valor em BRL, por exemplo 100,00.",
+        "Próximo passo: envie o valor em BRL, por exemplo 100,00.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.WALLET:
       return [
         header,
         amountLine,
         statusLine,
-        "Proximo passo: envie seu endereço DePix/Liquid começando com lq1 ou ex1.",
+        "Próximo passo: envie seu endereço DePix/Liquid começando com lq1 ou ex1.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.CONFIRMATION:
       return [
         header,
         amountLine,
         statusLine,
-        "Proximo passo: confirme com sim, confirmar ou ok.",
+        "Próximo passo: confirme com sim, confirmar ou ok.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
       return [
@@ -423,7 +423,7 @@ export function buildTelegramStatusReply(tenant, order, deposit = null) {
         header,
         amountLine,
         statusLine,
-        "Encontrei seu pedido, mas ele esta em um estado que nao pede acao sua agora.",
+        "Encontrei seu pedido, mas ele está em um estado que não pede ação sua agora.",
       ].join("\n");
   }
 }
@@ -560,11 +560,11 @@ function buildTelegramAwaitingPaymentStatusReply(input) {
     input.header,
     input.amountLine,
     input.statusLine,
-    "Seu Pix ja foi gerado. Pague o QR/copia-e-cola enviado nesta conversa e aguarde a confirmação.",
+    "Seu Pix já foi gerado. Pague o QR/copia-e-cola enviado nesta conversa e aguarde a confirmação.",
   ];
 
   if (typeof input.deposit?.expiration === "string" && input.deposit.expiration.length > 0) {
-    lines.push(`Expiracao informada pela cobranca: ${input.deposit.expiration}`);
+    lines.push(`Expiração informada pela cobrança: ${input.deposit.expiration}`);
   }
 
   if (typeof input.deposit?.qrCopyPaste === "string" && input.deposit.qrCopyPaste.length > 0) {
@@ -817,7 +817,7 @@ function buildTelegramCanceledReply() {
 function buildTelegramRestartedReply(tenant) {
   return [
     "Pedido anterior cancelado.",
-    "Vamos recomecar do inicio.",
+    "Vamos recomeçar do início.",
     "",
     buildTelegramAmountPrompt(tenant),
   ].join("\n");
@@ -832,8 +832,8 @@ function buildTelegramRestartedReply(tenant) {
 function buildTelegramRestartFailedReply() {
   return [
     "Seu pedido anterior foi cancelado.",
-    "Nao consegui abrir o novo pedido agora.",
-    "Envie /start para recomecar com seguranca.",
+    "Não consegui abrir o novo pedido agora.",
+    "Envie /start para recomecar com segurança.",
   ].join("\n\n");
 }
 
@@ -845,12 +845,12 @@ function buildTelegramRestartFailedReply() {
  */
 function buildTelegramNoOpenOrderControlReply(action) {
   const actionLine = action === "restart"
-    ? "Nao existe pedido aberto para recomecar."
-    : "Nao existe pedido aberto para cancelar.";
+    ? "Não existe pedido aberto para recomecar."
+    : "Não existe pedido aberto para cancelar.";
 
   return [
     actionLine,
-    "Envie /start para comecar um novo pedido.",
+    "Envie /start para começar um novo pedido.",
   ].join("\n\n");
 }
 
@@ -898,13 +898,13 @@ function buildTelegramDepositExpirationLine(deposit) {
   );
 
   if (!isoMatch) {
-    return `Expiracao: ${expiration}.`;
+    return `Expiração: ${expiration}.`;
   }
 
   const [, year, month, day, hour, minute, offset] = isoMatch;
   const offsetLabel = offset === "Z" ? "UTC" : `UTC${offset}`;
 
-  return `Expiracao: ${day}/${month}/${year} ${hour}:${minute} (${offsetLabel}).`;
+  return `Expiração: ${day}/${month}/${year} ${hour}:${minute} (${offsetLabel}).`;
 }
 
 /**
@@ -930,11 +930,11 @@ function buildTelegramDepositReadyCaption(tenant, order, deposit) {
   return [
     `Pedido confirmado em ${tenant.displayName}.`,
     amountLine,
-    "Seu Pix ja foi gerado.",
+    "Seu Pix já foi gerado.",
     "Pague com o QR acima ou com o Pix copia e cola abaixo.",
     ...(expirationLine ? [expirationLine] : []),
-    "Depois de pagar, aguarde a confirmacao do pedido.",
-    "Se precisar revisar o proximo passo, envie /help.",
+    "Depois de pagar, aguarde a confirmação do pedido.",
+    "Se precisar revisar o próximo passo, envie /help.",
   ].join("\n");
 }
 
@@ -1801,7 +1801,7 @@ async function handleTelegramInlineAction(ctx, input) {
 
       if (!openOrder) {
         await ctx.answerCallbackQuery({
-          text: "Nao encontrei pedido aberto.",
+          text: "Não encontrei pedido aberto.",
         });
         await ctx.reply(buildTelegramAmountPrompt(input.tenant));
         return;
@@ -1812,7 +1812,7 @@ async function handleTelegramInlineAction(ctx, input) {
         && openOrder.currentStep !== ORDER_PROGRESS_STATES.CREATING_DEPOSIT
       ) {
         await ctx.answerCallbackQuery({
-          text: "Pedido ja atualizado.",
+          text: "Pedido já atualizado.",
         });
         await replyTelegramOrderStep(ctx, input, openOrder);
         return;
