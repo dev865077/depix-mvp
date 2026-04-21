@@ -36,6 +36,8 @@ Em `test` e `production`, o projeto usa `Cloudflare Secrets Store` via `secrets_
 
 Por isso, uma lista vazia de secrets classicos no Worker nao deve ser interpretada sozinha como ausencia de segredos no ambiente.
 
+O contrato de tenancy foi endurecido para usar contratos compartilhados em `src/types/` e validacao fail-closed no parser de runtime. O runtime continua responsavel por validar e materializar o registry; os tipos servem como contrato estatico para o restante do codigo.
+
 Para split, o registry usa `splitConfigBindings`:
 
 - `depixSplitAddress`
@@ -80,6 +82,7 @@ Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel p
 - por padrao, novo tenant continua herdando o token global `OPS_ROUTE_BEARER_TOKEN`
 - quando o time quiser isolar esse tenant, declara `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY` e provisiona esse binding secreto no ambiente
 - se o binding tenant-scoped estiver declarado e invalido, a rota falha fechada com `503 ops_route_disabled` ate a configuracao ser corrigida
+- a validacao do registry tambem falha fechada em lookup quando encontra contrato malformado, em vez de continuar com dados parcialmente normalizados
 
 ## Regra operacional
 

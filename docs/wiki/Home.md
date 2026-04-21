@@ -46,6 +46,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o Worker ganhou uma fundacao TypeScript incremental para validacao, sem substituir o runtime autoritativo em `.js`
 - o comando canonico de verficacao de tipos e `npm run typecheck`
 - os tipos gerados do Worker sao verificados separadamente com `npm run cf:types`
+- `npm test` agora usa um runner sequencial para isolar specs Cloudflare e manter a suite deterministica
 
 ## Comece por aqui
 

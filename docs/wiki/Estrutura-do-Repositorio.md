@@ -29,6 +29,10 @@ Borda HTTP canonica:
 
 Runtime, tenants e resolucao de bindings.
 
+### `src/types/`
+
+Contratos de dominio e runtime compartilhados entre o parser de tenancy e as areas que consomem o registry.
+
 ### `src/telegram/`
 
 Bootstrap e cache do runtime Telegram.
@@ -48,6 +52,10 @@ Schema inicial e evolucao multi-tenant.
 ### `test/`
 
 Suite automatizada do Worker e da base operacional.
+
+### `scripts/run-vitest-sequential.mjs`
+
+Runner canonico do `npm test`. Separa specs Node e Cloudflare para manter a suite deterministica.
 
 ### `tsconfig.json`
 
