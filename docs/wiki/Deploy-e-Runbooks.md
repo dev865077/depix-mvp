@@ -98,29 +98,17 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 
 ## Operacao do cron
 
-- para desligar runtime sem deploy de codigo, defina `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false`
-- para remover o trigger no ambiente gerenciado por Wrangler, use `triggers.crons = []`
-- `/health` expõe `configuration.operations.scheduledDepositReconciliation.state` e `ready`
-- estados esperados: `disabled`, `invalid_config`, `missing_database`, `missing_secret` ou `ready`
-- logs estruturados usam os eventos `ops.scheduled_deposit_reconciliation.started`, `deposit_processed`, `deposit_failed`, `tenant_failed`, `tenant_summary`, `summary` e `skipped`
-- validacao antes de merge/deploy: `npm test`, `npm run typecheck`, `npx wrangler deploy --dry-run --env test` e `npx wrangler deploy --dry-run --env production`
+- para desligar runtime sem deploy de codigo, mantenha `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false`
+- em `test`, o cron e versionado no `wrangler.jsonc`; a validacao de rollout deve considerar o caminho do Worker e o estado de `/health`
+- em `production`, o cron permanece ausente por design nesta PR; nao use o ambiente para habilitacao manual antecipada
+- se o scheduler apresentar overlap ou repeticao, verifique primeiro claims antigos em `scheduled_deposit_reconciliation_claims` antes de suspeitar de duplicacao em `deposits`
+- a operacao nao deve usar `OPS_ROUTE_BEARER_TOKEN` para o cron; o gating e feito por flag, D1 e bindings por tenant
+- a leitura de readiness do cron deve vir de `/health.operations.scheduledDepositReconciliation`
 
-## Retry e precedencia
+## Runbook minimo
 
-- esta rota e uma ferramenta manual de suporte para um deposito especifico; nao substitui o webhook principal nem o fallback por janela via `deposits`
-- retry manual depois de `502 deposit_status_unavailable` e permitido
-- retry manual depois de `409 deposit_status_regression`, `409 deposit_qr_id_conflict` ou `409 deposit_qr_id_mismatch` nao deve ser tratado como tentativa cega; primeiro e preciso entender a divergencia
-- quando o agregado local ja estiver concluido por `depix_sent`, o recheck nao aceita um `deposit-status` atrasado que volte com `pending`, `under_review` ou outro estado inferior
-- a notificacao Telegram associada ao estado final deve respeitar idempotencia por transicao visivel e nao repetir a mesma mensagem em recheck subsequente
-
-## Webhook do Telegram
-
-- `GET /ops/:tenantId/telegram/webhook-info` exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
-- `POST /ops/:tenantId/telegram/register-webhook` exige o mesmo bearer operacional
-- `GET /ops/:tenantId/telegram/webhook-info` consulta `getMe` e `getWebhookInfo` com o token real do tenant
-- `GET /ops/:tenantId/telegram/webhook-info` aceita apenas o query param canonico `publicBaseUrl` quando o operador quiser comparar a URL publica esperada
-- `POST /ops/:tenantId/telegram/register-webhook` chama `setWebhook` com `secret_token` do tenant e `allowed_updates=["message"]`
-- no `register-webhook`, `publicBaseUrl` e obrigatoria no corpo JSON; a rota nao infere host automaticamente para evitar registrar o bot contra a origin errada
-- migracao operacional: os endpoints antigos de diagnostico local nao sao mais a ferramenta de suporte para webhook; o contrato canonico agora e sempre `/ops/:tenantId/telegram/*` com bearer operacional e `publicBaseUrl` explicita quando houver comparacao ou mutacao de endpoint
-- em `production`, sempre confirmar explicitamente a base publica desejada antes de chamar `register-webhook`
-- se o ambiente nao materializar `telegramBotToken` ou `telegramWebhookSecretToken`, a rota deve falhar fechado e o runbook nao deve tentar contornar isso com credenciais hardcoded
+1. Confirmar `GET /health`.
+2. Verificar `scheduledDepositReconciliation.state`.
+3. Validar se `test` possui cron ativo e `production` continua sem triggers.
+4. Rodar `npm run typecheck` e `npm test` antes de promover qualquer ajuste de runtime.
+5. Em caso de incidente, revisar logs do Worker e o estado da tabela `scheduled_deposit_reconciliation_claims`.
