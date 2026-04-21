@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { parseConfigFileTextToJson } from "typescript";
 import { describe, expect, it } from "vitest";
 
 type WranglerSecretBinding = {
@@ -18,13 +19,13 @@ type WranglerConfig = {
 const OPS_RECOVERY_ENVS = ["test", "production"] as const;
 
 function readWranglerConfig(): WranglerConfig {
-  const jsonc = readFileSync("wrangler.jsonc", "utf8");
-  const json = jsonc
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
+  const parsedConfig = parseConfigFileTextToJson("wrangler.jsonc", readFileSync("wrangler.jsonc", "utf8"));
 
-  return JSON.parse(json) as WranglerConfig;
+  if (parsedConfig.error) {
+    throw new Error(`Failed to parse wrangler.jsonc: ${String(parsedConfig.error.messageText)}`);
+  }
+
+  return parsedConfig.config as WranglerConfig;
 }
 
 function findSecretBinding(environment: WranglerEnvironment, binding: string): WranglerSecretBinding | undefined {
