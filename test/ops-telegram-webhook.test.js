@@ -115,6 +115,49 @@ describe("ops telegram webhook routes", () => {
         });
       }
 
+      if (url.includes("/getMyCommands")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: [
+            {
+              command: "start",
+              description: "Começar uma compra",
+            },
+            {
+              command: "help",
+              description: "Ver ajuda do fluxo",
+            },
+            {
+              command: "status",
+              description: "Ver pedido atual",
+            },
+            {
+              command: "cancel",
+              description: "Cancelar pedido aberto",
+            },
+          ],
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/getChatMenuButton")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            type: "commands",
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
       throw new Error(`Unexpected Telegram method call: ${url}`);
     });
 
@@ -137,6 +180,25 @@ describe("ops telegram webhook routes", () => {
     expect(body.telegramApi.getMeHttpStatus).toBe(200);
     expect(body.bot.username).toBe("depix_alpha_test_bot");
     expect(body.webhook.url).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
+    expect(body.commands).toEqual([
+      { command: "start", description: "Começar uma compra" },
+      { command: "help", description: "Ver ajuda do fluxo" },
+      { command: "status", description: "Ver pedido atual" },
+      { command: "cancel", description: "Cancelar pedido aberto" },
+    ]);
+    expect(body.menuButton).toEqual({
+      type: "commands",
+      text: null,
+      url: null,
+    });
+    expect(body.expectedPublicSurface.maintained).toHaveLength(4);
+    expect(body.expectedPublicSurface.renamed).toEqual([
+      {
+        previous: "/iniciar",
+        current: "/start",
+        note: "Alias legado suprimido da superfície pública; o runtime ainda aceita a forma antiga por compatibilidade.",
+      },
+    ]);
   });
 
   it("ignores the legacy baseUrl query alias so the ops contract stays canonical", async function assertWebhookInfoCanonicalQueryContract() {
@@ -176,6 +238,32 @@ describe("ops telegram webhook routes", () => {
         });
       }
 
+      if (url.includes("/getMyCommands")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: [],
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/getChatMenuButton")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            type: "commands",
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
       throw new Error(`Unexpected Telegram method call: ${url}`);
     });
 
@@ -196,12 +284,36 @@ describe("ops telegram webhook routes", () => {
     expect(body.expectedWebhookUrl).toBeNull();
   });
 
-  it("registers the tenant webhook with secret token and message-only updates", async function assertWebhookRegistrationSuccess() {
+  it("registers the tenant webhook with secret token, callback updates and the canonical public command surface", async function assertWebhookRegistrationSuccess() {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
 
       if (url.includes("/setWebhook")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/setMyCommands")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/setChatMenuButton")) {
         return new Response(JSON.stringify({
           ok: true,
           result: true,
@@ -219,6 +331,49 @@ describe("ops telegram webhook routes", () => {
           result: {
             url: "https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook",
             pending_update_count: 0,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/getMyCommands")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: [
+            {
+              command: "start",
+              description: "Começar uma compra",
+            },
+            {
+              command: "help",
+              description: "Ver ajuda do fluxo",
+            },
+            {
+              command: "status",
+              description: "Ver pedido atual",
+            },
+            {
+              command: "cancel",
+              description: "Cancelar pedido aberto",
+            },
+          ],
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/getChatMenuButton")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            type: "commands",
           },
         }), {
           status: 200,
@@ -246,7 +401,15 @@ describe("ops telegram webhook routes", () => {
       },
       createWorkerEnv(),
     );
-    const setWebhookPayload = JSON.parse(fetchSpy.mock.calls[0][1]?.body ?? "{}");
+    const requests = fetchSpy.mock.calls.map(function toRequest([url, init]) {
+      return {
+        url: String(url),
+        payload: JSON.parse(init?.body ?? "{}"),
+      };
+    });
+    const setWebhookPayload = requests.find((entry) => entry.url.includes("/setWebhook"))?.payload;
+    const setMyCommandsPayload = requests.find((entry) => entry.url.includes("/setMyCommands"))?.payload;
+    const setChatMenuButtonPayload = requests.find((entry) => entry.url.includes("/setChatMenuButton"))?.payload;
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
@@ -255,7 +418,27 @@ describe("ops telegram webhook routes", () => {
     expect(body.webhook.url).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
     expect(setWebhookPayload.url).toBe("https://depix-mvp-test.dev865077.workers.dev/telegram/alpha/webhook");
     expect(setWebhookPayload.secret_token).toBe("alpha-telegram-secret");
-    expect(setWebhookPayload.allowed_updates).toEqual(["message"]);
+    expect(setWebhookPayload.allowed_updates).toEqual(["message", "callback_query"]);
+    expect(setMyCommandsPayload.commands).toEqual([
+      { command: "start", description: "Começar uma compra" },
+      { command: "help", description: "Ver ajuda do fluxo" },
+      { command: "status", description: "Ver pedido atual" },
+      { command: "cancel", description: "Cancelar pedido aberto" },
+    ]);
+    expect(setChatMenuButtonPayload.menu_button).toEqual({
+      type: "commands",
+    });
+    expect(body.commands).toEqual([
+      { command: "start", description: "Começar uma compra" },
+      { command: "help", description: "Ver ajuda do fluxo" },
+      { command: "status", description: "Ver pedido atual" },
+      { command: "cancel", description: "Cancelar pedido aberto" },
+    ]);
+    expect(body.menuButton).toEqual({
+      type: "commands",
+      text: null,
+      url: null,
+    });
   });
 
   it("rejects webhook info without operator bearer token", async function assertMissingAuth() {

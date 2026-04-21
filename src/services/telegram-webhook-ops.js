@@ -9,6 +9,14 @@
  * - devolver apenas metadados operacionais e respostas redigidas do Telegram
  */
 import { readTenantSecret } from "../config/tenants.js";
+import {
+  buildTelegramPublicCommandsPayload,
+  buildTelegramPublicMenuButtonPayload,
+  buildTelegramPublicSurfaceInventory,
+  summarizeTelegramCommandsResponse,
+  summarizeTelegramMenuButtonResponse,
+  TELEGRAM_ALLOWED_UPDATES,
+} from "../telegram/public-surface.js";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 
@@ -221,9 +229,11 @@ export async function getTelegramWebhookOpsInfo(input) {
   const expectedWebhookUrl = input.publicBaseUrl
     ? buildTelegramWebhookUrl(input.publicBaseUrl, input.tenant.tenantId)
     : null;
-  const [getMeResult, getWebhookInfoResult] = await Promise.all([
+  const [getMeResult, getWebhookInfoResult, getMyCommandsResult, getChatMenuButtonResult] = await Promise.all([
     callTelegramApi(telegramBotToken, "getMe"),
     callTelegramApi(telegramBotToken, "getWebhookInfo"),
+    callTelegramApi(telegramBotToken, "getMyCommands"),
+    callTelegramApi(telegramBotToken, "getChatMenuButton"),
   ]);
 
   return {
@@ -234,9 +244,14 @@ export async function getTelegramWebhookOpsInfo(input) {
     telegramApi: {
       getMeHttpStatus: getMeResult.httpStatus,
       getWebhookInfoHttpStatus: getWebhookInfoResult.httpStatus,
+      getMyCommandsHttpStatus: getMyCommandsResult.httpStatus,
+      getChatMenuButtonHttpStatus: getChatMenuButtonResult.httpStatus,
     },
     bot: summarizeTelegramBotIdentity(getMeResult.body),
     webhook: summarizeTelegramWebhookInfo(getWebhookInfoResult.body),
+    commands: summarizeTelegramCommandsResponse(getMyCommandsResult.body),
+    menuButton: summarizeTelegramMenuButtonResponse(getChatMenuButtonResult.body),
+    expectedPublicSurface: buildTelegramPublicSurfaceInventory(),
   };
 }
 
@@ -268,9 +283,21 @@ export async function registerTelegramWebhookOps(input) {
   const setWebhookResult = await callTelegramApi(telegramBotToken, "setWebhook", {
     url: webhookUrl,
     secret_token: telegramWebhookSecret,
-    allowed_updates: ["message"],
+    allowed_updates: TELEGRAM_ALLOWED_UPDATES,
   });
-  const getWebhookInfoResult = await callTelegramApi(telegramBotToken, "getWebhookInfo");
+  const [setMyCommandsResult, setChatMenuButtonResult] = await Promise.all([
+    callTelegramApi(telegramBotToken, "setMyCommands", {
+      commands: buildTelegramPublicCommandsPayload(),
+    }),
+    callTelegramApi(telegramBotToken, "setChatMenuButton", {
+      menu_button: buildTelegramPublicMenuButtonPayload(),
+    }),
+  ]);
+  const [getWebhookInfoResult, getMyCommandsResult, getChatMenuButtonResult] = await Promise.all([
+    callTelegramApi(telegramBotToken, "getWebhookInfo"),
+    callTelegramApi(telegramBotToken, "getMyCommands"),
+    callTelegramApi(telegramBotToken, "getChatMenuButton"),
+  ]);
 
   return {
     ok: true,
@@ -279,9 +306,16 @@ export async function registerTelegramWebhookOps(input) {
     webhookUrl,
     telegramApi: {
       setWebhookHttpStatus: setWebhookResult.httpStatus,
+      setMyCommandsHttpStatus: setMyCommandsResult.httpStatus,
+      setChatMenuButtonHttpStatus: setChatMenuButtonResult.httpStatus,
       getWebhookInfoHttpStatus: getWebhookInfoResult.httpStatus,
+      getMyCommandsHttpStatus: getMyCommandsResult.httpStatus,
+      getChatMenuButtonHttpStatus: getChatMenuButtonResult.httpStatus,
     },
     registered: true,
     webhook: summarizeTelegramWebhookInfo(getWebhookInfoResult.body),
+    commands: summarizeTelegramCommandsResponse(getMyCommandsResult.body),
+    menuButton: summarizeTelegramMenuButtonResponse(getChatMenuButtonResult.body),
+    expectedPublicSurface: buildTelegramPublicSurfaceInventory(),
   };
 }
