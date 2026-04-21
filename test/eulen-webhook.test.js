@@ -532,6 +532,72 @@ describe("eulen deposit webhook", () => {
     expect(hydratedDeposit?.externalStatus).toBe("depix_sent");
   });
 
+  it("does not mutate unrelated deposits while hydrating an unknown webhook qrId", async function assertUnknownQrIdHydrationIsolation() {
+    await resetDatabaseSchema();
+
+    const db = getDatabase(env);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      userId: "telegram_alpha_001",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_alpha",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: null,
+      orderId: "order_alpha_001",
+      nonce: "nonce_alpha_001",
+      qrCopyPaste: "0002010102122688qr-alpha-001",
+      qrImageUrl: "https://example.com/qr/alpha.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: "qr_alpha_001",
+        status: "depix_sent",
+        expiration: "2026-04-18T04:00:00Z",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      payload: {
+        webhookType: "deposit",
+        qrId: "qr_unknown_001",
+        status: "depix_sent",
+      },
+    });
+    const body = await response.json();
+    const unrelatedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const unrelatedOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(404);
+    expect(body.error.code).toBe("deposit_not_found");
+    expect(unrelatedDeposit?.qrId).toBeNull();
+    expect(unrelatedDeposit?.externalStatus).toBe("pending");
+    expect(unrelatedOrder?.status).toBe("pending");
+    expect(unrelatedOrder?.currentStep).toBe("awaiting_payment");
+    expect(savedEvents).toHaveLength(0);
+  });
+
   it("fails closed when deposit-status returns an invalid external contract", async function assertInvalidDepositStatusContract() {
     await resetDatabaseSchema();
 
@@ -619,7 +685,7 @@ describe("eulen deposit webhook", () => {
     expect(body.error.code).toBe("webhook_dependency_unavailable");
   });
 
-  it("fails explicitly when qrId hydration would collide with another deposit", async function assertQrIdConflict() {
+  it("does not hydrate from a deposit-status qrId that differs from the webhook target", async function assertDifferentQrIdHydrationIsolation() {
     await resetDatabaseSchema();
 
     const db = getDatabase(env);
@@ -696,8 +762,14 @@ describe("eulen deposit webhook", () => {
       },
     });
     const body = await response.json();
+    const unmatchedDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const existingDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_002");
 
-    expect(response.status).toBe(409);
-    expect(body.error.code).toBe("deposit_qr_id_conflict");
+    expect(response.status).toBe(404);
+    expect(body.error.code).toBe("deposit_not_found");
+    expect(unmatchedDeposit?.qrId).toBeNull();
+    expect(unmatchedDeposit?.externalStatus).toBe("pending");
+    expect(existingDeposit?.qrId).toBe("qr_conflict_001");
+    expect(existingDeposit?.externalStatus).toBe("pending");
   });
 });

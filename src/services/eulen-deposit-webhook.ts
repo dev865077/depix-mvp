@@ -517,6 +517,10 @@ async function hydrateMissingQrIdForWebhook(input: {
       continue;
     }
 
+    if (remoteStatus.qrId !== input.webhookQrId) {
+      continue;
+    }
+
     const existingDepositWithQrId = await getDepositByQrId(input.db, input.tenant.tenantId, remoteStatus.qrId);
 
     if (
