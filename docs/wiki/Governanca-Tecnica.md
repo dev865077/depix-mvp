@@ -44,6 +44,8 @@
 - a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
 - contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
 - a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao
+- a conclusao do workflow `CI` deve acordar a lane de Discussion por `workflow_run`, para que a revisao de PR rode depois do resultado canonico de testes sem depender de operador procurando manualmente
+- o evento `workflow_run` nao deve acionar review direto; ele existe para reconciliar Discussions abertas contra o resultado final de `CI / Test`
 - falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
 - quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
 
