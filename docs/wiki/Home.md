@@ -104,6 +104,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 
 - [Ambientes e Segredos](Ambientes-e-Segredos)
 - [Deploy e Runbooks](Deploy-e-Runbooks)
+- [Release 0.1 Readiness](Release-0.1-Readiness)
 
 ### Governanca
 
