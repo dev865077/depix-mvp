@@ -50,6 +50,7 @@ Esta proposta se apoia em quatro referencias principais:
 - [Estrutura-do-Repositorio.md](./Estrutura-do-Repositorio.md)
 - [Contribuicao-e-PRs.md](./Contribuicao-e-PRs.md)
 - [Testes-e-Qualidade.md](./Testes-e-Qualidade.md)
+- [Migracao-TypeScript.md](./Migracao-TypeScript.md)
 - [Validacao-e-Rollback-TypeScript.md](./Validacao-e-Rollback-TypeScript.md)
 - [Ambientes-e-Segredos.md](./Ambientes-e-Segredos.md)
 - [Deploy-e-Runbooks.md](./Deploy-e-Runbooks.md)

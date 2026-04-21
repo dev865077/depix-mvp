@@ -12,6 +12,7 @@
 - PR tecnica nao deve carregar mudanca documental aleatoria
 - PR documental deve ser propria
 - se mudar arquitetura, schema, integracao, operacao ou observabilidade, a documentacao muda na mesma PR
+- se mudar entrypoint, runner, comandos canonicos, contratos de runtime ou excecoes JavaScript restantes, atualizar [Migracao TypeScript](Migracao-TypeScript) na mesma PR
 
 ## Fluxo de issue para PR
 
@@ -65,6 +66,15 @@ Explicitar:
 - o que foi validado
 - o que nao foi validado
 - qual risco residual ficou aberto
+
+## Regra extra para PR TypeScript
+
+- preservar `src/index.ts` como entrypoint canonico do Worker, salvo issue explicita para mudar esse contrato
+- rodar `npm run typecheck` quando alterar `src/**/*.ts`, tipos gerados, entrypoints ou contratos compartilhados
+- rodar `npm run cf:types` quando alterar `wrangler.jsonc`, bindings, `Env` ou configuracao Cloudflare
+- rodar `npm test` quando alterar runtime, scripts, testes, automacoes ou docs que prometem contrato verificavel
+- usar [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript) para ondas sensiveis de bootstrap, rotas, webhooks, deploy e persistencia
+- manter [Migracao TypeScript](Migracao-TypeScript) como fonte de verdade do estado final da epic #186
 
 ## AI PR review gate
 
