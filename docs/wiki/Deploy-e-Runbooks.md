@@ -4,7 +4,7 @@
 
 - `npm run dev`
 - `npm run typecheck`
-- `npm test`
+- `npm run test`
 - `npm run cf:types`
 - `npm run db:migrate:local`
 - `npm run db:query:local`
@@ -89,7 +89,29 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 ## Reconciliação agendada de depositos pendentes
 
 - pre-condicao de rollout: `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`
-- cadencia em `production`: cron `*/15 * * * *`
-- elegibilidade: depositos Telegram pendentes em `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
-- janela maxima: somente depositos atualizados nas ultimas 2 horas entram na selecao automatica
-- limite por rodada: ate 5 depositos por tenant
+- roda apenas em `test` e `production`
+- janela maxima de busca: 2 horas
+- limite por rodada: 5 depositos por tenant
+- fonte de verdade da busca: `deposits` pendentes por tenant
+- efeito esperado: consultar `deposits`, persistir `recheck_deposits_list`, reconciliar por `qrId` e disparar notificacao assincrona quando houver confirmacao visivel
+- a reconciliacao agendada nao exige `OPS_ROUTE_BEARER_TOKEN`, porque nao passa por HTTP
+
+## Contrato operacional da reconciliacao agendada
+
+- sem `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`, o cron faz skip operacional e nao chama Eulen
+- em `test` e `production`, a rotacao ocorre a cada 15 minutos
+- o fluxo continua bounded e idempotente por tenant, para evitar tempestade de chamadas no mesmo conjunto de depositos
+- a habilitacao do cron nao substitui o webhook principal nem o recheck operacional; ela existe como rede de seguranca para depositos pendentes
+
+## Webhook Telegram operacional
+
+- `GET /ops/:tenantId/telegram/webhook-info` retorna o estado da configuracao do webhook Telegram do tenant
+- `POST /ops/:tenantId/telegram/register-webhook` registra o webhook canonico do Telegram para o tenant
+- ambas as rotas exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
+- o contrato operacional aceita o webhook canonico com `allowed_updates` incluindo `callback_query`
+- os comandos publicos canonicos do Telegram para o setup sao `/start`, `/help`, `/status` e `/cancel`
+
+## Regras de manutencao
+
+- se uma mudanca alterar ambiente, segredo, integracao, contrato operacional ou runbook de rollout, esta pagina deve ser atualizada na mesma PR
+- nao documentar endpoints, flags ou segredos que nao estejam no codigo ou no contrato operativo verificado
