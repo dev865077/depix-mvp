@@ -13,6 +13,8 @@
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:query:local": "wrangler d1 execute DB --local",
+    "telegram:preflight": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-preflight.ts",
+    "telegram:real-run": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-runner.ts",
     "deploy:test": "wrangler deploy --env test",
     "deploy:production": "wrangler deploy --env production"
   },

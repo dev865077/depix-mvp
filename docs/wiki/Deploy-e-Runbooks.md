@@ -8,6 +8,8 @@
 - `npm run cf:types`
 - `npm run db:migrate:local`
 - `npm run db:query:local`
+- `npm run telegram:preflight -- --env <test|production> --tenant alpha|beta --out artifacts/telegram-real-flow/preflight.json`
+- `npm run telegram:real-run -- --env <test|production> --tenant alpha|beta --amount-brl 3 --wallet <lq1|ex1> --confirm-real --out artifacts/telegram-real-flow/real-run.json`
 - `npm run deploy:test`
 - `npm run deploy:production`
 - `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO] [--order-id ORDER_ID] [--deposit-entry-id DEPOSIT_ENTRY_ID] [--limit N] [--require-split-proof]`
