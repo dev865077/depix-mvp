@@ -1,216 +1,246 @@
 # DePix MVP
 
-O DePix MVP é uma plataforma multi-tenant de bot Telegram construída sobre um único `Cloudflare Worker` e um único banco `D1`. O projeto existe para operar fluxos por parceiro com isolamento lógico por `tenantId`, infraestrutura compartilhada e um modelo documental em que o repositório continua sendo a fonte de verdade técnica.
+`depix-mvp` e uma plataforma multi-tenant de bot Telegram executada sobre um unico `Cloudflare Worker` e um unico banco `Cloudflare D1`. O repositorio ja contem a fundacao real do sistema: runtime do Telegram, integracao com Eulen, persistencia, deploy por ambiente, wiki versionada e automacoes de engenharia.
 
-Este repositório já está além de uma base vazia. A borda HTTP, o roteamento por tenant, o runtime do Telegram, a fundação do webhook da Eulen, a persistência em `D1` e a estrutura de deploy já estão no `main`. O que falta não é direção arquitetural; é a conclusão das últimas camadas funcionais do fluxo de produto.
+O ponto correto de leitura e este: o projeto nao esta em fase de ideia, mas tambem nao deve ser tratado como produto final completo. O `main` ja sustenta a base operacional e boa parte do fluxo funcional do MVP, enquanto a wiki em `docs/wiki/` concentra a camada institucional, de onboarding e de runbooks.
 
-## O Que Este Repositório Contém
+## Leitura rapida
 
-- um único runtime em `Cloudflare Workers`
-- entrypoint canônico em `src/index.ts`
-- borda HTTP em `Hono`
-- runtime de bot em `grammY`
-- resolução de tenant e segredos por tenant
-- persistência em `D1` para `orders`, `deposits` e `deposit_events`
-- integração com a Eulen para criação e confirmação de depósitos
-- ambientes de `test` e `production` no Cloudflare
-- documentação técnica versionada em `docs/`
+- produto atual: bot Telegram multi-tenant para fluxo `DePix`
+- stack principal: `Cloudflare Workers`, `Hono`, `grammY`, `XState`, `D1`, `TypeScript`
+- integracoes externas centrais: Telegram e Eulen
+- ambientes declarados: `local`, `test`, `production`
+- documentacao profunda: [docs/wiki/Home.md](./docs/wiki/Home.md)
 
-## Estado Atual do Sistema
+## O que este sistema e
 
-O `main` já inclui:
+O `depix-mvp` existe para permitir que parceiros operem o fluxo `DePix` em uma arquitetura compartilhada, com isolamento logico por `tenantId`, segredos fora do codigo e um unico runtime de borda.
 
-- despacho real do webhook do Telegram para o runtime do tenant
-- fluxo inicial de resposta do Telegram para `/start`, texto comum e updates não suportados
-- logs estruturados de outbound do Telegram com mapeamento explícito de erro
-- webhook principal da Eulen com validação, idempotência base e persistência
-- contexto de requisição multi-tenant ao longo do Worker
-- modelo de segredos por tenant com `Cloudflare Secrets Store` em `test` e `production`
+Hoje o sistema cobre a vertical principal do MVP:
 
-Ainda não está completo no `main`:
+- recebe o usuario no Telegram
+- conduz o pedido inicial por conversa
+- cria a cobranca na Eulen
+- persiste `orders`, `deposits` e `deposit_events`
+- confirma pagamento por webhook
+- oferece recheck e fallback operacional
 
-- o fluxo conversacional completo do bot
-- o caminho operacional completo de recheck
-- `XState` ja materializa e persiste o pedido inicial em `draft`, mas a progressao conversacional completa ainda nao foi ligada ao bot
+## O que este sistema nao e
 
-A leitura correta do projeto é simples: a fundação da plataforma já existe, e o trabalho restante é a evolução controlada do fluxo de negócio.
+- nao e um checkout generico pronto para qualquer catalogo
+- nao e um SaaS completo com painel administrativo
+- nao e uma arquitetura distribuida com varios servicos independentes
+- nao e a visao futura inteira da plataforma
 
-## Arquitetura em Uma Leitura
+A direcao de longo prazo fica separada em [docs/wiki/Visao-Futura-da-Plataforma.md](./docs/wiki/Visao-Futura-da-Plataforma.md), para nao misturar o MVP atual com a ambicao futura do produto.
+
+## Estado atual do `main`
+
+O `main` ja inclui:
+
+- borda HTTP real em `Hono`
+- runtime Telegram em `grammY` com despacho real de webhook
+- normalizacao fail-closed do inbound do Telegram
+- progresso inicial do pedido com `XState`
+- persistencia em `D1` para `orders`, `deposits` e `deposit_events`
+- integracao com a Eulen para criacao e confirmacao de depositos
+- recheck operacional e fallback por janela
+- notificacao assincrona no Telegram quando a conciliacao muda o estado visivel do pedido
+- deploy por ambiente em `test` e `production`
+- automacoes de triagem/planning/refinement de issues e review de PR
+
+O `main` ainda nao representa um produto final completo. A leitura correta e:
+
+- a fundacao tecnica e operacional ja existe
+- a jornada funcional principal do bot ja avancou bastante
+- ainda ha fatias de produto, observabilidade e endurecimento operacional para fechar o MVP publico com conforto
+
+## Principais capacidades atuais
+
+### Runtime e arquitetura
+
+- um unico Worker principal em `src/index.ts`
+- um unico banco principal em `D1`
+- isolamento logico por `tenantId`
+- contratos compartilhados em TypeScript para runtime, rotas e persistencia
+
+### Fluxo Telegram
+
+- `/start` inicia ou retoma pedido aberto
+- `/help` responde sem criar pedido novo
+- etapa `amount` interpreta BRL de forma conservadora
+- etapa `wallet` valida enderecos DePix/Liquid
+- etapa `confirmation` cria deposito real na Eulen
+- `/cancel`, `cancelar` e `recomecar` controlam pedidos abertos com seguranca
+- `/status` consulta o pedido relevante sem mutar o agregado
+
+### Fluxo Eulen e conciliacao
+
+- criacao de deposito com split por tenant
+- webhook principal de deposito
+- recheck por `deposit-status`
+- fallback por `deposits`
+- persistencia auditavel de eventos de deposito
+
+### Engenharia e operacao
+
+- `npm test` com runner sequencial para specs Node e Cloudflare
+- `npm run typecheck` para contrato TypeScript
+- `npm run cf:types` para tipos gerados do Worker
+- wiki espelhada e versionada em `docs/wiki/`
+
+## Arquitetura em leitura rapida
 
 ```mermaid
 flowchart LR
-    U["Usuário"] --> TG["Telegram"]
+    U["Usuario"] --> TG["Telegram"]
     TG --> W["Cloudflare Worker"]
 
-    subgraph Worker["Runtime único"]
+    subgraph Worker["Runtime unico"]
         H["Hono"]
         G["grammY"]
-        O["Serviços de pedido e depósito"]
-        WH["Handlers de webhook"]
-        RC["Caminho de recheck"]
+        X["XState"]
+        O["Order / Deposit services"]
+        WH["Webhook handlers"]
+        OPS["Recheck / fallback ops"]
     end
 
     W --> DB["Cloudflare D1"]
     W --> E["Eulen API"]
-    E -->|webhook de depósito| W
+    E -->|webhook de deposito| W
 ```
 
-Princípios centrais:
+Principios centrais:
 
-- um único runtime principal
-- um único banco principal
-- isolamento lógico por `tenantId`
-- segredos fora do código
-- contratos HTTP explícitos nas bordas
-- evolução incremental sem proliferar serviços antes da hora
+- um unico runtime principal
+- um unico banco principal
+- isolamento logico por `tenantId`
+- segredos fora do codigo
+- contratos HTTP explicitos nas bordas
+- evolucao incremental sem proliferar servicos antes da hora
 
-## Estrutura do Repositório
+## Estrutura do repositorio
 
 ```text
-src/                  Código da aplicação, rotas, runtime, serviços e config
-test/                 Testes automatizados
-migrations/           Schema e migrações do D1
-docs/                 Documentação técnica versionada
-docs/wiki/            Espelho reviewável da wiki do projeto
-.github/workflows/    CI e automações do repositório
-wrangler.jsonc        Configuração do Worker no Cloudflare
+src/                  Aplicacao, rotas, runtime, servicos, config e tipos
+test/                 Suite automatizada
+migrations/           Schema e migracoes do D1
+docs/wiki/            Wiki espelhada e versionada
+.github/workflows/    CI e automacoes do repositorio
+scripts/              Scripts operacionais e de suporte
+wrangler.jsonc        Configuracao do Worker e dos ambientes
 ```
 
-## Começando
+Pontos de entrada principais:
 
-### Pré-requisitos
+- `src/index.ts`: bootstrap canonico do Worker
+- `src/app.ts`: composicao do app `Hono`
+- `src/routes/*.ts`: borda HTTP central
+- `src/telegram/`: runtime e fluxo do Telegram
+- `src/clients/eulen-client.ts`: client principal da Eulen
+
+## Comecando rapido
+
+### Pre-requisitos
 
 - Node.js
 - npm
-- acesso ao Cloudflare com `wrangler`
-- segredos locais em `.dev.vars` para desenvolvimento fora dos ambientes remotos
+- `wrangler` via dependencias do projeto
+- `.dev.vars` para desenvolvimento local
+- acesso aos segredos reais apenas quando o objetivo for operar `test` ou `production`
 
-### Instalação
+### Instalacao
 
 ```bash
 npm install
 ```
 
-### Execução local
+### Desenvolvimento local
 
 ```bash
 npm run dev
 ```
 
-### Testes
+### Comandos essenciais
 
 ```bash
 npm test
-```
-
-### Verificação de tipos
-
-```bash
 npm run typecheck
-```
-
-### Geração de tipos do Worker
-
-```bash
 npm run cf:types
-```
-
-### Migrações locais do D1
-
-```bash
 npm run db:migrate:local
+npm run db:query:local
 ```
 
-## Deploy
+## Ambientes, segredos e deploy
 
-Test:
-
-```bash
-npm run deploy:test
-```
-
-Production:
-
-```bash
-npm run deploy:production
-```
-
-O projeto declara três ambientes em `wrangler.jsonc`:
+Ambientes declarados em `wrangler.jsonc`:
 
 - `local`
 - `test`
 - `production`
 
-`test` e `production` usam `Cloudflare Secrets Store`. O desenvolvimento local continua usando `.dev.vars`.
+Regras importantes:
 
-## Segredos e Configuração por Tenant
+- `local` usa `.dev.vars`
+- `test` e `production` usam `Cloudflare Secrets Store`
+- segredos financeiros e tokens nao devem morar em codigo ou `vars` versionadas
 
-O registro não sensível fica em `TENANT_REGISTRY`. Cada tenant aponta para nomes de bindings secretos, e o runtime materializa os valores reais em tempo de execução.
-
-Os segredos por tenant incluem:
+Segredos por tenant cobrem:
 
 - token do bot Telegram
-- secret do webhook do Telegram
+- secret do webhook Telegram
 - token da Eulen
 - secret do webhook da Eulen
-- endereço DePix/Liquid de split
-- fee de split no formato esperado pela Eulen, como `1.00%`
+- endereco DePix/Liquid de split
+- fee de split no formato esperado pela Eulen
 
-Esses dados não devem morar em código versionado, `vars` operacionais hardcoded ou arquivos reais commitados.
+Deploys canonicos:
 
-## Integrações Externas
+```bash
+npm run deploy:test
+npm run deploy:production
+```
+
+Hosts publicos canonicos:
+
+- `test`: `https://depix-mvp-test.dev865077.workers.dev`
+- `production`: `https://depix-mvp-production.dev865077.workers.dev`
+
+## Integracoes externas
 
 ### Telegram
 
-O Telegram é o canal de entrada do usuário. Hoje o repositório suporta:
-
-- um bot por tenant
-- um webhook por tenant
-- despacho real do webhook para `grammY`
-- fluxo inicial de resposta para `/start`, texto e updates fora do escopo principal
+O Telegram e o canal de entrada do usuario. O sistema trabalha com um bot por tenant, um webhook por tenant e runtime real em `grammY`.
 
 ### Eulen
 
-A Eulen é responsável pela criação da cobrança DePix e pela confirmação do pagamento. O repositório já inclui:
+A Eulen e a integracao responsavel por criar a cobranca `DePix`, devolver QR/copiar-e-colar, expor `deposit-status`, listar `deposits` e enviar o webhook principal de confirmacao.
 
-- validação do webhook
-- tratamento base de idempotência
-- atualização persistida dos agregados de depósito
+## Documentacao e wiki
 
-O webhook de depósito é o caminho principal. O fallback operacional cobre `deposit-status` por depósito e `deposits` por janela curta. Cada rota operacional tem flag própria de rollout: `ENABLE_OPS_DEPOSIT_RECHECK` para recheck pontual e `ENABLE_OPS_DEPOSITS_FALLBACK` para reconciliação por janela.
-
-## Mapa de Documentação
-
-Use este `README` como ponto de entrada rápido. Use a wiki espelhada e a documentação técnica para profundidade.
+Este `README` e a camada de entrada. A wiki e a camada de profundidade.
 
 Comece por aqui:
 
 - [docs/wiki/Home.md](./docs/wiki/Home.md)
 - [docs/wiki/Leitura-Inicial.md](./docs/wiki/Leitura-Inicial.md)
+- [docs/wiki/Visao-Geral-do-Produto.md](./docs/wiki/Visao-Geral-do-Produto.md)
 - [docs/wiki/Arquitetura-Geral.md](./docs/wiki/Arquitetura-Geral.md)
-- [docs/wiki/Integracoes-Externas.md](./docs/wiki/Integracoes-Externas.md)
+- [docs/wiki/Estrutura-do-Repositorio.md](./docs/wiki/Estrutura-do-Repositorio.md)
 - [docs/wiki/Ambientes-e-Segredos.md](./docs/wiki/Ambientes-e-Segredos.md)
+- [docs/wiki/Integracoes-Externas.md](./docs/wiki/Integracoes-Externas.md)
+- [docs/wiki/Deploy-e-Runbooks.md](./docs/wiki/Deploy-e-Runbooks.md)
 - [docs/wiki/Testes-e-Qualidade.md](./docs/wiki/Testes-e-Qualidade.md)
-- [docs/wiki/Migracao-TypeScript.md](./docs/wiki/Migracao-TypeScript.md)
-- [docs/wiki/Validacao-e-Rollback-TypeScript.md](./docs/wiki/Validacao-e-Rollback-TypeScript.md)
 
-Regras documentais:
+## Regras de interpretacao da documentacao
 
-- o repositório é a fonte de verdade técnica
-- a wiki espelhada é a camada institucional e navegável
-- `docs/` é a casa canônica da documentação técnica versionada
-- documentação deve evoluir na mesma PR em que código, schema, integração ou operação mudarem de forma relevante
+- o repositorio e a fonte de verdade tecnica
+- a wiki e a camada institucional e navegavel
+- quando houver diferenca entre estado atual e arquitetura-alvo, isso deve ficar explicito
+- se uma afirmacao nao puder ser sustentada pelo `main`, ela nao deve entrar como fato
 
-## Padrão de Trabalho
+## Estado do MVP e limites atuais
 
-Este repositório foi desenhado para evoluir de forma incremental, mas não informal. Mudanças novas devem preservar:
+O projeto ja sustenta desenvolvimento incremental serio, smoke tests reais e operacao controlada por ambiente. Ainda assim, a leitura correta nao e `produto pronto`; e `base operacional concreta com fechamento progressivo das ultimas fatias do MVP`.
 
-- comportamento seguro por tenant
-- logging operacional explícito
-- disciplina no tratamento de segredos
-- testes proporcionais ao risco da mudança
-- atualização documental sempre que o sistema mudar de maneira relevante
-
-## Resumo
-
-O DePix MVP já tem a forma de uma plataforma real: roteamento multi-tenant, runtime do Telegram, integração com Eulen, persistência em `D1` e estrutura de deploy em Cloudflare já estão no lugar. O trabalho à frente é concluir o fluxo de produto em cima de uma fundação concreta, não inventar essa fundação do zero.
+Se o objetivo for onboarding rapido, use este `README` e siga para a wiki. Se o objetivo for validar comportamento, contratos ou operacao, confira o codigo e os runbooks correspondentes em `docs/wiki/`.
