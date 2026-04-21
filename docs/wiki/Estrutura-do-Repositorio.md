@@ -65,7 +65,7 @@ Suite automatizada do Worker e da base operacional.
 
 ### `scripts/run-vitest-sequential.mjs`
 
-Runner canonico do `npm test`. Separa specs Node e Cloudflare para manter a suite deterministica.
+Runner canonico do `npm test`. Separa specs Node e Cloudflare para manter a suite deterministica e agora descobre `*.test.js` e `*.test.ts`.
 
 ### `tsconfig.json`
 
