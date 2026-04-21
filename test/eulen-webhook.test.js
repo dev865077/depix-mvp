@@ -136,6 +136,25 @@ afterEach(function restoreWebhookMocks() {
 });
 
 describe("eulen deposit webhook", () => {
+  it("answers browser probes on the canonical webhook URL without route_not_found", async function assertWebhookProbe() {
+    const app = createApp();
+    const response = await app.request(
+      "https://example.com/webhooks/eulen/alpha/deposit",
+      { method: "GET" },
+      createWorkerEnv(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(405);
+    expect(body.tenantId).toBe("alpha");
+    expect(body.error.code).toBe("webhook_method_not_allowed");
+    expect(body.error.message).toContain("expects POST");
+    expect(body.error.details).toMatchObject({
+      expectedMethod: "POST",
+      receivedMethod: "GET",
+    });
+  });
+
   it("preserves terminal-safe order fields while protecting terminal currentStep", function assertTerminalSafeOrderPatch() {
     const patch = reconcileOrderPatch(
       {
