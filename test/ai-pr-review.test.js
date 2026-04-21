@@ -2533,11 +2533,15 @@ describe("ai pr review discussion rendering", () => {
       "        id: discussion-pr-head",
       "        if: github.event_name == 'discussion_comment'",
       "        run: |",
+      "          if [ -z \"$pr_number\" ]; then",
+      "            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"",
+      "            exit 1",
+      "          fi",
       "          head_sha=\"$(gh api \"repos/${REPOSITORY}/pulls/${pr_number}\" --jq '.head.sha')\"",
       "      - name: Checkout repository",
       "        uses: actions/checkout@v4",
       "        with:",
-      "          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha }}",
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha }}",
       "      - name: Wait for canonical CI / Test conclusion",
       "        env:",
       "          AI_PR_REVIEW_MODE: await_ci",
@@ -2553,8 +2557,12 @@ describe("ai pr review discussion rendering", () => {
       "",
     ))).toBe(false);
     expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
-      "steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha",
+      "steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha",
       "github.sha",
+    ))).toBe(false);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
+      "          if [ -z \"$pr_number\" ]; then\n            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"\n            exit 1\n          fi\n",
+      "",
     ))).toBe(false);
 
     const evidence = buildAutomationEvidenceContext({

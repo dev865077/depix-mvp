@@ -3356,13 +3356,19 @@ export function workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow) {
 export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
   const discussionCommentIndex = prReviewWorkflow.indexOf("discussion_comment:");
   const resolverIndex = prReviewWorkflow.indexOf("Resolve discussion pull request head");
+  const missingPullRequestGuardIndex = prReviewWorkflow.indexOf("Could not resolve the linked pull request");
+  const resolverFailureIndex = prReviewWorkflow.indexOf("exit 1", missingPullRequestGuardIndex);
   const pullRequestApiIndex = prReviewWorkflow.indexOf('gh api "repos/${REPOSITORY}/pulls/${pr_number}"');
-  const checkoutRefIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha");
+  const checkoutRefIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha");
+  const unsafeGithubShaFallbackIndex = prReviewWorkflow.indexOf("|| github.sha", checkoutRefIndex);
 
   return discussionCommentIndex >= 0
     && resolverIndex > discussionCommentIndex
+    && missingPullRequestGuardIndex > resolverIndex
+    && resolverFailureIndex > missingPullRequestGuardIndex
     && pullRequestApiIndex > resolverIndex
-    && checkoutRefIndex > pullRequestApiIndex;
+    && checkoutRefIndex > pullRequestApiIndex
+    && unsafeGithubShaFallbackIndex < 0;
 }
 
 /**

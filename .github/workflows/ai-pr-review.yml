@@ -53,8 +53,8 @@ jobs:
           ${DISCUSSION_BODY}"
           pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
           if [ -z "$pr_number" ]; then
-            echo "sha=" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Could not resolve the linked pull request from the Discussion title/body."
+            exit 1
           fi
           head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
           echo "sha=${head_sha}" >> "$GITHUB_OUTPUT"
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -104,8 +104,8 @@ jobs:
           ${DISCUSSION_BODY}"
           pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
           if [ -z "$pr_number" ]; then
-            echo "sha=" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Could not resolve the linked pull request from the Discussion title/body."
+            exit 1
           fi
           head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
           echo "sha=${head_sha}" >> "$GITHUB_OUTPUT"
@@ -114,7 +114,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -157,8 +157,8 @@ jobs:
           ${DISCUSSION_BODY}"
           pr_number="$(printf '%s\n' "$discussion_text" | sed -nE 's/.*\[PR #([0-9]+)\].*/\1/p' | head -n 1)"
           if [ -z "$pr_number" ]; then
-            echo "sha=" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::Could not resolve the linked pull request from the Discussion title/body."
+            exit 1
           fi
           head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
           echo "sha=${head_sha}" >> "$GITHUB_OUTPUT"
@@ -167,7 +167,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
