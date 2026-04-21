@@ -1,26 +1,22 @@
 # Release 0.1 Readiness
 
-Este documento define o gate operacional minimo para expor a `0.1` ao publico. Ele responde tres perguntas:
+Esta pagina define o gate operacional minimo para expor a release `0.1` ao publico.
 
-- o que precisa estar verde antes do rollout
-- quais evidencias provam que o fluxo funcionou
-- como operar incidentes sem adivinhar estado financeiro
+## Gate de release
 
-## Gate curto de release
+O rollout fica bloqueado se qualquer um destes pontos nao estiver valido no ambiente alvo:
 
-Bloqueia rollout:
-
-- `GET /health` nao retorna `status=ok` no ambiente alvo
-- tenant alvo aparece sem Eulen, secrets ou split configurado
-- webhook Telegram aponta para host diferente do host canonico do ambiente
-- webhook Eulen nao esta registrado no host canonico do ambiente
-- `npm test` ou `npm run typecheck` falha no `main`
+- `GET /health` nao retorna `status=ok`
+- tenant alvo sem Eulen, secrets ou split configurado
+- webhook Telegram apontando para host diferente do host canonico do ambiente
+- webhook Eulen nao registrado no host canonico do ambiente
+- `npm test` ou `npm run typecheck` falhando no `main`
 - migrations D1 pendentes ou indisponiveis
-- compra real pequena nao chega a `orders.status=paid`, `orders.current_step=completed` e `deposits.external_status=depix_sent`
+- compra real pequena nao chega aos estados esperados de pedido e deposito
 - split proof nao chega a `proved` quando o rollout exige split
 - qualquer divergencia nao explicada entre `orders`, `deposits` e `deposit_events`
 
-Pode ficar para `0.2` se houver runbook e aviso operacional:
+Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
 - dashboard administrativo
 - cron automatico em production
@@ -59,7 +55,7 @@ node scripts/collect-qr-flow-evidence.mjs \
 
 ## Linha do tempo minima por pedido
 
-Para cada pedido real, a evidencia deve conseguir reconstruir:
+A evidencia deve permitir reconstruir, para cada pedido real:
 
 - `requestId` de health/preflight
 - tenant e host canonico usados
@@ -73,153 +69,90 @@ Para cada pedido real, a evidencia deve conseguir reconstruir:
 - `orders.current_step`
 - `deposits.external_status`
 - `deposit_events.source`
-- resposta visivel no Telegram
-
-Se algum identificador faltar, a issue de validacao deve dizer explicitamente se o upstream nao enviou o dado ou se o runtime perdeu rastreabilidade.
+- timestamp da criacao
+- timestamp da confirmacao ou do erro
+- timestamp da notificacao Telegram, quando houver
 
 ## Logs e eventos esperados
 
-| Etapa | Evento/log esperado | Contexto minimo |
-| --- | --- | --- |
-| Entrada HTTP | `request.received` | `tenantId`, `requestId`, `method`, `path` |
-| Saida HTTP | `request.completed` | `tenantId`, `requestId`, `status`, `durationMs` |
-| Falha HTTP | `request.failed` | `requestId`, erro controlado |
-| Telegram ignorado | `telegram.webhook.ignored` | `tenantId`, `requestId`, motivo |
-| Telegram dispatch | `telegram.webhook.dispatching` / `telegram.webhook.dispatched` | `tenantId`, `requestId` |
-| Telegram erro | `telegram.webhook.failed` | `tenantId`, `requestId`, `code` |
-| Confirmacao Eulen | `webhook.eulen.processed` | `tenantId`, `requestId`, `depositEntryId`, `qrId`, `externalStatus` |
-| Webhook duplicado | `webhook.eulen.duplicate_ignored` / `webhook.eulen.duplicate_repaired` | `tenantId`, `depositEntryId`, `eventId` |
-| Webhook rejeitado | `webhook.eulen.secret_rejected` | `tenantId`, `requestId`, motivo |
-| Recheck | `ops.deposit_recheck.processed` | `tenantId`, `depositEntryId`, `orderId`, `qrId`, `externalStatus` |
-| Fallback por lista | `ops.deposits_fallback.processed` | `tenantId`, janela, contadores |
-| Notificacao enviada | `telegram.payment_notification.sent` | `tenantId`, `orderId`, `depositEntryId` |
-| Notificacao skip/falha | `telegram.payment_notification.skipped` / `telegram.payment_notification.failed` | `tenantId`, `orderId`, motivo ou `code` |
-| Cron test | `ops.scheduled_deposit_reconciliation.*` | `tenantId`, `scheduledTime`, contadores |
+Por etapa, a operacao espera conseguir correlacionar:
+
+- preflight: `GET /health`
+- criacao: pedido e deposito persistidos em D1
+- webhook: evento de confirmacao da Eulen e atualizacao dos agregados
+- recheck: evento auditavel de reconciliacao quando o webhook nao bastar
+- fallback: evento auditavel de reconciliacao por janela curta
+- notificacao: envio ou skip/failed da mensagem Telegram, com motivo explicito
 
 ## Catalogo de erros que bloqueiam rollout
 
-| Codigo ou sinal | Significado | Acao |
-| --- | --- | --- |
-| `invalid_tenant_registry` | `TENANT_REGISTRY` invalido | abortar rollout e corrigir config |
-| `ops_route_disabled` | recheck indisponivel | abortar se recovery for necessario |
-| `ops_authorization_required` | chamada `/ops` sem bearer | corrigir operador/comando |
-| `ops_authorization_invalid` | bearer errado | parar tentativa e revisar segredo |
-| `telegram_invalid_payload` | Telegram enviou payload invalido ou contrato que o runtime rejeitou | abrir issue se reproduzivel |
-| `webhook_dependency_unavailable` | segredo/token Eulen ausente para webhook | abortar rollout |
-| `invalid_webhook_secret` | Eulen esta chamando com secret errado | registrar webhook novamente com o secret correto |
-| `tenant_mismatch` | `partnerId` nao bate com tenant | abortar e revisar registry/Eulen |
-| `deposit_not_found` | webhook/recheck nao encontrou deposito local | verificar `qrId`, `depositEntryId` e janela de criacao |
-| `deposit_qr_id_conflict` | `qrId` remoto pertence a outro deposito | abortar e investigar integridade |
-| `deposit_qr_id_mismatch` | Eulen divergiu do `qrId` ja correlacionado | abortar e abrir suporte |
-| `deposit_status_regression` | Eulen tentou regredir agregado terminal | nao mutar; abrir incidente |
-| `deposit_status_invalid_response` | Eulen respondeu sem `status` utilizavel | abrir suporte se persistir |
-| `deposit_status_unavailable` | `deposit-status` falhou | tentar fallback por lista; se falhar, suporte |
-| `deposits_fallback_processed` com falhas | fallback processou parcialmente | revisar cada linha antes de concluir rollout |
-| `telegram_notification_failed` | usuario pode nao ter recebido conclusao | estado financeiro pode estar ok, mas rollout publico exige mitigacao |
-| `splitProof.status != proved` | split nao comprovado | bloquear release com split obrigatorio |
+Enquanto estes erros estiverem ocorrendo, o rollout nao deve seguir:
 
-## Runbook de incidentes
+- health fora de `ok`
+- webhook canonico ausente ou apontando para host incorreto
+- secrets ou bindings obrigatorios ausentes
+- divergencia nao explicada entre pedido, deposito e evento
+- resposta invalida da Eulen para criacao, webhook ou recheck
+- pedido que nao chega ao estado terminal esperado apos pagamento real controlado
+- split audit nao comprovado quando exigido
+- notificacao Telegram quebrada sem runbook de operacao
 
-### Webhook Eulen ausente ou host errado
+## Runbooks de incidente
 
-Sinais:
+### Webhook
 
-- Eulen informa erro de POST para host que nao e canonico
-- `deposit_events` nao tem `source=webhook`
-- `deposits.external_status` fica `pending` apos pagamento confirmado fora do app
+Se o webhook falhar, confirmar:
 
-Acao:
+1. host canonico correto
+2. webhook registrado no tenant correto
+3. segredo e autorizacao validos
+4. payload recebendo o contrato esperado
 
-1. confirmar host canonico: `https://depix-mvp-production.dev865077.workers.dev/webhooks/eulen/<tenantId>/deposit`
-2. validar endpoint com secret correto e payload de probe sem mutar deposito real
-3. registrar o webhook correto na Eulen pelo comando oficial `/registerwebhook deposit <url> <secret>`
-4. se o pagamento ja ocorreu, reconciliar o deposito especifico por `POST /ops/:tenantId/recheck/deposit`
-5. coletar evidencia com `--require-split-proof` se o pagamento tinha split
+Se necessario, usar recheck antes de reprocessar.
 
-### Status divergente entre `orders` e `deposits`
+### Estado divergente
 
-Sinais:
+Se `orders`, `deposits` e `deposit_events` divergirem:
 
-- `deposits.external_status=depix_sent`
-- `orders.status` ainda `pending`
-- `orders.current_step` ainda `awaiting_payment`
-
-Acao:
-
-1. verificar `deposit_events` do `depositEntryId`
-2. se houver evento financeiro terminal, reprocessar pelo webhook idempotente ou recheck especifico
-3. confirmar que `orders.status=paid` e `orders.current_step=completed`
-4. abrir bug se o reparo depender de mutacao manual
+1. identificar o `order_id` e `deposit_entry_id`
+2. comparar evento mais recente com o estado persistido
+3. usar recheck ou fallback conforme o tipo de lacuna
+4. nao adivinhar estado financeiro
 
 ### QR expirado
 
-Sinais:
+Se o QR expirar antes da confirmacao:
 
-- Eulen retorna `expired`
-- usuario tenta pagar depois da expiracao
-- `/status` mostra pedido terminal ou sem pagamento
+1. marcar a evidencia como terminal
+2. confirmar se o pedido permaneceu seguro
+3. nao reabrir manualmente o pedido sem trilha
 
-Acao:
+### Duplicados
 
-1. nao reabrir o mesmo pedido terminal
-2. orientar usuario a iniciar novo pedido com `/start` ou `recomecar`
-3. validar que o pedido expirado nao aceita novas mutacoes de valor/endereco
+Se houver duplicidade de confirmacao:
 
-### Duplicidade ou replay
+1. tratar como problema de idempotencia
+2. checar `deposit_events` e a correlacao do deposito
+3. validar se o evento repetido foi apenas reprocessado
 
-Sinais:
+### Eulen falhando
 
-- webhook repetido
-- Telegram reenvia update antigo
-- usuario manda `ok` mais de uma vez na confirmacao
+Se a Eulen falhar:
 
-Acao:
+1. registrar o erro exato
+2. avaliar se recheck resolve
+3. se necessario, usar fallback por janela curta
+4. manter a evidencia da falha ligada ao pedido
 
-1. confirmar que existe no maximo um deposito por `tenant_id + order_id`
-2. confirmar que `deposit_events` nao duplicou evento identico
-3. confirmar que notificacao Telegram nao duplicou mensagem de confirmacao
-4. se houver divergencia, abrir bug com `orderId`, `depositEntryId`, `requestId`
+### Notificacao Telegram falhando
 
-### Erro upstream Eulen
+Se a notificacao falhar:
 
-Sinais:
+1. confirmar se o pagamento foi conciliado
+2. validar o `telegram_chat_id`
+3. verificar logs de envio ou skip
+4. nao confundir falha de notificacao com falha de pagamento
 
-- criacao de deposito falha
-- `deposit-status` indisponivel
-- contrato invalido da Eulen
+## Regra operacional
 
-Acao:
-
-1. nao criar deposito novo automaticamente para o mesmo pedido
-2. marcar pedido com falha segura quando a criacao inicial falhar
-3. usar recheck apenas para deposito ja criado
-4. abrir suporte com Eulen se o contrato externo vier invalido ou sem campos obrigatorios
-
-### Notificacao Telegram ausente
-
-Sinais:
-
-- estado financeiro esta terminal, mas usuario nao recebeu mensagem
-- log `telegram.payment_notification.failed`
-
-Acao:
-
-1. confirmar `orders.telegram_chat_id`
-2. confirmar se a transicao ja tinha sido notificada
-3. se o envio falhou por erro transitorio, registrar incidente e orientar operador a consultar `/status`
-4. nao reprocessar pagamento apenas para reenviar mensagem
-
-## Evidencia real de referencia
-
-Compra production validada em 2026-04-21:
-
-- order: `order_4c35a393-ab0e-4c03-ad6d-a9769aad517f`
-- deposit/qrId: `019db14657d879988c7f1227012da7fb`
-- final: `orders.status=paid`, `orders.current_step=completed`, `deposits.external_status=depix_sent`
-- split: `1.00%`
-- bank tx: `fitbank_E0000000020260421182148269581909`
-- blockchain tx: `0ce5ae924913e65a5d70cb6601aacae27dabbecda1ad277af94fdb12fc19b270`
-- matematica: `5.00 - 0.99 - 0.05 = 3.96`
-- split proof: `proved`
-
-Essa evidencia fecha o caminho financeiro minimo, mas nao substitui repetir a matriz quando houver mudanca de contrato externo, segredos, tenant, rotas ou persistencia.
+A release `0.1` so pode ser exposta quando o gate curto, a matriz minima e as evidencias por pedido estiverem consistentes e documentadas.
