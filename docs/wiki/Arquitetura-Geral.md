@@ -46,6 +46,7 @@ flowchart LR
 - `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
 - a maquina de progresso de pedidos foi migrada para TypeScript estrito, com contratos explicitos de estado, evento e contexto
 - o contrato de transicao da maquina foi preservado; a compatibilidade com consumidores JS ficou restrita a imports e ao ponto de entrada carregavel
+- a borda Telegram agora inclui reconsulta de deposito pendente antes de responder `/start` e `/status`, reaproveitando o caminho de reconciliacao ja existente para atualizar a resposta com o estado remoto quando a Eulen ja tiver finalizado o pagamento
 
 ## Principios arquiteturais
 

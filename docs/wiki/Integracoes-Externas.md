@@ -39,6 +39,7 @@ Estado atual:
 - apos conciliacao de pagamento, o sistema pode enviar uma mensagem assincrona de confirmacao ao chat original quando houver `telegram_chat_id` valido e transicao visivel relevante
 - a copy do QR pode informar a expiracao apenas quando a Eulen devolver esse dado; quando o Telegram nao aceitar a imagem do QR, o fluxo deve cair para texto simples sem perder a instrucoes de pagamento
 - essa notificacao assincrona e idempotente por transicao visivel: webhook, recheck e fallback nao devem repetir a mesma mensagem
+- quando o pedido estiver em `awaiting_payment`, `/start` e `/status` podem reconsultar a verdade remota na Eulen antes de montar a resposta, reaproveitando o caminho de reconciliacao existente e recarregando o pedido/deposito para refletir o estado final imediatamente
 
 ## Eulen
 

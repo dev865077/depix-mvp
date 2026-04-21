@@ -92,7 +92,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - fonte de verdade remota: `deposits`
 - trilha local: evento `deposit_events.source = "recheck_deposits_list"` por linha reparada ou deduplicada
 - efeito esperado: reparar linhas pendentes por `qrId` e aplicar o status reconciliado em `deposits` e `orders`
-- sem `ENABLE_OPS_DEPOSITS_FALLBACK=true`, responde `503 ops_deposits_fallback_disabled`
-- sem header Bearer, responde `401 ops_authorization_required`
-- com token invalido, responde `403 ops_authorization_invalid`
-- se a Eulen nao responder com lista utilizavel, responde er
+- se a lista remota nao trouxer linhas elegiveis, a rota responde sem mutar o agregado

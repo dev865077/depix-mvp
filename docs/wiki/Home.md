@@ -29,6 +29,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o inbound do Telegram agora normaliza um contrato explicito de update com `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
 - payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
+- `/start` e `/status` reconsultam um pedido `awaiting_payment` contra a Eulen antes de responder quando ha deposito local disponivel, para refletir imediato um pagamento ja conciliado externamente
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`
@@ -100,3 +101,15 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - [Testes e Qualidade](Testes-e-Qualidade)
 - [Migracao TypeScript](Migracao-TypeScript)
 - [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)
+
+### Operacao
+
+- [Ambientes e Segredos](Ambientes-e-Segredos)
+- [Deploy e Runbooks](Deploy-e-Runbooks)
+- [Teste Humano MVP](Teste-Humano-MVP)
+- [Release 0.1 Readiness](Release-0.1-Readiness)
+
+### Governanca
+
+- [Governanca Tecnica](Governanca-Tecnica)
+- [ADRs](ADRs)

@@ -50,6 +50,8 @@
 - a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
 - o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
 - `/start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
+- `/start` reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, quando o pedido ja possui deposito local, para refletir imediatamente um pagamento que tenha sido finalizado fora do webhook local
+- `/status` tambem reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, usando a mesma reconciliacao existente, quando ha deposito local disponivel
 - a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
 - a etapa de `wallet` agora valida endereco DePix/Liquid enviado no Telegram, persiste `walletAddress` e avanca o pedido para `confirmation`
 - o fluxo Telegram agora responde a controles de cancelamento e reinicio sem abrir pedido novo indevidamente quando nao existe contexto
