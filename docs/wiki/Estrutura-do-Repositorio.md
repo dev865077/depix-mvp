@@ -12,9 +12,13 @@ docs/
 
 ## Leitura por area
 
-### `src/app.js`
+### `src/app.ts`
 
 Composicao do `Hono`, middleware, tratamento global de erro e montagem das rotas.
+
+### `src/index.ts`
+
+Ponto de entrada canonico do Worker. Permanece importavel como bootstrap principal do runtime.
 
 ### `src/routes/`
 
@@ -31,7 +35,7 @@ Runtime, tenants e resolucao de bindings.
 
 ### `src/types/`
 
-Contratos de dominio e persistencia compartilhados entre o parser de tenancy e as areas que consomem o registry.
+Contratos de dominio, persistencia e boundary de runtime compartilhados entre o parser de tenancy e as areas que consomem o registry.
 
 ### `src/order-flow/`
 
@@ -63,7 +67,7 @@ Runner canonico do `npm test`. Separa specs Node e Cloudflare para manter a suit
 
 ### `tsconfig.json`
 
-Fundacao TypeScript do Worker. Mantem `.js` e `.ts` coexistindo com `allowJs`, `strict` e `noEmit`, enquanto o runtime continua ancorado em `src/index.js`.
+Fundacao TypeScript do Worker. Mantem `.js` e `.ts` coexistindo com `allowJs`, `strict` e `noEmit`, enquanto o runtime agora tem bootstrap principal em `src/index.ts`.
 
 ### `worker-configuration.d.ts`
 

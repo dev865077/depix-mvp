@@ -35,6 +35,8 @@ flowchart LR
 
 - `Hono` e middleware multi-tenant ja existem
 - runtime Telegram em `grammY` ja recebe despacho real do webhook
+- o bootstrap do Worker foi migrado para TypeScript em `src/index.ts`
+- a fronteira canonica de tipos do runtime ficou consolidada em `src/types/runtime.ts`
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
 - recheck operacional de deposito via `POST /ops/:tenantId/recheck/deposit` ja existe
 - `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
