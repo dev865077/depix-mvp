@@ -27,7 +27,8 @@ const ISSUE_PLANNING_WORKFLOW_FILE = "ai-issue-planning-review.yml";
 const ISSUE_TRIAGE_WORKFLOW_FILE = "ai-issue-triage.yml";
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const MAX_OUTPUT_TOKENS = 2400;
-const MAX_CHILD_ISSUES = 6;
+const MAX_CHILD_ISSUES_PER_REFINEMENT = 4;
+const MAX_TOTAL_CHILD_ISSUES_PER_ROOT = 12;
 const MAX_ISSUE_BODY_CHARS = 9000;
 const MAX_DISCUSSION_CONTEXT_CHARS = 18000;
 const REASONING_EFFORT = "low";
@@ -538,7 +539,7 @@ function normalizeStringArray(values) {
     .filter(Boolean);
 }
 
-function normalizeChildIssueDrafts(childIssues) {
+export function normalizeChildIssueDrafts(childIssues) {
   if (!Array.isArray(childIssues)) {
     return [];
   }
@@ -549,7 +550,41 @@ function normalizeChildIssueDrafts(childIssues) {
       body: String(childIssue?.body ?? "").trim(),
     }))
     .filter((childIssue) => childIssue.title && childIssue.body)
-    .slice(0, MAX_CHILD_ISSUES);
+    .slice(0, MAX_CHILD_ISSUES_PER_REFINEMENT);
+}
+
+export function extractRefinementChildParentNumber(issue) {
+  const body = typeof issue?.body === "string" ? issue.body : "";
+  const markerMatch = body.match(/<!--\s*ai-issue-refinement-child:([0-9]+):/i);
+  const parentLineMatch = body.match(/^Parent issue:\s*#([0-9]+)\b/im);
+  const parentNumber = Number.parseInt(markerMatch?.[1] ?? parentLineMatch?.[1] ?? "", 10);
+
+  return Number.isInteger(parentNumber) && parentNumber > 0 ? parentNumber : null;
+}
+
+export function isRefinementChildIssue(issue) {
+  return extractRefinementChildParentNumber(issue) !== null;
+}
+
+export function countRefinementChildrenForParent(openIssues, parentIssueNumber) {
+  if (!Array.isArray(openIssues) || !Number.isInteger(parentIssueNumber) || parentIssueNumber <= 0) {
+    return 0;
+  }
+
+  return openIssues
+    .filter((issue) => extractRefinementChildParentNumber(issue) === parentIssueNumber)
+    .length;
+}
+
+export function selectChildIssueDraftsForCreation(parentIssue, openIssues, childIssueDrafts) {
+  if (isRefinementChildIssue(parentIssue)) {
+    return [];
+  }
+
+  const existingChildIssueCount = countRefinementChildrenForParent(openIssues, parentIssue?.number);
+  const availableSlots = Math.max(0, MAX_TOTAL_CHILD_ISSUES_PER_ROOT - existingChildIssueCount);
+
+  return normalizeChildIssueDrafts(childIssueDrafts).slice(0, availableSlots);
 }
 
 export function normalizeIssueArtifactTitle(title, totalChildIssueCount) {
@@ -761,6 +796,51 @@ function buildChildIssueMarker(parentIssueNumber, title) {
   return `${CHILD_ISSUE_MARKER_PREFIX}${parentIssueNumber}:${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")} -->`;
 }
 
+export function buildGitHubSubIssueLinkRequest(repoFullName, parentIssueNumber, subIssueId) {
+  if (typeof repoFullName !== "string" || !/^[^/]+\/[^/]+$/.test(repoFullName)) {
+    throw new Error(`Invalid repository for sub-issue link: ${String(repoFullName)}`);
+  }
+
+  if (!Number.isInteger(parentIssueNumber) || parentIssueNumber <= 0) {
+    throw new Error(`Invalid parent issue number for sub-issue link: ${String(parentIssueNumber)}`);
+  }
+
+  if (!Number.isInteger(subIssueId) || subIssueId <= 0) {
+    throw new Error(`Invalid sub-issue id for sub-issue link: ${String(subIssueId)}`);
+  }
+
+  return {
+    url: `https://api.github.com/repos/${repoFullName}/issues/${parentIssueNumber}/sub_issues`,
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sub_issue_id: subIssueId }),
+    },
+  };
+}
+
+async function linkGitHubSubIssue(repoFullName, parentIssueNumber, childIssue) {
+  if (!Number.isInteger(childIssue?.id)) {
+    return;
+  }
+
+  const request = buildGitHubSubIssueLinkRequest(repoFullName, parentIssueNumber, childIssue.id);
+
+  try {
+    await githubRequest(request.url, request.init);
+    logOperationalEvent("ai_issue_refinement.sub_issue.linked", {
+      parentIssueNumber,
+      childIssueNumber: childIssue.number,
+    });
+  } catch (error) {
+    logOperationalEvent("ai_issue_refinement.sub_issue.link_failed", {
+      parentIssueNumber,
+      childIssueNumber: childIssue.number,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function appendCreatedChildIssueReferences(body, createdChildIssues) {
   const trimmedBody = String(body ?? "").trim();
 
@@ -914,17 +994,29 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
   }
 
   const openIssues = await fetchAllOpenIssues(repoFullName);
+  const boundedChildIssueDrafts = selectChildIssueDraftsForCreation(parentIssue, openIssues, childIssueDrafts);
+
+  if (boundedChildIssueDrafts.length === 0) {
+    logOperationalEvent("ai_issue_refinement.child_issue.creation_skipped", {
+      parentIssueNumber: parentIssue?.number,
+      reason: isRefinementChildIssue(parentIssue) ? "child_issue_cannot_create_children" : "root_child_issue_limit_reached",
+      totalChildIssueLimit: MAX_TOTAL_CHILD_ISSUES_PER_ROOT,
+    });
+    return [];
+  }
+
   const existingByTitle = new Map(
     openIssues.map((issue) => [String(issue.title ?? "").trim().toLowerCase(), issue]),
   );
   const createdIssues = [];
 
-  for (const childIssue of childIssueDrafts) {
+  for (const childIssue of boundedChildIssueDrafts) {
     const titleKey = childIssue.title.toLowerCase();
     const existingIssue = existingByTitle.get(titleKey);
 
     if (existingIssue) {
       createdIssues.push(existingIssue);
+      await linkGitHubSubIssue(repoFullName, parentIssue.number, existingIssue);
       continue;
     }
 
@@ -946,6 +1038,7 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
 
     existingByTitle.set(titleKey, createdIssue);
     createdIssues.push(createdIssue);
+    await linkGitHubSubIssue(repoFullName, parentIssue.number, createdIssue);
   }
 
   return createdIssues;

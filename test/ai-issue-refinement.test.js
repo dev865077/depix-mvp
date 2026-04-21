@@ -6,6 +6,7 @@ import issueRefinementWorkflowText from "../.github/workflows/ai-issue-refinemen
 
 import {
   assertValidIssueRefinementPlan,
+  buildGitHubSubIssueLinkRequest,
   buildIssuePlanningRerunDispatchRequest,
   buildIssueTriageDispatchRequest,
   buildIssueRefinementAutomationSection,
@@ -13,13 +14,18 @@ import {
   buildIssueRefinementStatusComment,
   buildIssueRefinementUserPrompt,
   countIssueRefinementRounds,
+  countRefinementChildrenForParent,
   extractAutomationField,
   extractIssueAutomationSection,
+  extractRefinementChildParentNumber,
   findLatestPlanningFinalComment,
+  isRefinementChildIssue,
+  normalizeChildIssueDrafts,
   normalizeIssueArtifactTitle,
   parseIssueRefinementDispatchInput,
   parseIssueRefinementResponse,
   runIssueRefinementWorkflow,
+  selectChildIssueDraftsForCreation,
 } from "../scripts/ai-issue-refinement.mjs";
 
 describe("ai issue refinement", () => {
@@ -134,6 +140,61 @@ describe("ai issue refinement", () => {
     expect(plan.newChildIssues).toHaveLength(1);
     expect(normalizeIssueArtifactTitle(plan.updatedTitle, 1)).toBe("track: readiness 0.1");
     expect(normalizeIssueArtifactTitle(plan.updatedTitle, 2)).toBe("epic: readiness 0.1");
+  });
+
+  it("bounds child issue drafts to four per refinement round", () => {
+    const drafts = Array.from({ length: 8 }, (_, index) => ({
+      title: `sub-issue: ${index}`,
+      body: `Body ${index}`,
+    }));
+
+    expect(normalizeChildIssueDrafts(drafts)).toHaveLength(4);
+  });
+
+  it("detects refinement child issues and blocks recursive child creation", () => {
+    const childIssue = {
+      number: 371,
+      body: [
+        "<!-- ai-issue-refinement-child:328:shared-reconciliation -->",
+        "Parent issue: #328 - track: tornar confirmação resiliente",
+        "",
+        "Body.",
+      ].join("\n"),
+    };
+
+    expect(extractRefinementChildParentNumber(childIssue)).toBe(328);
+    expect(isRefinementChildIssue(childIssue)).toBe(true);
+    expect(selectChildIssueDraftsForCreation(childIssue, [], [
+      { title: "sub-issue: should not exist", body: "Body." },
+    ])).toEqual([]);
+  });
+
+  it("enforces a root-level cap of twelve refinement child issues", () => {
+    const parentIssue = { number: 328, body: "Root body." };
+    const openIssues = Array.from({ length: 10 }, (_, index) => ({
+      number: 330 + index,
+      body: `<!-- ai-issue-refinement-child:328:child-${index} -->\nParent issue: #328`,
+    }));
+    const drafts = Array.from({ length: 6 }, (_, index) => ({
+      title: `sub-issue: new ${index}`,
+      body: `Body ${index}`,
+    }));
+
+    expect(countRefinementChildrenForParent(openIssues, 328)).toBe(10);
+    expect(selectChildIssueDraftsForCreation(parentIssue, openIssues, drafts)).toHaveLength(2);
+    expect(selectChildIssueDraftsForCreation(parentIssue, [
+      ...openIssues,
+      { number: 340, body: "<!-- ai-issue-refinement-child:328:child-10 -->\nParent issue: #328" },
+      { number: 341, body: "<!-- ai-issue-refinement-child:328:child-11 -->\nParent issue: #328" },
+    ], drafts)).toEqual([]);
+  });
+
+  it("builds the GitHub native sub-issue link request", () => {
+    const request = buildGitHubSubIssueLinkRequest("dev865077/depix-mvp", 328, 123456);
+
+    expect(request.url).toBe("https://api.github.com/repos/dev865077/depix-mvp/issues/328/sub_issues");
+    expect(request.init.method).toBe("POST");
+    expect(JSON.parse(request.init.body)).toEqual({ sub_issue_id: 123456 });
   });
 
   it("builds prompt and canonical issue outputs for refinement", () => {
