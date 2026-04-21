@@ -40,6 +40,7 @@ const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
 const RUN_MODE_DISCUSSION = "discussion";
+const RUN_MODE_AWAIT_CI = "await_ci";
 const MAX_FILES = 24;
 const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_DISCUSSION_CONTEXT_COMMENTS = 20;
@@ -1903,14 +1904,41 @@ export function isCiTestCheckGreen(statusCheckContexts) {
 }
 
 /**
- * Extract the linked pull request number from a workflow_run event payload.
+ * Describe the canonical `CI / Test` check state for the current PR.
  *
- * @param {any} event Raw GitHub event payload.
- * @returns {number | null} Linked pull request number or null when absent.
+ * @param {Array<any>} statusCheckContexts Pull-request status-check contexts.
+ * @returns {{ found: boolean, completed: boolean, green: boolean }} Parsed CI state.
  */
-export function extractWorkflowRunPullRequestNumber(event) {
-  const candidate = event?.workflow_run?.pull_requests?.[0]?.number;
-  return Number.isInteger(candidate) && candidate > 0 ? candidate : null;
+export function getCiTestCheckState(statusCheckContexts) {
+  const ciContext = (Array.isArray(statusCheckContexts) ? statusCheckContexts : []).find((context) => (
+    context?.__typename === "CheckRun"
+      ? context.name === "Test" && context.workflowName === "CI"
+      : context?.__typename === "StatusContext"
+        && context.context === "CI / Test"
+  ));
+
+  if (!ciContext) {
+    return { found: false, completed: false, green: false };
+  }
+
+  if (ciContext.__typename === "CheckRun") {
+    const conclusion = String(ciContext.conclusion ?? "").toUpperCase();
+    const completed = String(ciContext.status ?? "").toUpperCase() === "COMPLETED" || conclusion.length > 0;
+
+    return {
+      found: true,
+      completed,
+      green: conclusion === "SUCCESS",
+    };
+  }
+
+  const state = String(ciContext.state ?? "").toUpperCase();
+
+  return {
+    found: true,
+    completed: state.length > 0 && !["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"].includes(state),
+    green: state === "SUCCESS",
+  };
 }
 
 /**
@@ -1926,6 +1954,42 @@ export function shouldDeferDiscussionReviewUntilCiGreen(eventName, latestFinalCo
   return eventName === "discussion_comment"
     && Boolean(latestFinalComment?.id)
     && !isCiTestCheckGreen(statusCheckContexts);
+}
+
+/**
+ * Wait until the canonical `CI / Test` check reaches a terminal state.
+ *
+ * GitHub Actions cannot express `needs` across workflows, so the discussion
+ * lane must poll the PR status rollup before it can safely reconcile blocker
+ * contracts against the final CI result of the same head commit.
+ *
+ * @param {string} repository Repository in owner/name form.
+ * @param {number} pullRequestNumber Pull request number.
+ * @param {{ timeoutMs?: number, pollIntervalMs?: number }} [options] Timing options.
+ * @returns {Promise<{ found: boolean, completed: boolean, green: boolean }>} Final CI state.
+ */
+export async function waitForCiTestConclusion(
+  repository,
+  pullRequestNumber,
+  options = {},
+) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15 * 60 * 1000;
+  const pollIntervalMs = Number.isFinite(options.pollIntervalMs) ? options.pollIntervalMs : 5000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    const state = getCiTestCheckState(await fetchPullRequestStatusCheckRollup(repository, pullRequestNumber));
+
+    if (state.completed) {
+      return state;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, pollIntervalMs);
+    });
+  }
+
+  throw new Error(`Timed out waiting for CI / Test on PR #${pullRequestNumber}.`);
 }
 
 /**
@@ -2266,28 +2330,9 @@ async function resolvePullRequestContext(repository, event) {
     return null;
   }
 
-  const workflowRunPullRequestNumber = extractWorkflowRunPullRequestNumber(event);
-
-  if (workflowRunPullRequestNumber) {
-    const pullRequest = await fetchPullRequest(repository, workflowRunPullRequestNumber);
-
-    if (pullRequest.state !== "open") {
-      logOperationalEvent("ai_pr_review.skip", {
-        reason: "workflow_run_pull_request_not_open",
-        pullRequestNumber: workflowRunPullRequestNumber,
-      });
-      return null;
-    }
-
-    return {
-      pullRequest,
-      discussion: null,
-    };
-  }
-
   if (!event.discussion?.number) {
     logOperationalEvent("ai_pr_review.skip", {
-      reason: event?.workflow_run ? "workflow_run_not_linked_to_pull_request" : "unsupported_event",
+      reason: "unsupported_event",
     });
     return null;
   }
@@ -2899,12 +2944,12 @@ export function buildAutomationEvidenceContext(inputs) {
   if (
     hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
     && prReviewWorkflow.includes("discussion_comment:")
-    && prReviewWorkflow.includes("workflow_run:")
     && prReviewWorkflow.includes("discussion-review:")
+    && prReviewWorkflow.includes("Wait for canonical CI / Test conclusion")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` still classifies the lane, `workflow_run` re-enters the Discussion lane after `CI` completes, and `discussion_comment` remains available for reruns while the `discussion-review` job requests `discussions: write` for Discussion publication.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, `discussion-review` explicitly waits for the canonical `CI / Test` conclusion before publishing, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
     );
   }
 
@@ -4007,6 +4052,25 @@ async function main() {
     await writeGitHubOutput("requires_discussion", String(gate.requiresDiscussion));
     await writeGitHubOutput("reason", gate.reason);
 
+    return;
+  }
+
+  if (runMode === RUN_MODE_AWAIT_CI) {
+    const ciState = await waitForCiTestConclusion(repository, pullRequest.number);
+
+    logOperationalEvent("ai_pr_review.ci_test.awaited", {
+      pullRequestNumber: pullRequest.number,
+      found: ciState.found,
+      completed: ciState.completed,
+      green: ciState.green,
+    });
+
+    await writeStepSummary([
+      "## AI PR Review CI gate",
+      "",
+      `Canonical \`CI / Test\` completed: \`${ciState.completed}\``,
+      `Canonical \`CI / Test\` green: \`${ciState.green}\``,
+    ].join("\n"));
     return;
   }
 

@@ -25,11 +25,11 @@ import {
   applyFollowUpReconciliationToDebate,
   classifyGitHubOperationalFailure,
   evaluateDiscussionRecommendation,
-  extractWorkflowRunPullRequestNumber,
   extractConclusionThreadTestFileCitations,
   extractDiscussionUrlFromComment,
   extractFollowUpTestableBlockers,
   extractReviewRecommendation,
+  getCiTestCheckState,
   getReviewGateFailure,
   isCiTestCheckGreen,
   parseBlockingRoleContract,
@@ -41,6 +41,7 @@ import {
   sortFilesForReview,
   summarizeDiscussionBlockingContracts,
   summarizePullRequestScope,
+  waitForCiTestConclusion,
 } from "../scripts/ai-pr-review.mjs";
 
 /**
@@ -1812,17 +1813,16 @@ describe("ai pr review discussion rendering", () => {
     ])).toBe(false);
   });
 
-  it("extracts the linked pull request number from workflow_run payloads", () => {
-    expect(extractWorkflowRunPullRequestNumber({
-      workflow_run: {
-        pull_requests: [{ number: 247 }],
-      },
-    })).toBe(247);
-    expect(extractWorkflowRunPullRequestNumber({
-      workflow_run: {
-        pull_requests: [],
-      },
-    })).toBeNull();
+  it("describes the canonical CI / Test state", () => {
+    expect(getCiTestCheckState([
+      { __typename: "CheckRun", name: "Test", workflowName: "CI", status: "IN_PROGRESS", conclusion: null },
+    ])).toEqual({ found: true, completed: false, green: false });
+    expect(getCiTestCheckState([
+      { __typename: "CheckRun", name: "Test", workflowName: "CI", status: "COMPLETED", conclusion: "SUCCESS" },
+    ])).toEqual({ found: true, completed: true, green: true });
+    expect(getCiTestCheckState([
+      { __typename: "CheckRun", name: "Lint", workflowName: "CI", status: "COMPLETED", conclusion: "SUCCESS" },
+    ])).toEqual({ found: false, completed: false, green: false });
   });
 
   it("defers discussion-comment reruns until the canonical CI / Test check is green", () => {
@@ -1841,6 +1841,46 @@ describe("ai pr review discussion rendering", () => {
       { id: "final-comment" },
       [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" }],
     )).toBe(false);
+  });
+
+  it("waits for the canonical CI / Test check to complete before discussion review", async () => {
+    const runStates = [
+      { workflow_runs: [{ name: "CI", status: "in_progress", conclusion: null }] },
+      { workflow_runs: [{ name: "CI", status: "completed", conclusion: "success" }] },
+    ];
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalFetch = globalThis.fetch;
+    let requestCount = 0;
+
+    globalThis.setTimeout = ((fn) => {
+      fn();
+      return 0;
+    });
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      json: async () => {
+        requestCount += 1;
+
+        if (String(url).includes("/pulls/247")) {
+          return { head: { sha: "abc123" } };
+        }
+
+        return runStates.shift() ?? { workflow_runs: [] };
+      },
+      text: async () => "",
+    });
+
+    process.env.GITHUB_TOKEN = "test-token";
+
+    try {
+      await expect(waitForCiTestConclusion("dev865077/depix-mvp", 247, { pollIntervalMs: 0, timeoutMs: 10 }))
+        .resolves.toEqual({ found: true, completed: true, green: true });
+      expect(requestCount).toBeGreaterThanOrEqual(3);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.fetch = originalFetch;
+      delete process.env.GITHUB_TOKEN;
+    }
   });
 
   it("keeps a follow-up blocker when the suggested test file is not in the diff", () => {
@@ -2124,7 +2164,7 @@ describe("ai pr review discussion rendering", () => {
     expect(partialEvidence[0].missingSignals).toContain("ci_test_green");
   });
 
-  it("pins the workflow-run discussion entrypoint and discussion-review write permissions in the workflow", () => {
+  it("pins the pull-request CI wait and discussion-review write permissions in the workflow", () => {
     const evidence = buildAutomationEvidenceContext({
       files: [
         { filename: ".github/workflows/ai-pr-review.yml" },
@@ -2139,12 +2179,9 @@ describe("ai pr review discussion rendering", () => {
       prReviewWorkflow: [
         "on:",
         "  discussion_comment:",
-        "  workflow_run:",
-        "    workflows:",
-        "      - CI",
         "jobs:",
         "  discussion-review:",
-        "    if: github.event_name != 'pull_request'",
+        "  Wait for canonical CI / Test conclusion",
         "    permissions:",
         "      discussions: write",
       ].join("\n"),
@@ -2157,7 +2194,7 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewScript: [
         "resolvePullRequestContext();",
-        "extractWorkflowRunPullRequestNumber();",
+        "waitForCiTestConclusion();",
         "shouldDeferDiscussionReviewUntilCiGreen();",
         "buildDiscussionHistoryContext();",
         "replyToId: latestFinalComment?.id ?? null,",
@@ -2173,7 +2210,7 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewTests: [
         "keeps Blocked planning-only by rejecting it in PR review recommendations",
-        "pins the workflow-run discussion entrypoint and discussion-review write permissions in the workflow",
+        "pins the pull-request CI wait and discussion-review write permissions in the workflow",
       ].join("\n"),
       planningTests: "pins planning workflow outputs in the operator summary",
       triageTests: [
@@ -2184,7 +2221,7 @@ describe("ai pr review discussion rendering", () => {
 
     expect(evidence).toContain("## Automation contract evidence");
     expect(evidence).toContain("discussion-review");
-    expect(evidence).toContain("workflow_run");
+    expect(evidence).toContain("CI / Test");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
     expect(evidence).toContain("medio -> direct_pr");

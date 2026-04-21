@@ -11,11 +11,6 @@ on:
     types:
       - created
       - edited
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
 
 permissions:
   actions: read
@@ -26,12 +21,12 @@ permissions:
   statuses: read
 
 concurrency:
-  group: ai-pr-review-${{ github.event.pull_request.number || github.event.discussion.number || github.event.workflow_run.id }}
+  group: ai-pr-review-${{ github.event.pull_request.number || github.event.discussion.number }}
   cancel-in-progress: true
 
 jobs:
   classify:
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -63,7 +58,7 @@ jobs:
 
   direct-review:
     needs: classify
-    if: github.event_name != 'workflow_run' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'false'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'false'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -93,7 +88,7 @@ jobs:
 
   discussion-review:
     needs: classify
-    if: github.event_name != 'pull_request' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && needs.classify.outputs.requires_discussion == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.classify.outputs.requires_discussion == 'true'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -112,6 +107,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Wait for canonical CI / Test conclusion
+        env:
+          AI_PR_REVIEW_MODE: await_ci
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ai-pr-review.mjs
 
       - name: Run multi-bot Discussion PR review
         env:
