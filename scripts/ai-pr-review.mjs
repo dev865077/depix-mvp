@@ -3283,6 +3283,28 @@ export function workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow) {
 }
 
 /**
+ * Prove Discussion-triggered reruns execute against the linked PR head.
+ *
+ * `discussion_comment` events are anchored on the default branch by GitHub.
+ * The workflow must resolve the PR from the Discussion marker before checkout,
+ * otherwise follow-up rounds evaluate stale `main` code instead of the PR diff.
+ *
+ * @param {string} prReviewWorkflow Current workflow YAML.
+ * @returns {boolean} True when Discussion reruns checkout the linked PR SHA.
+ */
+export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
+  const discussionCommentIndex = prReviewWorkflow.indexOf("discussion_comment:");
+  const resolverIndex = prReviewWorkflow.indexOf("Resolve discussion pull request head");
+  const pullRequestApiIndex = prReviewWorkflow.indexOf('gh api "repos/${REPOSITORY}/pulls/${pr_number}"');
+  const checkoutRefIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha");
+
+  return discussionCommentIndex >= 0
+    && resolverIndex > discussionCommentIndex
+    && pullRequestApiIndex > resolverIndex
+    && checkoutRefIndex > pullRequestApiIndex;
+}
+
+/**
  * Build a concise evidence block for automation-contract PRs.
  *
  * Broad automation PRs can leave the model staring at a large diff without the
@@ -3323,9 +3345,10 @@ export function buildAutomationEvidenceContext(inputs) {
     && prReviewWorkflow.includes("discussion_comment:")
     && prReviewWorkflow.includes("ai-pr-review-${{ github.event_name }}")
     && prReviewWorkflow.includes("discussions: write")
+    && workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow)
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, the visible `discussion-review` job runs `AI_PR_REVIEW_MODE=await_ci` before `AI_PR_REVIEW_MODE=discussion`, event-scoped concurrency prevents stale runs from canceling visible PR checks, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, the visible `discussion-review` job runs `AI_PR_REVIEW_MODE=await_ci` before `AI_PR_REVIEW_MODE=discussion`, event-scoped concurrency prevents stale runs from canceling visible PR checks, and `discussion_comment` reruns resolve the linked PR head SHA before checkout while the job still requests `discussions: write`.",
     );
   }
 

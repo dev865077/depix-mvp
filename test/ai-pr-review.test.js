@@ -50,6 +50,7 @@ import {
   summarizePullRequestScope,
   waitForCiTestConclusion,
   workflowHasVisibleDiscussionReviewCiGate,
+  workflowChecksOutDiscussionPullRequestHead,
   collectFollowUpEvidenceRecords,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -2499,6 +2500,15 @@ describe("ai pr review discussion rendering", () => {
       "    permissions:",
       "      discussions: write",
       "    steps:",
+      "      - name: Resolve discussion pull request head",
+      "        id: discussion-pr-head",
+      "        if: github.event_name == 'discussion_comment'",
+      "        run: |",
+      "          head_sha=\"$(gh api \"repos/${REPOSITORY}/pulls/${pr_number}\" --jq '.head.sha')\"",
+      "      - name: Checkout repository",
+      "        uses: actions/checkout@v4",
+      "        with:",
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha }}",
       "      - name: Wait for canonical CI / Test conclusion",
       "        env:",
       "          AI_PR_REVIEW_MODE: await_ci",
@@ -2508,9 +2518,14 @@ describe("ai pr review discussion rendering", () => {
     ].join("\n");
 
     expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow)).toBe(true);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow)).toBe(true);
     expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow.replace(
       "          AI_PR_REVIEW_MODE: await_ci\n      - name: Run multi-bot Discussion PR review\n        env:\n",
       "",
+    ))).toBe(false);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
+      "steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha || github.sha",
+      "github.sha",
     ))).toBe(false);
 
     const evidence = buildAutomationEvidenceContext({
@@ -2564,6 +2579,7 @@ describe("ai pr review discussion rendering", () => {
     expect(evidence).toContain("discussion-review");
     expect(evidence).toContain("AI_PR_REVIEW_MODE=await_ci");
     expect(evidence).toContain("AI_PR_REVIEW_MODE=discussion");
+    expect(evidence).toContain("linked PR head SHA before checkout");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
     expect(evidence).toContain("medio -> direct_pr");
