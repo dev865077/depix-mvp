@@ -18,6 +18,9 @@
 
 - `tenantId` deve existir nas tabelas operacionais
 - `nonce` representa a intencao da cobranca
+- o nonce enviado para a Eulen no `X-Nonce` deve ser um UUID estavel por pedido Telegram
+- quando o pedido real ja usa `order_<uuid>`, o runtime reaproveita esse UUID como nonce canonico
+- para filas legadas ou ids sem UUID embutido, o sistema gera um UUID deterministico para manter idempotencia por pedido
 - `depositEntryId` corresponde ao `response.id` da Eulen
 - `qrId` pode existir como identificador distinto depois e deve ser persistido sem sobrescrever `depositEntryId`
 - escritas criticas multi-tabela devem usar `env.DB.batch()`

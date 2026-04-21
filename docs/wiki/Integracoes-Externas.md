@@ -23,6 +23,8 @@ Estado atual:
 - o endereco informado pelo usuario na etapa `wallet` e validado de forma conservadora como DePix/Liquid antes de avancar para `confirmation`
 - em `confirmation`, `sim`, `confirmar` e `ok` disparam a criacao do deposito real na Eulen
 - na criacao do deposito, o payload enviado para `POST /deposit` inclui o `depixAddress` informado pelo usuario, junto do split do tenant
+- o `X-Nonce` enviado para a Eulen usa um UUID estavel por pedido Telegram; quando o pedido real ja usa `order_<uuid>`, esse UUID e reaproveitado diretamente
+- em linhas legadas sem UUID embutido no `orderId`, o nonce continua deterministico, mas sempre em formato UUID
 - em `confirmation`, `cancelar` encerra o pedido sem criar deposito
 - o fluxo tambem aceita `/cancel`, `cancelar` e `recomecar` para cancelar ou reiniciar pedidos abertos em `amount`, `wallet` e `confirmation`
 - `recomecar` so reinicia quando existe contexto aberto; caso contrario, apenas orienta o usuario a usar `/start`
@@ -89,4 +91,4 @@ Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-dep
 
 Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
 
-No recheck operacio
+No recheck operacional e nos retries de confirmacao, o nonce deve permanecer um UUID estavel por pedido, reaproveitando o UUID embutido em `order_<uuid>` quando existir.
