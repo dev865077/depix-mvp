@@ -81,13 +81,12 @@ Explicitar:
 - quando a PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
 - em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada
-- na revisao automatica de PR, falhas operacionais de GitHub e logs de Actions passam a ser tratadas como contexto operacional antes de virar feedback de conteudo
+- na revisao automatica de PR, falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
+- quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
+- quando a revisao for de follow-up em blocker de acceptance tests, a automacao publica uma secao deterministica de `Follow-up blocker evidence` antes da rodada do modelo, prioriza arquivos de teste explicitamente citados pelo blocker dentro do payload bounded e reconcilia a evidencia com o conteudo do checkout quando o patch do GitHub nao trouxer detalhes suficientes
+- nessa mesma situacao, bloqueios antigos so podem ser descarregados quando a evidencia atual mostrar explicitamente o arquivo solicitado, o cenario protegido e o estado de `CI / Test` esperado
 
-## Checklist de revisao antes do merge
+## Regra de convivencia
 
-- escopo coerente
-- docs atualizadas quando necessario
-- testes executados
-- sem segredos expostos
-- sem alteracao fora do pedido
-- sem drift entre decisao e implementacao
+- se a PR tocar workflow de review, a documentacao desta pagina pode precisar de ajuste junto com o teste correspondente
+- se a PR nao alterar contratos de revisao, esta pagina nao precisa mudar

@@ -32,6 +32,7 @@ Esta proposta se apoia em quatro referencias principais:
 - linguagem mais consistente entre produto, arquitetura, engenharia e operacao
 - atualizacao automatica da pasta `docs/wiki` apos merge de PR, com publicacao da wiki real so quando ela estiver habilitada
 - a suite de review de PR passou a manter um matrix de regressao canonico para o contrato de blocker e para a reconciliacao de follow-up
+- a revisao de follow-up agora pode expor evidencia deterministica antes da rodada do modelo, priorizando arquivos de teste citados e reconciliando o blocker contra o checkout quando o patch vier incompleto
 
 ## Paginas
 
