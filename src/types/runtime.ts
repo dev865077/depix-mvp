@@ -39,6 +39,7 @@ export interface WorkerEnv {
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
   EULEN_API_BASE_URL: string;
   EULEN_API_TIMEOUT_MS: string;
+  ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION?: string;
   TENANT_REGISTRY: string;
   DB: D1Database;
   [bindingName: string]: unknown;

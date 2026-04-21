@@ -108,6 +108,8 @@ export async function assertHealthResponse() {
   expect(body.configuration.operations.depositsFallback.ready).toBe(false);
   expect(body.configuration.operations.depositsFallback.tenantOverrides.state).toBe("ready");
   expect(body.configuration.operations.depositsFallback.tenantOverrides.invalidCount).toBe(0);
+  expect(body.configuration.operations.scheduledDepositReconciliation.state).toBe("disabled");
+  expect(body.configuration.operations.scheduledDepositReconciliation.ready).toBe(false);
 }
 
 describe("health route", () => {

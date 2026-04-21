@@ -168,6 +168,37 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
     expect(runtimeConfig.operations.depositsFallback.state).toBe("ready");
     expect(runtimeConfig.operations.depositsFallback.ready).toBe(true);
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("disabled");
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
+  });
+
+  it("marks scheduled deposit reconciliation ready only with flag, D1 and tenant secrets", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      DB: {},
+      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
+    }));
+
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("ready");
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(true);
+  });
+
+  it("marks scheduled deposit reconciliation invalid when its flag is unknown", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      DB: {},
+      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "sim",
+    }));
+
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("invalid_config");
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
+  });
+
+  it("keeps scheduled deposit reconciliation closed when D1 is absent", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
+    }));
+
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("missing_database");
+    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
   });
 
   it("marks deposit recheck invalid when the feature flag has an unknown value", () => {

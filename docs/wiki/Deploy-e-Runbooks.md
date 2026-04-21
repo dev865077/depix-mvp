@@ -39,6 +39,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
+- o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; nesta etapa o cron fica ativo apenas em `test` e production continua com `triggers.crons = []`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 - o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
@@ -76,6 +77,33 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
 - se a consulta remota falhar, responde `502 deposit_status_unavailable`
 - recheck repetido com a mesma verdade remota e idempotente: nao duplica `deposit_events` e pode apenas reparar o agregado se um estado historico tiver ficado incompleto
+
+## Reconciliacao agendada de depositos
+
+- pre-condicao de rollout: `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`
+- mecanismo: Cloudflare Cron Triggers no Worker Module via `scheduled(controller, env, ctx)`
+- contrato async: o handler usa `ctx.waitUntil(...)`; nao cria rota HTTP e nao depende de bearer `/ops`
+- ambiente `test`: cron `*/15 * * * *` em UTC
+- ambiente `production`: `triggers.crons = []` nesta PR; habilitacao real fica para a issue #126
+- selecao por tenant: no maximo 5 depositos por execucao
+- janela: depositos Telegram pendentes nas ultimas 2 horas, com `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
+- fonte de verdade: chamada direta ao service idempotente `processDepositRecheck`, que consulta `deposit-status`
+- trilha local: eventos `deposit_events.source = "recheck_deposit_status"`
+- controle de overlap: antes da chamada remota, o cron grava um claim condicional em `scheduled_deposit_reconciliation_claims`; execucoes concorrentes ou retries nao processam a mesma linha fresca duas vezes
+- isolamento de estado: o lock do cron fica fora de `deposits.external_status`, entao leitores/escritores normais continuam vendo apenas o status de negocio do deposito
+- recuperacao de claim: o claim e removido ao final do processamento, com ou sem erro; claims antigos podem ser retomados apos a janela de stale configurada no service
+- notificacao: quando a reconciliacao muda o estado visivel para pagamento confirmado, a camada Telegram tenta notificar em modo fail-soft
+- falha isolada: erro em um deposito ou tenant e logado e nao interrompe os demais
+- idempotencia: reexecucao com a mesma verdade remota nao duplica `deposit_events`
+
+## Operacao do cron
+
+- para desligar runtime sem deploy de codigo, defina `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false`
+- para remover o trigger no ambiente gerenciado por Wrangler, use `triggers.crons = []`
+- `/health` expõe `configuration.operations.scheduledDepositReconciliation.state` e `ready`
+- estados esperados: `disabled`, `invalid_config`, `missing_database`, `missing_secret` ou `ready`
+- logs estruturados usam os eventos `ops.scheduled_deposit_reconciliation.started`, `deposit_processed`, `deposit_failed`, `tenant_failed`, `tenant_summary`, `summary` e `skipped`
+- validacao antes de merge/deploy: `npm test`, `npm run typecheck`, `npx wrangler deploy --dry-run --env test` e `npx wrangler deploy --dry-run --env production`
 
 ## Retry e precedencia
 

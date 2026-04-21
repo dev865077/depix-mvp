@@ -82,6 +82,44 @@ export function describeOpsRouteState(featureFlag, enabled, globalBearerBindingC
 export const describeDepositRecheckState = describeOpsRouteState;
 
 /**
+ * Resume o estado operacional da reconciliacao agendada.
+ *
+ * Diferente das rotas `/ops`, o cron nao depende de bearer HTTP. Ele precisa
+ * apenas de flag explicita, D1 e bindings secretos dos tenants para consultar
+ * a Eulen de forma tenant-scoped.
+ *
+ * @param {{ configured: boolean, recognized: boolean }} featureFlag Estado da flag textual.
+ * @param {boolean} enabled Resultado booleano ja normalizado para a flag.
+ * @param {boolean} databaseBindingConfigured Se o D1 existe no ambiente.
+ * @param {boolean} tenantSecretBindingsConfigured Se os tenants declaram os bindings obrigatorios.
+ * @returns {"ready" | "disabled" | "invalid_config" | "missing_database" | "missing_secret"} Estado global redigido.
+ */
+export function describeScheduledDepositReconciliationState(
+  featureFlag,
+  enabled,
+  databaseBindingConfigured,
+  tenantSecretBindingsConfigured,
+) {
+  if (featureFlag.configured && !featureFlag.recognized) {
+    return "invalid_config";
+  }
+
+  if (!enabled) {
+    return "disabled";
+  }
+
+  if (!databaseBindingConfigured) {
+    return "missing_database";
+  }
+
+  if (!tenantSecretBindingsConfigured) {
+    return "missing_secret";
+  }
+
+  return "ready";
+}
+
+/**
  * Normaliza uma flag textual de runtime.
  *
  * Flags de operacao ficam em `vars`, nao em codigo. Esta funcao trata ausencia
@@ -179,7 +217,7 @@ export function assertPositiveInteger(value, key) {
  * - tenants registrados
  * - indicadores de bindings sensiveis configurados
  *
- * @param {Record<string, string | undefined>} env Bindings recebidos do Worker.
+ * @param {Record<string, any>} env Bindings recebidos do Worker.
  * @returns {{
  *   appName: string,
  *   environment: "local" | "test" | "production",
@@ -236,6 +274,16 @@ export function assertPositiveInteger(value, key) {
  *         state: "ready" | "invalid_config",
  *         invalidCount: number
  *       }
+ *     },
+ *     scheduledDepositReconciliation: {
+ *       enabled: boolean,
+ *       featureFlag: {
+ *         configured: boolean,
+ *         recognized: boolean,
+ *         rawValue: string | null
+ *       },
+ *       state: "ready" | "disabled" | "invalid_config" | "missing_database" | "missing_secret",
+ *       ready: boolean
  *     }
  *   }
  * }} Configuracao consolidada do runtime.
@@ -267,6 +315,14 @@ export function readRuntimeConfig(env) {
     "ENABLE_OPS_DEPOSITS_FALLBACK",
   );
   const depositsFallbackFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSITS_FALLBACK);
+  const scheduledDepositReconciliationEnabled = readBooleanFlag(
+    env.ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION,
+    "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION",
+  );
+  const scheduledDepositReconciliationFlagState = describeBooleanFlagState(
+    env.ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION,
+  );
+  const databaseBindingConfigured = Boolean(env.DB);
   const globalBearerBindingConfigured = isSecretBindingConfigured(env.OPS_ROUTE_BEARER_TOKEN);
   const invalidTenantOverrideCount = countInvalidTenantScopedDepositRecheckOverrides(env, tenants);
   const depositRecheckState = describeOpsRouteState(
@@ -279,6 +335,12 @@ export function readRuntimeConfig(env) {
     depositsFallbackEnabled,
     globalBearerBindingConfigured,
   );
+  const scheduledDepositReconciliationState = describeScheduledDepositReconciliationState(
+    scheduledDepositReconciliationFlagState,
+    scheduledDepositReconciliationEnabled,
+    databaseBindingConfigured,
+    hasTenantSecretBindings,
+  );
 
   return {
     appName,
@@ -287,7 +349,7 @@ export function readRuntimeConfig(env) {
     eulenApiBaseUrl,
     eulenApiTimeoutMs,
     database: {
-      bindingConfigured: Boolean(env.DB),
+      bindingConfigured: databaseBindingConfigured,
     },
     tenants,
     secrets: {
@@ -316,6 +378,12 @@ export function readRuntimeConfig(env) {
           state: invalidTenantOverrideCount > 0 ? "invalid_config" : "ready",
           invalidCount: invalidTenantOverrideCount,
         },
+      },
+      scheduledDepositReconciliation: {
+        enabled: scheduledDepositReconciliationEnabled,
+        featureFlag: scheduledDepositReconciliationFlagState,
+        state: scheduledDepositReconciliationState,
+        ready: scheduledDepositReconciliationState === "ready",
       },
     },
   };

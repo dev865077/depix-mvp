@@ -43,6 +43,14 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
   "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
+  `CREATE TABLE IF NOT EXISTS scheduled_deposit_reconciliation_claims (
+    tenant_id TEXT NOT NULL,
+    deposit_entry_id TEXT NOT NULL,
+    claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (tenant_id, deposit_entry_id),
+    FOREIGN KEY (deposit_entry_id) REFERENCES deposits(deposit_entry_id) ON DELETE CASCADE
+  )`,
+  "CREATE INDEX IF NOT EXISTS scheduled_deposit_reconciliation_claims_claimed_at_idx ON scheduled_deposit_reconciliation_claims (claimed_at)",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -117,6 +125,7 @@ export async function resetDatabaseSchema() {
     "DROP TABLE IF EXISTS deposit_order_duplicate_event_quarantine",
     "DROP TABLE IF EXISTS deposit_order_duplicate_quarantine",
     "DROP TABLE IF EXISTS deposit_events",
+    "DROP TABLE IF EXISTS scheduled_deposit_reconciliation_claims",
     "DROP TABLE IF EXISTS deposits",
     "DROP TABLE IF EXISTS orders",
     ...CURRENT_SCHEMA_STATEMENTS,

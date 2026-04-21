@@ -2143,7 +2143,18 @@ describe("ai pr review discussion rendering", () => {
             },
             {
               author: { login: "github-actions" },
-              body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Request changes`",
+              body: [
+                "<!-- ai-pr-discussion-final:openai -->",
+                "## Discussion status",
+                "",
+                "Discussion concluded: unanimous approval was not reached across the specialist reviewer roles.",
+                "",
+                "## Acceptance tests requested",
+                "",
+                "- Roles `risk` -> `package.json`: protect `npm run typecheck` succeeds on a fresh install without relying on undeclared ambient Cloudflare globals.; minimum scenario: Run `npm ci && npm run typecheck` in a clean environment.; essential assertions: `tsc` resolves the `Cloudflare` namespace used by `worker-configuration.d.ts` and exits 0.; resolution condition: Add the missing Cloudflare worker type reference/package to the TS config or generated type inputs, then rerun the clean typecheck.",
+                "",
+                "Final recommendation: `Request changes`",
+              ].join("\n"),
             },
             {
               author: { login: "dev865077" },
@@ -2163,6 +2174,59 @@ describe("ai pr review discussion rendering", () => {
 
     expect(unresolved).toHaveLength(1);
     expect(unresolved[0].missingSignals).toContain("essential_assertion_or_behavior_marker");
+  });
+
+  it("uses the newest automated final reply instead of the original root blocker body", () => {
+    const finalComment = {
+      body: [
+        "## Discussion status",
+        "",
+        "## Acceptance tests requested",
+        "",
+        "- Roles `risk` -> `test/scheduled-deposit-reconciliation.test.js`: protect Overlapping scheduled executions must not process the same deposit twice.; minimum scenario: Start two scheduled runs against the same seeded pending Telegram deposit before the first finishes.; essential assertions: Only one run processes the row; the second exits or skips it, and no duplicate deposit event / Telegram notification is created.; resolution condition: Add a lock or idempotent claim step around the scheduled selection window.",
+      ].join("\n"),
+      replies: {
+        nodes: [
+          {
+            author: { login: "dev865077" },
+            body: "Old handoff before the blocker cleared.",
+          },
+          {
+            author: { login: "github-actions" },
+            body: [
+              "<!-- ai-pr-discussion-final:openai -->",
+              "## Discussion status",
+              "",
+              "Discussion concluded: all specialist reviewer roles returned `Approve`.",
+              "",
+              "Final recommendation: `Approve`",
+            ].join("\n"),
+          },
+        ],
+      },
+    };
+
+    expect(extractFollowUpPriorityPaths(finalComment)).toEqual([]);
+    expect(collectFollowUpEvidenceRecords(
+      finalComment,
+      [
+        {
+          filename: "test/scheduled-deposit-reconciliation.test.js",
+          patch: "@@\n+it('prevents overlap')",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    )).toEqual([]);
+    expect(reconcileFollowUpTestableBlockers(
+      finalComment,
+      [
+        {
+          filename: "test/scheduled-deposit-reconciliation.test.js",
+          patch: "@@\n+it('prevents overlap')",
+        },
+      ],
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    )).toEqual([]);
   });
 
   it("turns unresolved follow-up blockers into deterministic request-changes memos", () => {
