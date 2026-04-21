@@ -299,6 +299,29 @@ describe("ops telegram webhook routes", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the global ops bearer binding is not configured", async function assertMissingOpsBearerBinding() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { response, body } = await requestJson(
+      app,
+      "https://example.com/ops/alpha/telegram/webhook-info",
+      {
+        method: "GET",
+        headers: {
+          authorization: "Bearer ops-route-test-token",
+        },
+      },
+      createWorkerEnv({
+        OPS_ROUTE_BEARER_TOKEN: undefined,
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(body.error.code).toBe("ops_route_disabled");
+    expect(body.error.details.bindingName).toBe("OPS_ROUTE_BEARER_TOKEN");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("requires bearer auth on webhook registration even when local diagnostics are enabled", async function assertRegisterRouteAuthBoundary() {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
