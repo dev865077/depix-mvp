@@ -1903,6 +1903,32 @@ export function isCiTestCheckGreen(statusCheckContexts) {
 }
 
 /**
+ * Extract the linked pull request number from a workflow_run event payload.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @returns {number | null} Linked pull request number or null when absent.
+ */
+export function extractWorkflowRunPullRequestNumber(event) {
+  const candidate = event?.workflow_run?.pull_requests?.[0]?.number;
+  return Number.isInteger(candidate) && candidate > 0 ? candidate : null;
+}
+
+/**
+ * Decide whether a discussion-side rerun must wait for the canonical CI / Test
+ * result instead of generating another blocking round from stale status data.
+ *
+ * @param {string} eventName GitHub event name.
+ * @param {{ id?: string } | null} latestFinalComment Latest automated final comment.
+ * @param {Array<any>} statusCheckContexts Current PR status contexts.
+ * @returns {boolean} True when the rerun must defer until CI is green.
+ */
+export function shouldDeferDiscussionReviewUntilCiGreen(eventName, latestFinalComment, statusCheckContexts) {
+  return eventName === "discussion_comment"
+    && Boolean(latestFinalComment?.id)
+    && !isCiTestCheckGreen(statusCheckContexts);
+}
+
+/**
  * Build stable diff-evidence needles from one blocker field.
  *
  * Full fields stay in play, but code-ish fragments inside backticks also count
@@ -2240,8 +2266,30 @@ async function resolvePullRequestContext(repository, event) {
     return null;
   }
 
+  const workflowRunPullRequestNumber = extractWorkflowRunPullRequestNumber(event);
+
+  if (workflowRunPullRequestNumber) {
+    const pullRequest = await fetchPullRequest(repository, workflowRunPullRequestNumber);
+
+    if (pullRequest.state !== "open") {
+      logOperationalEvent("ai_pr_review.skip", {
+        reason: "workflow_run_pull_request_not_open",
+        pullRequestNumber: workflowRunPullRequestNumber,
+      });
+      return null;
+    }
+
+    return {
+      pullRequest,
+      discussion: null,
+    };
+  }
+
   if (!event.discussion?.number) {
-    throw new Error("Unsupported GitHub event for AI PR review.");
+    logOperationalEvent("ai_pr_review.skip", {
+      reason: event?.workflow_run ? "workflow_run_not_linked_to_pull_request" : "unsupported_event",
+    });
+    return null;
   }
 
   const [owner, name] = repository.split("/");
@@ -2851,11 +2899,12 @@ export function buildAutomationEvidenceContext(inputs) {
   if (
     hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
     && prReviewWorkflow.includes("discussion_comment:")
+    && prReviewWorkflow.includes("workflow_run:")
     && prReviewWorkflow.includes("discussion-review:")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` and `discussion_comment` both route into the same workflow, and the `discussion-review` job requests `discussions: write` for Discussion publication.",
+      "- Current PR review workflow state: `pull_request` still classifies the lane, `workflow_run` re-enters the Discussion lane after `CI` completes, and `discussion_comment` remains available for reruns while the `discussion-review` job requests `discussions: write` for Discussion publication.",
     );
   }
 
@@ -3925,6 +3974,7 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
 async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
+  const eventName = process.env.GITHUB_EVENT_NAME?.trim() || "";
   const runMode = process.env.AI_PR_REVIEW_MODE?.trim() || RUN_MODE_AUTO;
   const reviewPromptPath = process.env.AI_REVIEW_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-review.md";
   const doctrinePromptPath = process.env.AI_PR_DISCUSSION_DOCTRINE_PATH?.trim() || ".github/prompts/ai-pr-review-doctrine.md";
@@ -4014,6 +4064,26 @@ async function main() {
   );
 
   if (gate.requiresDiscussion) {
+    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
+    const statusCheckContexts = latestFinalComment
+      ? await fetchPullRequestStatusCheckRollup(repository, pullRequest.number)
+      : [];
+
+    if (shouldDeferDiscussionReviewUntilCiGreen(eventName, latestFinalComment, statusCheckContexts)) {
+      logOperationalEvent("ai_pr_review.skip", {
+        reason: "awaiting_green_ci_test",
+        pullRequestNumber: pullRequest.number,
+        discussionNumber: discussionThread?.number ?? discussion?.number ?? null,
+      });
+      await writeStepSummary([
+        "## AI PR Review deferred",
+        "",
+        "Discussion rerun skipped because the current `CI / Test` check is not green yet.",
+        "The next `workflow_run` event from `CI` will re-run the discussion lane after the canonical test result is available.",
+      ].join("\n"));
+      return;
+    }
+
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
       readPrompt(doctrinePromptPath),
       readPrompt(productPromptPath),
@@ -4032,10 +4102,7 @@ async function main() {
       userPrompt,
       model,
     );
-    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
-
     if (latestFinalComment) {
-      const statusCheckContexts = await fetchPullRequestStatusCheckRollup(repository, pullRequest.number);
       const unresolvedFollowUpBlockers = reconcileFollowUpTestableBlockers(
         latestFinalComment,
         files,

@@ -25,6 +25,7 @@ import {
   applyFollowUpReconciliationToDebate,
   classifyGitHubOperationalFailure,
   evaluateDiscussionRecommendation,
+  extractWorkflowRunPullRequestNumber,
   extractConclusionThreadTestFileCitations,
   extractDiscussionUrlFromComment,
   extractFollowUpTestableBlockers,
@@ -36,6 +37,7 @@ import {
   reconcileFollowUpTestableBlockers,
   sanitizePublishedMarkdown,
   selectDiscussionCategory,
+  shouldDeferDiscussionReviewUntilCiGreen,
   sortFilesForReview,
   summarizeDiscussionBlockingContracts,
   summarizePullRequestScope,
@@ -1810,6 +1812,37 @@ describe("ai pr review discussion rendering", () => {
     ])).toBe(false);
   });
 
+  it("extracts the linked pull request number from workflow_run payloads", () => {
+    expect(extractWorkflowRunPullRequestNumber({
+      workflow_run: {
+        pull_requests: [{ number: 247 }],
+      },
+    })).toBe(247);
+    expect(extractWorkflowRunPullRequestNumber({
+      workflow_run: {
+        pull_requests: [],
+      },
+    })).toBeNull();
+  });
+
+  it("defers discussion-comment reruns until the canonical CI / Test check is green", () => {
+    expect(shouldDeferDiscussionReviewUntilCiGreen(
+      "discussion_comment",
+      { id: "final-comment" },
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" }],
+    )).toBe(true);
+    expect(shouldDeferDiscussionReviewUntilCiGreen(
+      "discussion_comment",
+      { id: "final-comment" },
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }],
+    )).toBe(false);
+    expect(shouldDeferDiscussionReviewUntilCiGreen(
+      "workflow_run",
+      { id: "final-comment" },
+      [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "FAILURE" }],
+    )).toBe(false);
+  });
+
   it("keeps a follow-up blocker when the suggested test file is not in the diff", () => {
     const unresolved = reconcileFollowUpTestableBlockers(
       {
@@ -2091,7 +2124,7 @@ describe("ai pr review discussion rendering", () => {
     expect(partialEvidence[0].missingSignals).toContain("ci_test_green");
   });
 
-  it("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow", () => {
+  it("pins the workflow-run discussion entrypoint and discussion-review write permissions in the workflow", () => {
     const evidence = buildAutomationEvidenceContext({
       files: [
         { filename: ".github/workflows/ai-pr-review.yml" },
@@ -2106,8 +2139,12 @@ describe("ai pr review discussion rendering", () => {
       prReviewWorkflow: [
         "on:",
         "  discussion_comment:",
+        "  workflow_run:",
+        "    workflows:",
+        "      - CI",
         "jobs:",
         "  discussion-review:",
+        "    if: github.event_name != 'pull_request'",
         "    permissions:",
         "      discussions: write",
       ].join("\n"),
@@ -2120,6 +2157,8 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewScript: [
         "resolvePullRequestContext();",
+        "extractWorkflowRunPullRequestNumber();",
+        "shouldDeferDiscussionReviewUntilCiGreen();",
         "buildDiscussionHistoryContext();",
         "replyToId: latestFinalComment?.id ?? null,",
       ].join("\n"),
@@ -2134,7 +2173,7 @@ describe("ai pr review discussion rendering", () => {
       ].join("\n"),
       prReviewTests: [
         "keeps Blocked planning-only by rejecting it in PR review recommendations",
-        "pins the discussion-comment entrypoint and discussion-review write permissions in the workflow",
+        "pins the workflow-run discussion entrypoint and discussion-review write permissions in the workflow",
       ].join("\n"),
       planningTests: "pins planning workflow outputs in the operator summary",
       triageTests: [
@@ -2145,6 +2184,7 @@ describe("ai pr review discussion rendering", () => {
 
     expect(evidence).toContain("## Automation contract evidence");
     expect(evidence).toContain("discussion-review");
+    expect(evidence).toContain("workflow_run");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
     expect(evidence).toContain("medio -> direct_pr");
