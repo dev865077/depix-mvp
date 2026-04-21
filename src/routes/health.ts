@@ -92,6 +92,10 @@ export function handleHealth(c: AppContext): Response {
           ready: runtimeConfig.operations.depositsFallback.ready,
           tenantOverrides: runtimeConfig.operations.depositsFallback.tenantOverrides,
         },
+        scheduledDepositReconciliation: {
+          state: runtimeConfig.operations.scheduledDepositReconciliation.state,
+          ready: runtimeConfig.operations.scheduledDepositReconciliation.ready,
+        },
       },
     },
   });

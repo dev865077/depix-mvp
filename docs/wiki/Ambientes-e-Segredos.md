@@ -27,6 +27,7 @@ Tambem existe uma flag operacional explicita:
 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` para habilitar de fato `POST /ops/:tenantId/recheck/deposit`
 - `ENABLE_OPS_DEPOSITS_FALLBACK=true` para habilitar de fato `POST /ops/:tenantId/reconcile/deposits`
+- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` para habilitar a reconciliação agendada via Cloudflare Cron Trigger
 
 ## Como o runtime resolve isso
 
@@ -68,12 +69,15 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `opsBindings.depositRecheckBearerToken`: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
 - `ENABLE_OPS_DEPOSITS_FALLBACK=false` ou ausente: o fallback por janela responde `503 ops_deposits_fallback_disabled`, mesmo que o recheck por deposito esteja habilitado
 - `ENABLE_OPS_DEPOSITS_FALLBACK=true` usa o mesmo bearer operacional, mas abre apenas `POST /ops/:tenantId/reconcile/deposits`
+- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` ou ausente: o cron faz skip operacional e nao chama Eulen
+- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` exige D1 e secrets por tenant configurados; nao exige `OPS_ROUTE_BEARER_TOKEN`, porque nao passa por HTTP
+- `wrangler.jsonc` habilita Cron Trigger apenas no env `test`; em `production`, `triggers.crons = []` remove triggers ate a habilitacao controlada de #126
 
 ## Ambientes de lancamento
 
 - `local`: pode habilitar para desenvolvimento e testes locais
-- `test`: deve receber a flag da rota operacional desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional por configuracao de ambiente antes da validacao real; o valor nao fica ligado no `wrangler.jsonc` versionado
-- `production`: deve receber a flag da rota operacional desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional por configuracao de ambiente antes de qualquer uso de suporte; o valor nao fica ligado no `wrangler.jsonc` versionado
+- `test`: recebe `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` e cron `*/15 * * * *` versionados para validacao controlada; rotas `/ops` continuam dependendo das flags e secrets proprios
+- `production`: fica com `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` e `triggers.crons = []` ate #126; rotas `/ops` devem receber a flag desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional antes de uso de suporte
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 

@@ -216,6 +216,55 @@ export async function listDepositsNeedingQrIdReconciliation(db, tenantId) {
     return result.results;
 }
 /**
+ * Lista depositos Telegram pendentes elegiveis para o cron bounded.
+ *
+ * A selecao cruza o agregado de pedido para evitar reconciliar cobrancas fora
+ * do fluxo visivel `awaiting_payment`/`pending`. O limite e normalizado antes
+ * do bind para garantir que chamada malformada nao vire varredura ilimitada.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} sinceIso Limite inferior da janela de reconciliacao.
+ * @param {number} limit Limite maximo por tenant.
+ * @returns {Promise<DepositRecord[]>} Depositos candidatos em ordem de antiguidade.
+ */
+export async function listPendingTelegramDepositsForScheduledReconciliation(db, tenantId, sinceIso, limit) {
+    const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 0;
+    if (normalizedLimit === 0) {
+        return [];
+    }
+    const result = await db.prepare(`
+    SELECT
+      d.tenant_id AS tenantId,
+      d.deposit_entry_id AS depositEntryId,
+      d.qr_id AS qrId,
+      d.order_id AS orderId,
+      d.nonce AS nonce,
+      d.qr_copy_paste AS qrCopyPaste,
+      d.qr_image_url AS qrImageUrl,
+      d.external_status AS externalStatus,
+      d.expiration AS expiration,
+      d.created_at AS createdAt,
+      d.updated_at AS updatedAt
+    FROM deposits d
+    INNER JOIN orders o
+      ON o.tenant_id = d.tenant_id
+     AND o.order_id = d.order_id
+    WHERE d.tenant_id = ?
+      AND o.channel = 'telegram'
+      AND o.current_step = 'awaiting_payment'
+      AND o.status = 'pending'
+      AND d.external_status = 'pending'
+      AND (
+        julianday(d.updated_at) >= julianday(?)
+        OR julianday(d.created_at) >= julianday(?)
+      )
+    ORDER BY julianday(d.updated_at) ASC, julianday(d.created_at) ASC
+    LIMIT ?
+  `).bind(tenantId, sinceIso, sinceIso, normalizedLimit).all();
+    return result.results;
+}
+/**
  * Atualiza parcialmente um deposito usando `depositEntryId` como ancora local.
  *
  * @param {D1Database} db Database D1.
