@@ -474,6 +474,31 @@ export function buildMalformedBlockerContractMemo(role, reason) {
 }
 
 /**
+ * Enforce blocker-contract shape only for specialist memos that request changes.
+ *
+ * @param {string} role Human-readable reviewer role.
+ * @param {string} reviewText Raw specialist memo.
+ * @param {(reason: string) => void} [onMalformed] Optional malformed callback.
+ * @returns {string} Original memo or deterministic malformed-contract memo.
+ */
+export function normalizeSpecialistReviewMemo(role, reviewText, onMalformed = () => {}) {
+  const recommendation = assertValidReviewRecommendation(reviewText);
+
+  if (recommendation === "Approve") {
+    return reviewText;
+  }
+
+  const contract = parseBlockingRoleContract(reviewText);
+
+  if (contract.status === "malformed") {
+    onMalformed(contract.reason);
+    return buildMalformedBlockerContractMemo(role, contract.reason);
+  }
+
+  return reviewText;
+}
+
+/**
  * Collapse one blocker-contract field into a stable one-line summary value.
  *
  * @param {string} value Raw field value.
@@ -3722,17 +3747,12 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
       return buildModelFailureMemo(roleNames[index], result.reason);
     }
 
-    const contract = parseBlockingRoleContract(result.value);
-
-    if (contract.status === "malformed") {
+    return normalizeSpecialistReviewMemo(roleNames[index], result.value, (reason) => {
       logOperationalEvent("ai_pr_review.blocker_contract.malformed", {
         role: roleNames[index],
-        reason: contract.reason,
+        reason,
       });
-      return buildMalformedBlockerContractMemo(roleNames[index], contract.reason);
-    }
-
-    return result.value;
+    });
   });
 
   console.log("Specialist PR review memos completed. Starting synthesis.");

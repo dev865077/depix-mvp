@@ -36,6 +36,7 @@ import {
   getReviewGateFailure,
   isCiTestCheckGreen,
   isCompletedCiWorkflowRunEvent,
+  normalizeSpecialistReviewMemo,
   parseBlockingRoleContract,
   redactActionsLogSecrets,
   reconcileFollowUpTestableBlockers,
@@ -1054,6 +1055,50 @@ describe("ai pr review discussion rendering", () => {
         reason: "Malformed blocker contract from Technical and architecture: Missing required field: Testability.",
       },
     ]);
+  });
+
+  it("requires blocker contracts only for specialist memos that request changes", () => {
+    const approveMemo = [
+      "## Perspective",
+      "The change is ready.",
+      "",
+      "## Findings",
+      "- None.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Ready.",
+      "",
+      "## Recommendation",
+      "Approve",
+    ].join("\n");
+    const malformedBlockingMemo = [
+      "## Perspective",
+      "One blocker remains.",
+      "",
+      "## Findings",
+      "- The blocker exists.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Merge posture",
+      "Not ready.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+    const malformedReasons = [];
+
+    expect(normalizeSpecialistReviewMemo("Technical and architecture", approveMemo)).toBe(approveMemo);
+    expect(normalizeSpecialistReviewMemo(
+      "Technical and architecture",
+      malformedBlockingMemo,
+      (reason) => malformedReasons.push(reason),
+    )).toContain("Malformed blocker contract from Technical and architecture");
+    expect(malformedReasons).toEqual(["Missing required section: ## Blocker contract."]);
   });
 
   it("fails closed for raw malformed blocking memos in the aggregation path", () => {
