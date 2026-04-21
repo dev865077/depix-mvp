@@ -27,6 +27,7 @@
 - `impact` e sinal descritivo; a rota depende de clareza, risco, dependencias e necessidade de decisao compartilhada
 - `direct_pr` segue direto para Codex quando a issue publicar `ready_for_codex: true`
 - `discussion_before_pr` nao cria Discussion na triagem; ele aciona a lane de planning review, que cria ou reutiliza uma unica Discussion canonica via API
+- a issue em si passa a ser consolidada pela automacao via API: o corpo recebe uma secao canonica gerenciada que sintetiza estado, rota, blockers e handoff
 - quando a rota e `discussion_before_pr`, a triagem dispara explicitamente o workflow de planning por `workflow_dispatch`, em vez de depender de comentario criado pelo bot para acionar outro `issue_comment`
 - o workflow de planning foi endurecido para nao manter portas paralelas de entrada por `issues` ou `issue_comment`; o contrato canonico agora e a decisao da triagem + `workflow_dispatch`
 - a planning review roda quatro papeis especializados: produto, technical, scrum e risk
@@ -34,6 +35,7 @@
 - em follow-up, a revisao deve tambem carregar os ultimos memos especialistas antes de formular novos bloqueios, para evitar mover o alvo da discussao
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
 - a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis e a propria issue publicar `canonical_state: issue_ready_for_codex`
+- o corpo humano da issue continua sendo a fonte editavel pelo operador; a secao gerenciada da automacao fica abaixo e e reescrita a cada rodada sem destruir o texto humano
 - quando a planning review concluir `Blocked`, a issue nao esta rejeitada; ela esta especificada, mas ainda depende de trabalho upstream explicito antes da implementacao
 - na review de PR por IA, qualquer `Request changes` precisa publicar um `## Blocker contract` canonico no memo, ou o resultado e tratado como invalido pela automacao
 - o contrato canonico de blocker usa os mesmos rotulos em product, technical e risk para manter decisao consistente entre roles

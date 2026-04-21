@@ -21,6 +21,7 @@
 - `direct_pr` so vale quando o escopo ja esta claro, limitado e executavel sem rodada de planning
 - `discussion_before_pr` vale quando ainda falta decisao compartilhada sobre escopo, decomposicao, arquitetura, operacao, risco ou dependencias
 - a triagem automatica registra justificativa, debate resumido, racional de rota e proximo passo na propria issue
+- a triagem automatica tambem atualiza uma secao canônica gerenciada por API no corpo da propria issue; o texto humano continua acima dessa secao
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
 - o planning nao deve ouvir `issues` nem `issue_comment` como entrada automatica paralela; esses gatilhos redundantes foram removidos para manter uma unica porta canonica de planejamento
@@ -34,6 +35,7 @@
   - `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
 - quando o planning aprova, ele publica na propria issue `canonical_state: issue_ready_for_codex` e `ready_for_codex: true`
+- durante o planning, a automacao tambem reescreve a secao gerenciada do corpo da issue com sintese de produto, tecnica, scrum e risco, para que a issue amadureca sem depender de Codex
 - Codex so deve entrar para abrir branch e PR depois desse handoff canonico ou quando a triage direta publicar `ready_for_codex: true`
 - a thread canonica de cada nova rodada e a reply humana na conclusao mais recente da Discussion
 - a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte

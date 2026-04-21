@@ -19,6 +19,8 @@ const DISCUSSION_COMMENT_MARKER = "<!-- ai-issue-planning-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-issue-planning-final:openai -->";
 const ISSUE_PLANNING_STATUS_MARKER = "<!-- ai-issue-planning-status:openai -->";
 const ISSUE_TRIAGE_COMMENT_MARKER = "<!-- ai-issue-triage:openai -->";
+const ISSUE_AUTOMATION_START_MARKER = "<!-- ai-issue-automation:start -->";
+const ISSUE_AUTOMATION_END_MARKER = "<!-- ai-issue-automation:end -->";
 const ISSUE_TITLE_PREFIX = "[Issue #";
 const ROUTE_DIRECT_PR = "direct_pr";
 const ROUTE_DISCUSSION_BEFORE_PR = "discussion_before_pr";
@@ -149,6 +151,73 @@ function truncateText(value, maxLength) {
   }
 
   return `${value.slice(0, maxLength)}\n... [truncated]`;
+}
+
+/**
+ * Remove the automation-managed issue section while preserving the human body.
+ *
+ * @param {string | null | undefined} body Current issue body.
+ * @returns {string} Body without the managed section.
+ */
+export function stripIssueAutomationSection(body) {
+  if (typeof body !== "string" || body.length === 0) {
+    return "";
+  }
+
+  const sectionPattern = new RegExp(
+    `${ISSUE_AUTOMATION_START_MARKER}[\\s\\S]*?${ISSUE_AUTOMATION_END_MARKER}\\n?`,
+    "g",
+  );
+
+  return body
+    .replace(sectionPattern, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Upsert the automation-managed issue section onto the human-authored body.
+ *
+ * @param {string | null | undefined} body Current issue body.
+ * @param {string} managedSection Managed markdown section.
+ * @returns {string} Final issue body.
+ */
+export function upsertIssueAutomationSection(body, managedSection) {
+  const humanBody = stripIssueAutomationSection(body);
+  const trimmedSection = typeof managedSection === "string" ? managedSection.trim() : "";
+
+  if (!trimmedSection) {
+    return humanBody;
+  }
+
+  const managedBlock = [
+    ISSUE_AUTOMATION_START_MARKER,
+    trimmedSection,
+    ISSUE_AUTOMATION_END_MARKER,
+  ].join("\n");
+
+  return humanBody
+    ? `${humanBody}\n\n${managedBlock}`
+    : managedBlock;
+}
+
+/**
+ * Extract one level-2 markdown section by heading.
+ *
+ * @param {string | null | undefined} markdown Markdown document.
+ * @param {string} heading Exact heading text without leading hashes.
+ * @returns {string} Section body without the heading.
+ */
+export function extractMarkdownSection(markdown, heading) {
+  if (typeof markdown !== "string" || typeof heading !== "string" || markdown.trim().length === 0 || heading.trim().length === 0) {
+    return "";
+  }
+
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sectionPattern = new RegExp(`^##\\s+${escapedHeading}\\s*$([\\s\\S]*?)(?=^##\\s+|\\Z)`, "im");
+  const match = markdown.match(sectionPattern);
+
+  return match?.[1]?.trim() ?? "";
 }
 
 /**
@@ -1214,6 +1283,8 @@ export function extractIssueTriageRouteFromComments(comments) {
  * @returns {string} Markdown Discussion body.
  */
 export function buildIssuePlanningDiscussionBody(issue, triageCommentBody = null) {
+  const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
+
   return [
     `Issue origem: #${issue.number} - [${issue.title}](${issue.html_url ?? issue.url})`,
     "",
@@ -1229,7 +1300,7 @@ export function buildIssuePlanningDiscussionBody(issue, triageCommentBody = null
     "ready_for_pr: `false`",
     "",
     "## Contexto da issue",
-    truncateText(issue.body ?? "[sem descricao]", MAX_ISSUE_BODY_CHARS),
+    truncateText(humanIssueBody || "[sem descricao]", MAX_ISSUE_BODY_CHARS),
     "",
     "## Triage",
     truncateText(triageCommentBody ?? "[sem triage automatica encontrada]", MAX_ISSUE_COMMENT_CHARS),
@@ -1278,6 +1349,80 @@ export function buildIssuePlanningStatusComment(recommendation, discussionUrl, b
 }
 
 /**
+ * Build the automation-managed issue section for the planning lane.
+ *
+ * @param {{
+ *   recommendation: "Approve" | "Blocked" | "Request changes",
+ *   discussionUrl: string,
+ *   blockingRoles?: string[],
+ *   debate: { product: string, technical: string, scrum: string, risk: string },
+ *   model: string
+ * }} input Planning synthesis input.
+ * @returns {string} Managed issue section.
+ */
+export function buildIssuePlanningAutomationSection(input) {
+  const isApproved = input.recommendation === "Approve";
+  const isBlocked = input.recommendation === "Blocked";
+  const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
+  const canonicalState = isApproved
+    ? "issue_ready_for_codex"
+    : isBlocked
+      ? "issue_planning_blocked"
+      : "issue_planning_request_changes";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
+  const roleSections = [
+    ["Product", input.debate.product],
+    ["Technical", input.debate.technical],
+    ["Scrum", input.debate.scrum],
+    ["Risk", input.debate.risk],
+  ].flatMap(([role, memo]) => {
+    const findings = extractMarkdownSection(memo, "Findings") || "- None.";
+    const backlogPosture = extractMarkdownSection(memo, "Backlog posture") || "[missing backlog posture]";
+
+    return [
+      `### ${role}`,
+      "",
+      "Findings:",
+      findings,
+      "",
+      "Backlog posture:",
+      backlogPosture,
+      "",
+    ];
+  });
+  const handoff = isApproved
+    ? "Codex may open the implementation branch and PR now. Use the human-authored issue text above plus linked child issues as the backlog contract; no further planning round is required."
+    : isBlocked
+      ? "Do not open a branch yet. Wait for the explicit upstream dependency to land, then reply in the latest planning conclusion thread to trigger the next round."
+      : "Do not open a branch yet. Update the human-authored issue text above to close the blockers below, then reply in the latest planning conclusion thread to trigger the next round.";
+
+  return [
+    "## Canonical automation handoff",
+    "",
+    "This section is maintained by the GitHub automation lane. Update the human issue text above it; the workflow rewrites only this managed section.",
+    "",
+    `model: \`${input.model}\``,
+    `planning_discussion: ${input.discussionUrl}`,
+    `final_recommendation: \`${input.recommendation}\``,
+    `canonical_state: \`${canonicalState}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_codex: \`${String(isApproved)}\``,
+    `ready_for_branch: \`${String(isApproved)}\``,
+    `ready_for_pr: \`${String(isApproved)}\``,
+    `blocked_by_dependencies: \`${String(isBlocked)}\``,
+    `blocking_roles: \`${blockingRoles.join(",")}\``,
+    "",
+    "## Planning synthesis",
+    "",
+    ...roleSections,
+    "## Codex handoff",
+    handoff,
+  ].join("\n");
+}
+
+/**
  * Build the shared user payload for every planning reviewer role.
  *
  * @param {string} repository Repository in owner/name form.
@@ -1288,6 +1433,7 @@ export function buildIssuePlanningStatusComment(recommendation, discussionUrl, b
  * @returns {string} Final user payload.
  */
 export function buildIssuePlanningUserPrompt(repository, issue, childIssues, issueComments, discussionContext) {
+  const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
   const childIssueSections = childIssues.length > 0
     ? childIssues.map((childIssue) => [
       `### #${childIssue.number} - ${childIssue.title}`,
@@ -1305,7 +1451,7 @@ export function buildIssuePlanningUserPrompt(repository, issue, childIssues, iss
     `URL: ${issue.html_url ?? issue.url ?? "[unknown]"}`,
     "",
     "## Root issue body",
-    truncateText(issue.body ?? "", MAX_ISSUE_BODY_CHARS) || "[no description provided]",
+    truncateText(humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no description provided]",
     "",
     "## Referenced child or dependency issues",
     ...childIssueSections,
@@ -1544,6 +1690,25 @@ async function upsertIssuePlanningStatusComment(repoFullName, issueNumber, body)
 
   await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/${issueNumber}/comments`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+}
+
+/**
+ * Update the issue body with the latest automation-managed planning section.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber Issue number.
+ * @param {string | null | undefined} currentBody Current issue body.
+ * @param {string} managedSection Managed markdown section.
+ * @returns {Promise<void>} Resolves when the issue body is persisted.
+ */
+async function updateIssueBodyAutomationSection(repoFullName, issueNumber, currentBody, managedSection) {
+  const body = upsertIssueAutomationSection(currentBody, managedSection);
+
+  await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/${issueNumber}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ body }),
   });
@@ -2025,7 +2190,10 @@ async function main() {
     fetchIssueComments(repository, context.issue.number),
   ]);
 
-  const referencedIssueNumbers = parseReferencedIssueNumbers(context.issue.body ?? "", context.issue.number);
+  const referencedIssueNumbers = parseReferencedIssueNumbers(
+    stripIssueAutomationSection(context.issue.body ?? ""),
+    context.issue.number,
+  );
   const childIssues = await fetchReferencedChildIssues(repository, referencedIssueNumbers);
   const discussionContext = buildDiscussionHistoryContext(context.discussion);
 
@@ -2062,6 +2230,19 @@ async function main() {
       { isFollowUpRound: Boolean(latestFinalComment) },
     ),
     latestFinalComment?.id ?? null,
+  );
+
+  await updateIssueBodyAutomationSection(
+    repository,
+    context.issue.number,
+    context.issue.body ?? "",
+    buildIssuePlanningAutomationSection({
+      recommendation: evaluation.recommendation,
+      discussionUrl: context.discussion.url,
+      blockingRoles: evaluation.blockingRoles,
+      debate,
+      model,
+    }),
   );
 
   await upsertIssuePlanningStatusComment(

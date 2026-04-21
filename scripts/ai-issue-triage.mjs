@@ -12,6 +12,8 @@ import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const TRIAGE_MARKER = "<!-- ai-issue-triage:openai -->";
+const ISSUE_AUTOMATION_START_MARKER = "<!-- ai-issue-automation:start -->";
+const ISSUE_AUTOMATION_END_MARKER = "<!-- ai-issue-automation:end -->";
 const IMPACT_LEVELS = new Set(["baixo", "medio", "alto"]);
 const ROUTE_DIRECT_PR = "direct_pr";
 const ROUTE_DISCUSSION_BEFORE_PR = "discussion_before_pr";
@@ -510,6 +512,105 @@ export function buildIssueCommentBody(plan, model) {
 }
 
 /**
+ * Remove the automation-managed issue section while preserving the human body.
+ *
+ * @param {string | null | undefined} body Current issue body.
+ * @returns {string} Body without the managed section.
+ */
+export function stripIssueAutomationSection(body) {
+  if (typeof body !== "string" || body.length === 0) {
+    return "";
+  }
+
+  const sectionPattern = new RegExp(
+    `${ISSUE_AUTOMATION_START_MARKER}[\\s\\S]*?${ISSUE_AUTOMATION_END_MARKER}\\n?`,
+    "g",
+  );
+
+  return body
+    .replace(sectionPattern, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Upsert the automation-managed issue section onto the human-authored body.
+ *
+ * @param {string | null | undefined} body Current issue body.
+ * @param {string} managedSection Managed markdown section.
+ * @returns {string} Final issue body.
+ */
+export function upsertIssueAutomationSection(body, managedSection) {
+  const humanBody = stripIssueAutomationSection(body);
+  const trimmedSection = typeof managedSection === "string" ? managedSection.trim() : "";
+
+  if (!trimmedSection) {
+    return humanBody;
+  }
+
+  const managedBlock = [
+    ISSUE_AUTOMATION_START_MARKER,
+    trimmedSection,
+    ISSUE_AUTOMATION_END_MARKER,
+  ].join("\n");
+
+  return humanBody
+    ? `${humanBody}\n\n${managedBlock}`
+    : managedBlock;
+}
+
+/**
+ * Build the automation-managed issue section published directly on the issue.
+ *
+ * @param {IssueTriagePlan} plan Safe triage plan.
+ * @param {string} model Explicit model name.
+ * @returns {string} Managed issue section.
+ */
+export function buildIssueAutomationSection(plan, model) {
+  const needsPlanning = plan.route === ROUTE_DISCUSSION_BEFORE_PR;
+  const canonicalState = needsPlanning ? "issue_needs_planning" : "issue_ready_for_codex";
+  const nextActor = needsPlanning ? "ai_issue_planning_review" : "codex";
+  const nextAction = needsPlanning ? "create_or_reuse_issue_planning_discussion" : "open_branch_and_pr";
+
+  return [
+    "## Canonical automation handoff",
+    "",
+    "This section is maintained by the GitHub automation lane. Update the human issue text above it; the workflow rewrites only this managed section.",
+    "",
+    `model: \`${model}\``,
+    `canonical_state: \`${canonicalState}\``,
+    `route: \`${plan.route}\``,
+    `execution_readiness: \`${plan.executionReadiness}\``,
+    `next_actor: \`${nextActor}\``,
+    `next_action: \`${nextAction}\``,
+    `ready_for_codex: \`${String(!needsPlanning)}\``,
+    `ready_for_branch: \`${String(!needsPlanning)}\``,
+    `ready_for_pr: \`${String(!needsPlanning)}\``,
+    "",
+    "### Summary",
+    plan.summary,
+    "",
+    "### Route rationale",
+    plan.reason,
+    "",
+    "### Product view",
+    plan.productView,
+    "",
+    "### Technical view",
+    plan.technicalView,
+    "",
+    "### Risk view",
+    plan.riskView,
+    "",
+    "### Decision",
+    plan.decision,
+    "",
+    "### Next steps",
+    ...plan.nextSteps.map((step) => `- ${step}`),
+  ].join("\n");
+}
+
+/**
  * Create or update the single sticky triage comment on the issue.
  *
  * @param {string} repoFullName Repository in owner/name form.
@@ -535,6 +636,27 @@ async function upsertIssueComment(repoFullName, issueNumber, body) {
 
   await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/${issueNumber}/comments`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body }),
+  });
+}
+
+/**
+ * Update the issue body with the latest automation-managed section.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {number} issueNumber GitHub issue number.
+ * @param {string | null | undefined} currentBody Current issue body.
+ * @param {string} managedSection Automation-managed markdown section.
+ * @returns {Promise<void>} Resolves when the issue body is persisted.
+ */
+async function updateIssueBodyAutomationSection(repoFullName, issueNumber, currentBody, managedSection) {
+  const body = upsertIssueAutomationSection(currentBody, managedSection);
+
+  await githubRequest(`https://api.github.com/repos/${repoFullName}/issues/${issueNumber}`, {
+    method: "PATCH",
     headers: {
       "Content-Type": "application/json",
     },
@@ -683,6 +805,7 @@ async function writeStepSummary(plan) {
  * @property {(promptPath: string) => Promise<string>} readTriagePrompt Read the system prompt.
  * @property {(repoFullName: string, issueNumber: number) => Promise<any[]>} fetchIssueComments Fetch issue comments.
  * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<string>} generateIssueTriage Call the model.
+ * @property {(repoFullName: string, issueNumber: number, currentBody: string | null | undefined, managedSection: string) => Promise<void>} updateIssueBodyAutomationSection Update the issue body.
  * @property {(repoFullName: string, issueNumber: number, body: string) => Promise<void>} upsertIssueComment Publish the sticky issue comment.
  * @property {(repoFullName: string, issueNumber: number, ref: string) => Promise<void>} dispatchIssuePlanningWorkflow Dispatch planning workflow.
  * @property {(plan: IssueTriagePlan) => Promise<void>} writeStepSummary Write Actions summary.
@@ -697,6 +820,7 @@ const ISSUE_TRIAGE_RUNTIME = {
   readTriagePrompt,
   fetchIssueComments,
   generateIssueTriage,
+  updateIssueBodyAutomationSection,
   upsertIssueComment,
   dispatchIssuePlanningWorkflow,
   writeStepSummary,
@@ -747,6 +871,7 @@ export async function runIssueTriageWorkflow(input, runtime = ISSUE_TRIAGE_RUNTI
     runtime.fetchIssueComments(repository, issue.number),
   ]);
   const existingComment = findExistingTriageComment(comments);
+  const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
   const userPrompt = [
     `Repository: ${repository}`,
     `Issue: #${issue.number} - ${issue.title}`,
@@ -754,7 +879,7 @@ export async function runIssueTriageWorkflow(input, runtime = ISSUE_TRIAGE_RUNTI
     `Author: ${issue.user?.login ?? "[unknown]"}`,
     "",
     "## Issue body",
-    truncateText(issue.body ?? "", MAX_ISSUE_BODY_CHARS) || "[no description provided]",
+    truncateText(humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no description provided]",
     "",
     "## Existing sticky triage comment",
     truncateText(existingComment?.body ?? "", MAX_EXISTING_COMMENT_CHARS) || "[none]",
@@ -762,6 +887,13 @@ export async function runIssueTriageWorkflow(input, runtime = ISSUE_TRIAGE_RUNTI
 
   const rawTriage = await runtime.generateIssueTriage(systemPrompt, userPrompt, model);
   const plan = assertValidIssueTriagePlan(parseIssueTriageResponse(rawTriage));
+
+  await runtime.updateIssueBodyAutomationSection(
+    repository,
+    issue.number,
+    issue.body ?? "",
+    buildIssueAutomationSection(plan, model),
+  );
 
   const commentBody = buildIssueCommentBody(plan, model);
   await runtime.upsertIssueComment(repository, issue.number, commentBody);

@@ -7,6 +7,7 @@ import issuePlanningWorkflowText from "../.github/workflows/ai-issue-planning-re
 import {
   buildDiscussionHistoryContext,
   buildIssueCommentContext,
+  buildIssuePlanningAutomationSection,
   buildIssuePlanningDiscussionBody,
   buildIssuePlanningCompletionComment,
   buildIssuePlanningStatusComment,
@@ -34,6 +35,9 @@ import {
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
   isIgnorableReferencedIssueFetchError,
+  stripIssueAutomationSection,
+  upsertIssueAutomationSection,
+  extractMarkdownSection,
 } from "../scripts/ai-issue-planning-review.mjs";
 
 describe("ai issue planning review", () => {
@@ -350,7 +354,14 @@ describe("ai issue planning review", () => {
       number: 213,
       title: "Automatizar fluxo",
       html_url: "https://github.com/dev865077/depix-mvp/issues/213",
-      body: "Issue detalhada.",
+      body: [
+        "Issue detalhada.",
+        "",
+        "<!-- ai-issue-automation:start -->",
+        "## Canonical automation handoff",
+        "route: `discussion_before_pr`",
+        "<!-- ai-issue-automation:end -->",
+      ].join("\n"),
     }, "Rota canonica: `discussion_before_pr`");
 
     expect(body).toContain("Issue origem: #213");
@@ -358,6 +369,8 @@ describe("ai issue planning review", () => {
     expect(body).toContain("canonical_state: `issue_planning_in_progress`");
     expect(body).toContain("ready_for_codex: `false`");
     expect(body).toContain("Rota canonica: `discussion_before_pr`");
+    expect(body).toContain("Issue detalhada.");
+    expect(body).not.toContain("<!-- ai-issue-automation:start -->");
   });
 
   it("finds an existing canonical planning discussion before creating a new one", () => {
@@ -567,6 +580,53 @@ describe("ai issue planning review", () => {
     expect(issueBlockedStatus).toContain("blocking_roles: `technical`");
   });
 
+  it("builds a managed planning section directly on the issue body", () => {
+    const section = buildIssuePlanningAutomationSection({
+      recommendation: "Request changes",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/212",
+      blockingRoles: ["technical", "risk"],
+      model: "gpt-test",
+      debate: {
+        product: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nReady once blockers clear.\n\n## Recommendation\nApprove",
+        technical: "## Perspective\nNeeds split.\n\n## Findings\n- Split the issue into executable slices.\n\n## Questions\n- None.\n\n## Backlog posture\nNot implementation-ready yet.\n\n## Recommendation\nRequest changes",
+        scrum: "## Perspective\nOk.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Backlog posture\nSequence is explicit.\n\n## Recommendation\nApprove",
+        risk: "## Perspective\nNeed evidence.\n\n## Findings\n- Add explicit validation evidence.\n\n## Questions\n- None.\n\n## Backlog posture\nOperational proof is still missing.\n\n## Recommendation\nRequest changes",
+      },
+    });
+    const mergedBody = upsertIssueAutomationSection("## Problema\nTexto humano.", section);
+
+    expect(section).toContain("planning_discussion: https://github.com/dev865077/depix-mvp/discussions/212");
+    expect(section).toContain("final_recommendation: `Request changes`");
+    expect(section).toContain("### Technical");
+    expect(section).toContain("Split the issue into executable slices.");
+    expect(section).toContain("## Codex handoff");
+    expect(mergedBody).toContain("## Problema");
+    expect(stripIssueAutomationSection(mergedBody)).toBe("## Problema\nTexto humano.");
+  });
+
+  it("extracts stable markdown sections from specialist memos", () => {
+    const memo = [
+      "## Perspective",
+      "Ok.",
+      "",
+      "## Findings",
+      "- First blocker.",
+      "- Second blocker.",
+      "",
+      "## Questions",
+      "- None.",
+      "",
+      "## Backlog posture",
+      "Ready after the split.",
+      "",
+      "## Recommendation",
+      "Request changes",
+    ].join("\n");
+
+    expect(extractMarkdownSection(memo, "Findings")).toContain("First blocker.");
+    expect(extractMarkdownSection(memo, "Backlog posture")).toBe("Ready after the split.");
+  });
+
   it("builds prompt context with child issues and discussion history", () => {
     const prompt = buildIssuePlanningUserPrompt(
       "dev865077/depix-mvp",
@@ -575,7 +635,14 @@ describe("ai issue planning review", () => {
         title: "epic",
         state: "open",
         html_url: "https://github.com/dev865077/depix-mvp/issues/91",
-        body: "Raiz",
+        body: [
+          "Raiz",
+          "",
+          "<!-- ai-issue-automation:start -->",
+          "## Canonical automation handoff",
+          "route: `discussion_before_pr`",
+          "<!-- ai-issue-automation:end -->",
+        ].join("\n"),
       },
       [
         {
@@ -642,6 +709,8 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("Latest specialist reviewer memos");
     expect(prompt).toContain("Latest planning conclusion thread");
     expect(prompt).toContain("Final recommendation: `Request changes`");
+    expect(prompt).toContain("Raiz");
+    expect(prompt).not.toContain("<!-- ai-issue-automation:start -->");
   });
 
 });

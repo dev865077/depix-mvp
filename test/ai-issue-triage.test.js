@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   assertValidIssueTriagePlan,
+  buildIssueAutomationSection,
   buildIssuePlanningDispatchInputs,
   buildIssuePlanningDispatchRequest,
   buildIssueCommentBody,
@@ -12,6 +13,8 @@ import {
   resolveIssuePlanningDispatchRef,
   runIssueTriageWorkflow,
   shouldDispatchIssuePlanning,
+  stripIssueAutomationSection,
+  upsertIssueAutomationSection,
 } from "../scripts/ai-issue-triage.mjs";
 
 describe("ai issue triage validation", () => {
@@ -174,6 +177,30 @@ describe("ai issue triage validation", () => {
     expect(body).toContain("criar ou reutilizar uma unica Discussion canonica");
   });
 
+  it("upserts a managed automation section onto the issue body without destroying human text", () => {
+    const section = buildIssueAutomationSection({
+      summary: "Refinar backlog.",
+      impact: "medio",
+      justification: "Escopo ainda precisa planning.",
+      route: "discussion_before_pr",
+      executionReadiness: "needs_discussion",
+      needsDiscussion: true,
+      reason: "Ainda falta decisao compartilhada.",
+      productView: "Precisa alinhar outcome.",
+      technicalView: "Precisa alinhar boundary.",
+      riskView: "Precisa alinhar teste.",
+      decision: "Rodar planning.",
+      discussionTitle: "Planejar issue",
+      nextSteps: ["rodar planning"],
+    }, "gpt-test");
+    const withManagedSection = upsertIssueAutomationSection("## Problema\nTexto humano.", section);
+
+    expect(withManagedSection).toContain("## Problema");
+    expect(withManagedSection).toContain("## Canonical automation handoff");
+    expect(withManagedSection).toContain("route: `discussion_before_pr`");
+    expect(stripIssueAutomationSection(withManagedSection)).toBe("## Problema\nTexto humano.");
+  });
+
   it("marks direct issues as ready for Codex without planning Discussion", () => {
     const body = buildIssueCommentBody({
       impact: "baixo",
@@ -249,6 +276,9 @@ describe("ai issue triage validation", () => {
       readTriagePrompt: async () => "prompt",
       fetchIssueComments: async () => [],
       generateIssueTriage: async () => JSON.stringify(plan),
+      updateIssueBodyAutomationSection: async (repo, issueNumber, currentBody, section) => {
+        calls.push(["issue-body", repo, issueNumber, currentBody, section.includes("## Canonical automation handoff")]);
+      },
       upsertIssueComment: async (repo, issueNumber, body) => {
         calls.push(["upsert", repo, issueNumber, body.includes("canonical_state: `issue_needs_planning`")]);
       },
@@ -281,6 +311,7 @@ describe("ai issue triage validation", () => {
     vi.unstubAllEnvs();
 
     expect(calls).toEqual([
+      ["issue-body", "dev865077/depix-mvp", 217, "Documentar visao futura.", true],
       ["upsert", "dev865077/depix-mvp", 217, true],
       [
         "dispatch",
@@ -314,6 +345,9 @@ describe("ai issue triage validation", () => {
         discussionTitle: "Planejar visao futura",
         nextSteps: ["rodar planning"],
       }),
+      updateIssueBodyAutomationSection: async () => {
+        calls.push("issue-body");
+      },
       upsertIssueComment: async () => {
         calls.push("upsert");
       },
@@ -345,6 +379,6 @@ describe("ai issue triage validation", () => {
 
     vi.unstubAllEnvs();
 
-    expect(calls).toEqual(["upsert", "dispatch"]);
+    expect(calls).toEqual(["issue-body", "upsert", "dispatch"]);
   });
 });
