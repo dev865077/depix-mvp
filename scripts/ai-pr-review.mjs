@@ -499,6 +499,88 @@ export function normalizeSpecialistReviewMemo(role, reviewText, onMalformed = ()
 }
 
 /**
+ * Build a focused repair prompt for a malformed blocking specialist memo.
+ *
+ * @param {string} role Human-readable reviewer role.
+ * @param {string} reviewText Raw malformed memo.
+ * @param {string} reason Parser failure reason.
+ * @returns {string} Repair-only user prompt.
+ */
+export function buildSpecialistReviewRepairUserPrompt(role, reviewText, reason) {
+  return [
+    `Repair this ${role} PR review memo so it follows the repository contract.`,
+    "",
+    "Rules:",
+    "- Preserve the reviewer's real judgment.",
+    "- If there is no material merge blocker, return a normal memo with `## Recommendation` set to `Approve`.",
+    "- If there is a material merge blocker, return `## Recommendation` set to `Request changes` and include a valid `## Blocker contract` section.",
+    "- Do not invent unrelated findings.",
+    "- Return only the corrected markdown memo.",
+    "",
+    `Parser error: ${reason}`,
+    "",
+    "Malformed memo:",
+    "```markdown",
+    reviewText,
+    "```",
+  ].join("\n");
+}
+
+/**
+ * Repair malformed blocking specialist memos once before failing closed.
+ *
+ * @param {string} role Human-readable reviewer role.
+ * @param {string} reviewText Raw specialist memo.
+ * @param {(reason: string) => Promise<string>} repairMemo Repair callback.
+ * @param {(reason: string) => void} [onMalformed] Optional malformed callback.
+ * @returns {Promise<string>} Original, repaired, or deterministic fail-closed memo.
+ */
+export async function normalizeOrRepairSpecialistReviewMemo(
+  role,
+  reviewText,
+  repairMemo,
+  onMalformed = () => {},
+) {
+  const recommendation = assertValidReviewRecommendation(reviewText);
+
+  if (recommendation === "Approve") {
+    return reviewText;
+  }
+
+  const contract = parseBlockingRoleContract(reviewText);
+
+  if (contract.status !== "malformed") {
+    return reviewText;
+  }
+
+  onMalformed(contract.reason);
+
+  try {
+    const repairedMemo = await repairMemo(contract.reason);
+    const repairedRecommendation = assertValidReviewRecommendation(repairedMemo);
+
+    if (repairedRecommendation === "Approve") {
+      return repairedMemo;
+    }
+
+    const repairedContract = parseBlockingRoleContract(repairedMemo);
+
+    if (repairedContract.status !== "malformed") {
+      return repairedMemo;
+    }
+
+    const reason = `Repair still malformed: ${repairedContract.reason}`;
+    onMalformed(reason);
+    return buildMalformedBlockerContractMemo(role, reason);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason = `Repair failed after malformed blocker contract: ${message}`;
+    onMalformed(reason);
+    return buildMalformedBlockerContractMemo(role, reason);
+  }
+}
+
+/**
  * Collapse one blocker-contract field into a stable one-line summary value.
  *
  * @param {string} value Raw field value.
@@ -3180,6 +3262,27 @@ function hasChangedFile(files, filename) {
 }
 
 /**
+ * Prove the visible PR discussion-review job gates specialist execution on CI.
+ *
+ * The job itself must remain visible on the pull_request check list, but the
+ * specialist step may only appear after the explicit await_ci step.
+ *
+ * @param {string} prReviewWorkflow Current workflow YAML.
+ * @returns {boolean} True when the visible PR path has the CI gate in order.
+ */
+export function workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow) {
+  const pullRequestIndex = prReviewWorkflow.indexOf("pull_request:");
+  const discussionReviewIndex = prReviewWorkflow.indexOf("discussion-review:");
+  const awaitCiModeIndex = prReviewWorkflow.indexOf("AI_PR_REVIEW_MODE: await_ci");
+  const discussionModeIndex = prReviewWorkflow.indexOf("AI_PR_REVIEW_MODE: discussion");
+
+  return pullRequestIndex >= 0
+    && discussionReviewIndex > pullRequestIndex
+    && awaitCiModeIndex > discussionReviewIndex
+    && discussionModeIndex > awaitCiModeIndex;
+}
+
+/**
  * Build a concise evidence block for automation-contract PRs.
  *
  * Broad automation PRs can leave the model staring at a large diff without the
@@ -3216,17 +3319,13 @@ export function buildAutomationEvidenceContext(inputs) {
 
   if (
     hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
+    && workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow)
     && prReviewWorkflow.includes("discussion_comment:")
-    && prReviewWorkflow.includes("workflow_run:")
-    && prReviewWorkflow.includes("- CI")
-    && prReviewWorkflow.includes("discussion-review:")
-    && prReviewWorkflow.includes("Wait for canonical CI / Test conclusion")
-    && prReviewWorkflow.includes("github.event_name != 'pull_request'")
-    && prReviewWorkflow.includes("github.event_name != 'workflow_run'")
+    && prReviewWorkflow.includes("ai-pr-review-${{ github.event_name }}")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` classifies the PR without starting the Discussion lane, `workflow_run` wakes `discussion-review` reactively after the canonical `CI / Test` result completes, direct review is not duplicated on `workflow_run`, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, the visible `discussion-review` job runs `AI_PR_REVIEW_MODE=await_ci` before `AI_PR_REVIEW_MODE=discussion`, event-scoped concurrency prevents stale runs from canceling visible PR checks, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
     );
   }
 
@@ -3277,10 +3376,11 @@ export function buildAutomationEvidenceContext(inputs) {
   if (
     hasChangedFile(files, "test/ai-pr-review.test.js")
     && prReviewTests.includes("keeps Blocked planning-only by rejecting it in PR review recommendations")
-    && prReviewTests.includes("pins the discussion-comment entrypoint and discussion-review write permissions in the workflow")
+    && prReviewTests.includes("pins the visible pull_request discussion-review check and CI await step before specialists")
+    && prReviewTests.includes("repairs malformed blocking specialist memos before publishing synthetic blockers")
   ) {
     bullets.push(
-      "- Current PR review regression tests: `test/ai-pr-review.test.js` explicitly pins the `discussion_comment` entrypoint, the `discussion-review` write permission, and the guard that rejects `Blocked` inside PR review recommendations.",
+      "- Current PR review regression tests: `test/ai-pr-review.test.js` explicitly pins the visible `pull_request` discussion-review path, the `await_ci` step before specialist execution, malformed blocker repair, and the guard that rejects `Blocked` inside PR review recommendations.",
     );
   }
 
@@ -3768,41 +3868,40 @@ export function buildDiscussionDebateFailureSynthesis(failures) {
  */
 async function generateDiscussionDebate(promptBundle, userPrompt, model) {
   console.log("Starting multi-role PR discussion review.");
-  const roleResults = await Promise.allSettled([
+  const roleDefinitions = [
+    { name: "Product and scope", prompt: promptBundle.productPrompt },
+    { name: "Technical and architecture", prompt: promptBundle.technicalPrompt },
+    { name: "Risk, security, and operations", prompt: promptBundle.riskPrompt },
+  ];
+  const roleResults = await Promise.allSettled(roleDefinitions.map((role) =>
     generateModelMarkdown(
-      composeSystemPrompt(promptBundle.doctrine, promptBundle.productPrompt),
+      composeSystemPrompt(promptBundle.doctrine, role.prompt),
       userPrompt,
       model,
       { expectRecommendation: true },
-    ),
-    generateModelMarkdown(
-      composeSystemPrompt(promptBundle.doctrine, promptBundle.technicalPrompt),
-      userPrompt,
-      model,
-      { expectRecommendation: true },
-    ),
-    generateModelMarkdown(
-      composeSystemPrompt(promptBundle.doctrine, promptBundle.riskPrompt),
-      userPrompt,
-      model,
-      { expectRecommendation: true },
-    ),
-  ]);
-  const roleNames = ["Product and scope", "Technical and architecture", "Risk, security, and operations"];
+    )));
   const failures = roleResults.flatMap((result, index) =>
-    result.status === "rejected" ? [{ role: roleNames[index], error: result.reason }] : []);
-  const [product, technical, risk] = roleResults.map((result, index) => {
+    result.status === "rejected" ? [{ role: roleDefinitions[index].name, error: result.reason }] : []);
+  const [product, technical, risk] = await Promise.all(roleResults.map((result, index) => {
+    const role = roleDefinitions[index];
+
     if (result.status !== "fulfilled") {
-      return buildModelFailureMemo(roleNames[index], result.reason);
+      return buildModelFailureMemo(role.name, result.reason);
     }
 
-    return normalizeSpecialistReviewMemo(roleNames[index], result.value, (reason) => {
+    return normalizeOrRepairSpecialistReviewMemo(role.name, result.value, (reason) =>
+      generateModelMarkdown(
+        composeSystemPrompt(promptBundle.doctrine, role.prompt),
+        buildSpecialistReviewRepairUserPrompt(role.name, result.value, reason),
+        model,
+        { expectRecommendation: true },
+      ), (reason) => {
       logOperationalEvent("ai_pr_review.blocker_contract.malformed", {
-        role: roleNames[index],
+        role: role.name,
         reason,
       });
     });
-  });
+  }));
 
   console.log("Specialist PR review memos completed. Starting synthesis.");
   let synthesis = "";
