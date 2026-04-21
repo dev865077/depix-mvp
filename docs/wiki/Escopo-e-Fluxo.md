@@ -34,6 +34,9 @@
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `wallet`
 - replays de mensagens antigas nao devem sobrescrever um pedido ja avancado para `confirmation`
 - a confirmacao assincrona pos-pagamento deve ser tratada como side effect idempotente, acionada apenas quando a transicao financeira visivel for relevante
+- em `confirmation`, o fluxo agora pode enviar CTAs inline de `Confirmar` e `Cancelar`
+- no estado `awaiting_payment`, a resposta de status e a entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
+- callback queries desses CTAs sao tratadas pelo mesmo fluxo de pedido, preservando o fallback por texto
 
 ## Fora de escopo
 

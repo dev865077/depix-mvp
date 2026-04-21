@@ -29,6 +29,9 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o inbound do Telegram agora normaliza um contrato explicito de update com `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
 - payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
+- em `confirmation`, o fluxo agora oferece CTAs inline de `Confirmar` e `Cancelar`
+- no estado `awaiting_payment`, as respostas de status e entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
+- callback queries suportadas sao tratadas pelo mesmo fluxo de pedido, com fallback por texto preservado
 - `/start` e `/status` reconsultam um pedido `awaiting_payment` contra a Eulen antes de responder quando ha deposito local disponivel, para refletir imediato um pagamento ja conciliado externamente
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript

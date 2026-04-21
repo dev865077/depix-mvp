@@ -40,6 +40,9 @@ Estado atual:
 - a copy do QR pode informar a expiracao apenas quando a Eulen devolver esse dado; quando o Telegram nao aceitar a imagem do QR, o fluxo deve cair para texto simples sem perder a instrucoes de pagamento
 - essa notificacao assincrona e idempotente por transicao visivel: webhook, recheck e fallback nao devem repetir a mesma mensagem
 - quando o pedido estiver em `awaiting_payment`, `/start` e `/status` podem reconsultar a verdade remota na Eulen antes de montar a resposta, reaproveitando o caminho de reconciliacao existente e recarregando o pedido/deposito para refletir o estado final imediatamente
+- respostas de `awaiting_payment` e a entrega do QR agora podem incluir CTAs inline para `Ver status` e `Ajuda`
+- em `confirmation`, a resposta com confirmacao/cancelamento agora pode incluir CTAs inline para `Confirmar` e `Cancelar`
+- callback queries com essas CTAs sao roteadas pelo mesmo fluxo de pedido, sem remover o fallback por texto
 
 ## Eulen
 
@@ -96,4 +99,4 @@ Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-dep
 
 Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
 
-No recheck operacional e nos retries de confirmacao, o nonce deve permanecer um UUID estavel por pedido, reaproveitando o UUID embutido em `order_<uuid>` quando existir.
+No recheck operacional e nos retries de confirmacao, o nonce deve permanecer um UUID estavel por pedido, reaproveitando o UUID embutido no `orderId` quando ele existir.
