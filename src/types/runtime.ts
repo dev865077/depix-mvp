@@ -1,4 +1,7 @@
+import type { Context } from "hono";
 import type { TenantId } from "./domain";
+import { readRuntimeConfig } from "../config/runtime.js";
+import { resolveTenantFromRequest } from "../config/tenants.js";
 
 export interface TenantSecretBindings {
   telegramBotToken: string;
@@ -27,6 +30,9 @@ export interface TenantConfig {
 
 export type TenantRegistry = Record<TenantId, TenantConfig>;
 
+type RuntimeConfig = ReturnType<typeof readRuntimeConfig>;
+type ResolvedTenant = ReturnType<typeof resolveTenantFromRequest>;
+
 export interface WorkerEnv {
   APP_NAME: string;
   APP_ENV: "local" | "test" | "production";
@@ -37,3 +43,13 @@ export interface WorkerEnv {
   DB: D1Database;
   [bindingName: string]: unknown;
 }
+
+export interface AppVariables {
+  requestId: string;
+  requestStartedAt: number;
+  runtimeConfig: RuntimeConfig;
+  db: D1Database | undefined;
+  tenant: ResolvedTenant;
+}
+
+export type AppContext = Context<{ Bindings: WorkerEnv; Variables: AppVariables }>;

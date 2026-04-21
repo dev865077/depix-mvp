@@ -319,6 +319,7 @@ describe("telegram webhook reply flow", () => {
     const logRecords = consoleSpy.mock.calls.map(([entry]) => JSON.parse(entry));
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-request-id")).toBeTruthy();
     expect(body).toBe("");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(logRecords.some((record) => record.message === "telegram.update.received")).toBe(true);

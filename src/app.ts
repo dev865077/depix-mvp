@@ -15,8 +15,14 @@ import { healthRouter } from "./routes/health.js";
 import { telegramRouter } from "./routes/telegram.js";
 import { webhooksRouter } from "./routes/webhooks.js";
 import { opsRouter } from "./routes/ops.js";
+import type { AppContext, AppVariables, WorkerEnv } from "./types/runtime";
 
-export function logAppError(c, httpError) {
+type AppBindings = {
+  Bindings: WorkerEnv;
+  Variables: AppVariables;
+};
+
+export function logAppError(c: AppContext, httpError: HTTPException): void {
   const runtimeConfig = c.get("runtimeConfig");
 
   if (!runtimeConfig) {
@@ -37,7 +43,7 @@ export function logAppError(c, httpError) {
   });
 }
 
-export function handleAppError(error, c) {
+export function handleAppError(error: unknown, c: AppContext): Response {
   const httpError = normalizeHttpError(error);
 
   logAppError(c, httpError);
@@ -45,18 +51,18 @@ export function handleAppError(error, c) {
   return jsonError(c, httpError.status, "request_failed", httpError.message);
 }
 
-export function handleNotFound(c) {
+export function handleNotFound(c: AppContext): Response {
   return jsonError(c, 404, "route_not_found", `No route matches ${c.req.path}`);
 }
 
-export function handleRootRedirect(c) {
+export function handleRootRedirect(c: AppContext): never {
   throw new HTTPException(302, {
     res: c.redirect("/health"),
   });
 }
 
-export function createApp() {
-  const app = new Hono();
+export function createApp(): Hono<AppBindings> {
+  const app = new Hono<AppBindings>();
 
   app.use("*", requestContextMiddleware);
   app.onError(handleAppError);
