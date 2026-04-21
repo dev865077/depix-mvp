@@ -227,25 +227,38 @@ describe("scheduled deposit reconciliation", () => {
     await resetDatabaseSchema();
 
     const waitUntil = vi.fn();
+    const executionContext = {
+      waitUntil,
+      passThroughOnException: vi.fn(),
+    };
+    const workerEnv = createWorkerEnv({
+      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "false",
+    });
 
     expect(worker.fetch).toBeTypeOf("function");
     expect(worker.scheduled).toBe(scheduled);
 
-    scheduled(
+    expect(() => scheduled(
       {
         cron: "*/15 * * * *",
         scheduledTime: Date.parse(BASE_TIME),
       },
-      createWorkerEnv({
-        ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "false",
-      }),
-      {
-        waitUntil,
-      },
-    );
+      workerEnv,
+      executionContext,
+    )).not.toThrow();
 
     expect(waitUntil).toHaveBeenCalledTimes(1);
     await waitUntil.mock.calls[0][0];
+
+    const healthResponse = await worker.fetch(
+      new Request("https://depix.local/health"),
+      workerEnv,
+      executionContext,
+    );
+    const healthPayload = await healthResponse.json();
+
+    expect(healthResponse.status).toBe(200);
+    expect(healthPayload?.configuration?.operations?.scheduledDepositReconciliation?.state).toBe("disabled");
   });
 
   it("skips without outbound work when the kill switch is disabled", async function assertDisabledScheduler() {
