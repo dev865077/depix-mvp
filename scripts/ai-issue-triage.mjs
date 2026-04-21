@@ -832,6 +832,20 @@ const ISSUE_TRIAGE_RUNTIME = {
   writeStepSummary,
 };
 
+export async function resolveIssueForTriageEvent(repository, event, runtime = ISSUE_TRIAGE_RUNTIME) {
+  if (event?.issue) {
+    return event.issue;
+  }
+
+  const issueNumber = Number.parseInt(event?.inputs?.issue_number ?? "", 10);
+
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return null;
+  }
+
+  return runtime.fetchIssue(repository, issueNumber);
+}
+
 /**
  * Execute the issue triage orchestration for one open GitHub issue.
  *
@@ -924,12 +938,7 @@ async function main() {
   const promptPath = process.env.AI_ISSUE_TRIAGE_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-triage.md";
   const model = readConfiguredModel();
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
-  const issueNumber = Number.parseInt(event?.inputs?.issue_number ?? "", 10);
-  const issue = event.issue ?? (
-    Number.isInteger(issueNumber) && issueNumber > 0
-      ? await ISSUE_TRIAGE_RUNTIME.fetchIssue(repository, issueNumber)
-      : null
-  );
+  const issue = await resolveIssueForTriageEvent(repository, event);
 
   await runIssueTriageWorkflow({ repository, issue, event, promptPath, model });
 }

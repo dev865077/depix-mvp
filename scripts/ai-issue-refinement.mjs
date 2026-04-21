@@ -1023,6 +1023,33 @@ async function dispatchIssueTriage(repoFullName, issueNumber, ref) {
   await githubRequest(request.url, request.init);
 }
 
+async function dispatchChildIssueTriages(runtime, repoFullName, parentIssueNumber, childIssues, ref) {
+  const failures = [];
+
+  for (const childIssue of childIssues) {
+    try {
+      await runtime.dispatchIssueTriage(repoFullName, childIssue.number, ref);
+      logOperationalEvent("ai_issue_refinement.child_triage.dispatched", {
+        parentIssueNumber,
+        childIssueNumber: childIssue.number,
+        ref,
+      });
+    } catch (error) {
+      failures.push({
+        issueNumber: childIssue.number,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      logOperationalEvent("ai_issue_refinement.child_triage.dispatch_failed", {
+        parentIssueNumber,
+        childIssueNumber: childIssue.number,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return failures;
+}
+
 async function generateIssueRefinementWithOpenAI(systemPrompt, userPrompt, model) {
   const apiKey = readRequiredEnv("OPENAI_API_KEY");
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -1371,14 +1398,13 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     }),
   );
 
-  for (const childIssue of createdChildIssues) {
-    await runtime.dispatchIssueTriage(repository, childIssue.number, workflowRef);
-    logOperationalEvent("ai_issue_refinement.child_triage.dispatched", {
-      parentIssueNumber: issue.number,
-      childIssueNumber: childIssue.number,
-      ref: workflowRef,
-    });
-  }
+  const childTriageDispatchFailures = await dispatchChildIssueTriages(
+    runtime,
+    repository,
+    issue.number,
+    createdChildIssues,
+    workflowRef,
+  );
 
   if (plan.shouldRerunPlanning) {
     await runtime.dispatchPlanningRerun(repository, discussion.number, workflowRef);
@@ -1394,6 +1420,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     discussionNumber: discussion.number,
     phase: nextPhase,
     createdChildIssueCount: createdChildIssues.length,
+    childTriageDispatchFailureCount: childTriageDispatchFailures.length,
     shouldRerunPlanning: plan.shouldRerunPlanning,
     blockedDependencyCount: plan.blockingDependencies.length,
   });

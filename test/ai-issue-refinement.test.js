@@ -357,6 +357,108 @@ describe("ai issue refinement", () => {
     ]);
   });
 
+  it("keeps parent planning rerun when child triage dispatch fails", async () => {
+    const calls = [];
+    const runtime = {
+      readPrompt: async () => "system prompt",
+      fetchIssue: async () => ({
+        number: 291,
+        title: "track: release 0.1 readiness",
+        body: "## Outcome\nTight body.",
+        html_url: "https://github.com/dev865077/depix-mvp/issues/291",
+      }),
+      fetchIssueComments: async () => [],
+      fetchDiscussionByNumber: async () => ({
+        id: "discussion-292",
+        number: 292,
+        title: "[Issue #291] track: release 0.1 readiness",
+        body: "Issue origem: #291",
+        url: "https://github.com/dev865077/depix-mvp/discussions/292",
+        comments: {
+          nodes: [
+            {
+              id: "planning-final-1",
+              author: { login: "github-actions[bot]" },
+              createdAt: "2026-04-21T12:00:00Z",
+              body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+              replies: { nodes: [] },
+            },
+          ],
+        },
+      }),
+      updateIssue: async (...args) => {
+        calls.push(["updateIssue", ...args]);
+      },
+      upsertIssuePlanningStatusComment: async (...args) => {
+        calls.push(["status", ...args]);
+      },
+      createDiscussionReply: async (...args) => {
+        calls.push(["reply", ...args]);
+      },
+      createOrReuseChildIssues: async () => [{ number: 301, title: "sub-issue: validate callback proof" }],
+      dispatchIssueTriage: async (...args) => {
+        calls.push(["child-triage", ...args]);
+        throw new Error("dispatch unavailable");
+      },
+      dispatchPlanningRerun: async (...args) => {
+        calls.push(["rerun", ...args]);
+      },
+      generateWithOpenAI: async () => JSON.stringify({
+        summary: "Split the track into executable child issues.",
+        updatedTitle: "track: release 0.1 readiness",
+        updatedBodyHumanSection: "## Outcome\nNow explicit.",
+        resolutionSummary: "The issue now has a child issue.",
+        replyBody: "The issue body now has child issues, so planning should rerun.",
+        recommendedNextState: "issue_refinement_in_progress",
+        shouldRerunPlanning: true,
+        isNoOp: false,
+        failureReason: null,
+        blockingDependencies: [],
+        newChildIssues: [
+          {
+            title: "sub-issue: validate callback proof",
+            body: "Track callback proof ownership.",
+          },
+        ],
+      }),
+      generateWithEndpoint: async () => {
+        throw new Error("should not call endpoint");
+      },
+    };
+
+    const result = await runIssueRefinementWorkflow({
+      repository: "dev865077/depix-mvp",
+      owner: "dev865077",
+      name: "depix-mvp",
+      workflowRef: "main",
+      promptPath: ".github/prompts/ai-issue-refinement.md",
+      provider: "openai_responses",
+      model: "gpt-test",
+      maxRounds: 3,
+      dispatchInput: {
+        issueNumber: 291,
+        discussionNumber: 292,
+        planningStatus: "request_changes",
+        blockingRoles: ["risk"],
+        blockedByDependencies: false,
+      },
+    }, runtime);
+
+    expect(result.nextPhase).toBe("rerun_planning");
+    expect(calls.find((call) => call[0] === "child-triage")).toEqual([
+      "child-triage",
+      "dev865077/depix-mvp",
+      301,
+      "main",
+    ]);
+    expect(calls.find((call) => call[0] === "rerun")).toEqual([
+      "rerun",
+      "dev865077/depix-mvp",
+      292,
+      "main",
+    ]);
+  });
+
   it("keeps the issue blocked when explicit dependencies remain", async () => {
     const calls = [];
     const runtime = {
