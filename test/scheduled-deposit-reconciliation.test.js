@@ -536,6 +536,38 @@ describe("scheduled deposit reconciliation", () => {
     expect(await countScheduledClaims("deposit_claim_isolation")).toBe(0);
   });
 
+  it("lets concurrent claim contenders lose cleanly without a D1 conflict or duplicate processing state", async function assertConcurrentClaimContention() {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await resetDatabaseSchema();
+    await seedDepositAggregate({
+      orderId: "order_claim_race",
+      depositEntryId: "deposit_claim_race",
+      updatedAt: "2026-04-21T09:24:00.000Z",
+    });
+
+    const depositBeforeClaim = await getDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_race");
+    const claimArgs = [
+      env.DB,
+      "alpha",
+      "deposit_claim_race",
+      depositBeforeClaim?.externalStatus ?? "pending",
+      depositBeforeClaim?.updatedAt ?? "2026-04-21T09:24:00.000Z",
+      "2026-04-21T10:02:00.000Z",
+      "2026-04-21T09:52:00.000Z",
+    ];
+
+    const results = await Promise.allSettled([
+      claimPendingTelegramDepositForScheduledReconciliation(...claimArgs),
+      claimPendingTelegramDepositForScheduledReconciliation(...claimArgs),
+    ]);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(results.map((result) => result.value).sort()).toEqual([false, true]);
+    expect(await countScheduledClaims("deposit_claim_race")).toBe(1);
+    expect((await getDepositByDepositEntryId(env.DB, "alpha", "deposit_claim_race"))?.externalStatus).toBe("pending");
+  });
+
   it("keeps repeated pending rechecks idempotent", async function assertPendingRecheckIdempotency() {
     vi.spyOn(console, "log").mockImplementation(() => {});
     await resetDatabaseSchema();

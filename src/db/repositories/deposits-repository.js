@@ -321,7 +321,7 @@ export async function claimPendingTelegramDepositForScheduledReconciliation(
         staleClaimBeforeIso,
     ).run();
     const result = await db.prepare(`
-    INSERT INTO scheduled_deposit_reconciliation_claims (
+    INSERT OR IGNORE INTO scheduled_deposit_reconciliation_claims (
       tenant_id,
       deposit_entry_id,
       claimed_at
