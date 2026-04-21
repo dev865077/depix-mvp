@@ -22,6 +22,10 @@ import {
   startTelegramOrderConversation,
 } from "../services/order-registration.js";
 import {
+  DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES,
+  expireTelegramOpenOrderIfTimedOut,
+} from "../services/telegram-conversation-timeout.js";
+import {
   confirmTelegramOrder,
   TelegramOrderConfirmationError,
 } from "../services/telegram-order-confirmation.js";
@@ -80,21 +84,15 @@ export function installTelegramReplyFlow(bot, input) {
     input,
     "start_command",
     async function replyToStart(ctx) {
-      const orderSession = await startTelegramConversationOrder(ctx, input);
-      if (orderSession.chatBinding?.blocked) {
-        await ctx.reply(buildTelegramChatBindingBlockedReply());
-        return;
-      }
+      await handleTelegramStartRequest(ctx, input, "start");
+    },
+  ));
 
-      const deposit = await readLatestDepositForTelegramOrder(input, orderSession.order);
-      const reconciled = await reconcileTelegramAwaitingPaymentOrder(ctx, input, orderSession.order, deposit, "start");
-
-      if (reconciled.order.currentStep !== orderSession.order.currentStep || reconciled.order.status !== orderSession.order.status) {
-        await replyTelegramStatus(ctx, input.tenant, reconciled.order, reconciled.deposit);
-        return;
-      }
-
-      await replyTelegramOrderStep(ctx, input.tenant, reconciled.order);
+  bot.command("iniciar", createLoggedTelegramHandler(
+    input,
+    "iniciar_command",
+    async function replyToStartAlias(ctx) {
+      await handleTelegramStartRequest(ctx, input, "iniciar");
     },
   ));
 
@@ -154,6 +152,11 @@ export function installTelegramReplyFlow(bot, input) {
 
         if (orderSession.chatBinding?.blocked) {
           await ctx.reply(buildTelegramChatBindingBlockedReply());
+          return;
+        }
+
+        if (orderSession.timeoutReset) {
+          await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
           return;
         }
 
@@ -947,6 +950,15 @@ function buildTelegramAmountPrompt(tenant) {
   ].join("\n\n");
 }
 
+function buildTelegramConversationTimedOutReply(tenant) {
+  return [
+    "Seu pedido anterior expirou por inatividade e foi encerrado com segurança.",
+    "Vamos retomar do início em um pedido novo.",
+    "",
+    buildTelegramAmountPrompt(tenant),
+  ].join("\n");
+}
+
 /**
  * Mensagem para updates de mensagem nao textual.
  *
@@ -1046,6 +1058,8 @@ async function startTelegramConversationOrder(ctx, input) {
     );
   }
 
+  const timeoutReset = await expireTimedOutTelegramConversationOrder(ctx, input, telegramUserId);
+
   const orderSession = await startTelegramOrderConversation({
     db: input.db,
     tenant: input.tenant,
@@ -1053,7 +1067,11 @@ async function startTelegramConversationOrder(ctx, input) {
     telegramChatId,
   });
 
-  ctx.state.telegramOrderSession = orderSession;
+  ctx.state.telegramOrderSession = {
+    ...orderSession,
+    timeoutReset: timeoutReset.timedOut,
+    timedOutOrder: timeoutReset.canceledOrder ?? timeoutReset.openOrder ?? null,
+  };
 
   logTelegramEvent(input, "info", orderSession.created ? "telegram.order.created" : "telegram.order.resumed", {
     handlerName: ctx.state.telegramHandler,
@@ -1085,7 +1103,7 @@ async function startTelegramConversationOrder(ctx, input) {
 
   logTelegramChatBindingResult(ctx, input, orderSession);
 
-  return orderSession;
+  return ctx.state.telegramOrderSession;
 }
 
 /**
@@ -1171,6 +1189,36 @@ async function handleTelegramHelpRequest(ctx, input, source) {
 
   const options = buildTelegramReplyOptionsForOrder(openOrder);
   await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder), options);
+}
+
+async function handleTelegramStartRequest(ctx, input, source) {
+  const orderSession = await startTelegramConversationOrder(ctx, input);
+
+  if (orderSession.chatBinding?.blocked) {
+    await ctx.reply(buildTelegramChatBindingBlockedReply());
+    return;
+  }
+
+  if (orderSession.timeoutReset) {
+    logTelegramEvent(input, "info", "telegram.order.timeout_reply_rendered", {
+      handlerName: ctx.state?.telegramHandler,
+      source,
+      previousOrderId: orderSession.timedOutOrder?.orderId,
+      nextOrderId: orderSession.order?.orderId,
+    });
+    await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+    return;
+  }
+
+  const deposit = await readLatestDepositForTelegramOrder(input, orderSession.order);
+  const reconciled = await reconcileTelegramAwaitingPaymentOrder(ctx, input, orderSession.order, deposit, source);
+
+  if (reconciled.order.currentStep !== orderSession.order.currentStep || reconciled.order.status !== orderSession.order.status) {
+    await replyTelegramStatus(ctx, input.tenant, reconciled.order, reconciled.deposit);
+    return;
+  }
+
+  await replyTelegramOrderStep(ctx, input.tenant, reconciled.order);
 }
 
 /**
@@ -1514,27 +1562,57 @@ async function handleTelegramRestartRequest(ctx, input, source) {
 
 async function handleTelegramInlineAction(ctx, input) {
   const action = String(ctx.callbackQuery?.data ?? "").slice("depix:".length);
+  const timeoutReset = await readTimedOutTelegramConversationReset(ctx, input);
 
   switch (action) {
     case "help":
+      if (timeoutReset.timedOut) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido expirado.",
+        });
+        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        return;
+      }
       await ctx.answerCallbackQuery({
         text: "Ajuda atualizada.",
       });
       await handleTelegramHelpRequest(ctx, input, "callback");
       return;
     case "status":
+      if (timeoutReset.timedOut) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido expirado.",
+        });
+        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        return;
+      }
       await ctx.answerCallbackQuery({
         text: "Status atualizado.",
       });
       await handleTelegramStatusRequest(ctx, input, "callback");
       return;
     case "cancel":
+      if (timeoutReset.timedOut) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido expirado.",
+        });
+        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        return;
+      }
       await ctx.answerCallbackQuery({
         text: "Cancelando pedido.",
       });
       await handleTelegramCancelRequest(ctx, input, "callback");
       return;
     case "confirm": {
+      if (timeoutReset.timedOut) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido expirado.",
+        });
+        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        return;
+      }
+
       const openOrder = await getExistingTelegramConversationOrder(ctx, input);
 
       if (!openOrder) {
@@ -1567,6 +1645,56 @@ async function handleTelegramInlineAction(ctx, input) {
         text: buildTelegramUnsupportedCallbackReply(input.tenant),
       });
   }
+}
+
+function readTelegramOpenOrderTimeoutMinutesFromRuntime(input) {
+  return Number.isInteger(input.runtimeConfig?.telegramOpenOrderTimeoutMinutes)
+    ? input.runtimeConfig.telegramOpenOrderTimeoutMinutes
+    : DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES;
+}
+
+async function expireTimedOutTelegramConversationOrder(ctx, input, telegramUserId) {
+  const timeoutReset = await expireTelegramOpenOrderIfTimedOut({
+    db: input.db,
+    tenant: input.tenant,
+    telegramUserId,
+    timeoutMinutes: readTelegramOpenOrderTimeoutMinutesFromRuntime(input),
+  });
+
+  if (timeoutReset.timedOut) {
+    logTelegramEvent(input, "info", "telegram.order.timed_out", {
+      handlerName: ctx.state?.telegramHandler,
+      orderId: timeoutReset.openOrder?.orderId,
+      userId: timeoutReset.openOrder?.userId,
+      currentStep: timeoutReset.openOrder?.currentStep,
+      status: timeoutReset.openOrder?.status,
+      timeoutMinutes: readTelegramOpenOrderTimeoutMinutesFromRuntime(input),
+    });
+  }
+
+  return timeoutReset;
+}
+
+async function readTimedOutTelegramConversationReset(ctx, input) {
+  if (!input.db) {
+    return {
+      timedOut: false,
+      openOrder: null,
+      canceledOrder: null,
+    };
+  }
+
+  const telegramUserId = resolveTelegramActorId(ctx);
+
+  if (telegramUserId === undefined) {
+    return {
+      timedOut: false,
+      openOrder: null,
+      canceledOrder: null,
+    };
+  }
+
+  return expireTimedOutTelegramConversationOrder(ctx, input, telegramUserId);
 }
 
 /**

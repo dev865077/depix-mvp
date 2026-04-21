@@ -6,6 +6,7 @@
  * seguro da configuracao, sem nunca expor valores sensiveis.
  */
 import { readTenantRegistry } from "./tenants.js";
+import { readTelegramOpenOrderTimeoutMinutes } from "../services/telegram-conversation-timeout.js";
 
 const APP_ENVIRONMENTS = new Set(["local", "test", "production"]);
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
@@ -224,6 +225,7 @@ export function assertPositiveInteger(value, key) {
  *   logLevel: "debug" | "info" | "warn" | "error",
  *   eulenApiBaseUrl: string,
  *   eulenApiTimeoutMs: number,
+ *   telegramOpenOrderTimeoutMinutes: number,
  *   database: {
  *     bindingConfigured: boolean
  *   },
@@ -294,6 +296,7 @@ export function readRuntimeConfig(env) {
   const rawLogLevel = assertRequiredString(env.LOG_LEVEL, "LOG_LEVEL");
   const eulenApiBaseUrl = assertRequiredString(env.EULEN_API_BASE_URL, "EULEN_API_BASE_URL");
   const eulenApiTimeoutMs = assertPositiveInteger(env.EULEN_API_TIMEOUT_MS, "EULEN_API_TIMEOUT_MS");
+  const telegramOpenOrderTimeoutMinutes = readTelegramOpenOrderTimeoutMinutes(env.TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES);
 
   if (!APP_ENVIRONMENTS.has(rawEnvironment)) {
     throw new Error(`Invalid APP_ENV value: ${rawEnvironment}`);
@@ -348,6 +351,7 @@ export function readRuntimeConfig(env) {
     logLevel: rawLogLevel,
     eulenApiBaseUrl,
     eulenApiTimeoutMs,
+    telegramOpenOrderTimeoutMinutes,
     database: {
       bindingConfigured: databaseBindingConfigured,
     },
