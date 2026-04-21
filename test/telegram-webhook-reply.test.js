@@ -798,7 +798,7 @@ describe("telegram webhook reply flow", () => {
     expect(response.status).toBe(200);
     expect(currentOrder).toBeNull();
     expect(count?.count).toBe(0);
-    expect(replies[0]).toContain("Nao encontrei pedido recente em Alpha.");
+    expect(replies[0]).toContain("Não encontrei pedido recente em Alpha.");
     expect(replies[0]).toContain("Envie /start");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -849,7 +849,7 @@ describe("telegram webhook reply flow", () => {
       });
     });
     const statusCases = [
-      ["13401", 13401, "order_status_amount", "amount", "draft", null, "Proximo passo: envie o valor em BRL"],
+      ["13401", 13401, "order_status_amount", "amount", "draft", null, "Próximo passo: envie o valor em BRL"],
       ["13402", 13402, "order_status_wallet", "wallet", "draft", 1500, "envie seu endereço DePix/Liquid"],
       ["13403", 13403, "order_status_confirmation", "confirmation", "draft", 1500, "confirme com sim"],
       ["13404", 13404, "order_status_awaiting_payment", "awaiting_payment", "pending", 1500, "Pix copia e cola:"],
@@ -1897,7 +1897,7 @@ describe("telegram webhook reply flow", () => {
     expect(currentOrder?.orderId).not.toBe("order_restart_text");
     expect(currentOrder?.currentStep).toBe("amount");
     expect(replies[0]).toContain("Pedido anterior cancelado.");
-    expect(replies[0]).toContain("Vamos recomecar do inicio.");
+    expect(replies[0]).toContain("Vamos recomeçar do início.");
     expect(replies[0]).toContain("Envie o valor em BRL");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
@@ -1972,8 +1972,8 @@ describe("telegram webhook reply flow", () => {
     expect(cancelResponse.status).toBe(200);
     expect(restartResponse.status).toBe(200);
     expect(currentOrder).toBeNull();
-    expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
-    expect(replies[1]).toContain("Nao existe pedido aberto para recomecar.");
+    expect(replies[0]).toContain("Não existe pedido aberto para cancelar.");
+    expect(replies[1]).toContain("Não existe pedido aberto para recomecar.");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -2130,7 +2130,7 @@ describe("telegram webhook reply flow", () => {
     expect(newCompletedUserOrder?.currentStep).toBe("amount");
     expect(newLegacyPaidUserOrder?.orderId).not.toBe("order_legacy_paid_closed");
     expect(newLegacyPaidUserOrder?.currentStep).toBe("amount");
-    expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
+    expect(replies[0]).toContain("Não existe pedido aberto para cancelar.");
     expect(replies[1]).toContain("Não consegui validar esse valor.");
     expect(replies[2]).toContain("Envie o valor em BRL");
     expect(replies[3]).toContain("Envie o valor em BRL");
@@ -2440,7 +2440,7 @@ describe("telegram webhook reply flow", () => {
     expect(photoReply?.payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
     expect(photoReply?.payload.caption).toContain("Pix copia e cola:");
     expect(photoReply?.payload.caption).toContain("0002010102122688pix-alpha-001");
-    expect(photoReply?.payload.caption).not.toContain("Expiracao:");
+    expect(photoReply?.payload.caption).not.toContain("Expiração:");
     expect(photoReply?.payload.reply_markup?.inline_keyboard).toEqual([
       [
         {
@@ -2675,7 +2675,7 @@ describe("telegram webhook reply flow", () => {
       status: "canceled",
     });
     expect(persistedDeposits?.count).toBe(1);
-    expect(telegramMessages.join("\n")).toContain("Nao consegui criar seu Pix agora.");
+    expect(telegramMessages.join("\n")).toContain("Não consegui criar seu Pix agora.");
     expect(telegramMessages.join("\n")).not.toContain("Pix copia e cola:");
     expect(telegramMessages.join("\n")).not.toContain("0002010102122688pix-terminal-conflict-001");
   });
@@ -2899,7 +2899,7 @@ describe("telegram webhook reply flow", () => {
       status: "processing",
     });
     expect(depositsAfterFailure?.count).toBe(0);
-    expect(telegramMessages.at(-1)).toContain("recuperacao segura");
+    expect(telegramMessages.at(-1)).toContain("recuperação segura");
 
     await app.request(
       "https://example.com/telegram/alpha/webhook",
@@ -3056,7 +3056,7 @@ describe("telegram webhook reply flow", () => {
       currentStep: "failed",
       status: "failed",
     });
-    expect(telegramMessages.join("\n")).toContain("Nao consegui criar seu Pix agora.");
+    expect(telegramMessages.join("\n")).toContain("Não consegui criar seu Pix agora.");
   });
 
   it("resolves async Eulen deposit creation before replying to the user", async function assertAsyncConfirmationFlow() {
@@ -3157,7 +3157,7 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy.mock.calls.some(([url]) => String(url) === "https://example.com/eulen-async/beta-001")).toBe(true);
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
     expect(savedDeposit?.depositEntryId).toBe("deposit_entry_beta_001");
-    expect(photoReply?.payload.caption).toContain("Expiracao: 18/04/2026 12:00 (UTC).");
+    expect(photoReply?.payload.caption).toContain("Expiração: 18/04/2026 12:00 (UTC).");
   });
 
   it("falls back to plain text when Telegram rejects the QR photo without dropping the copy-paste instructions", async function assertDepositPhotoFallback() {
@@ -3256,7 +3256,7 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(pixReplies).toHaveLength(1);
     expect(pixReplies[0]?.text).toContain("Pedido em Alpha: aguardando pagamento.");
-    expect(pixReplies[0]?.text).toContain("Expiracao: 18/04/2026 12:00 (UTC).");
+    expect(pixReplies[0]?.text).toContain("Expiração: 18/04/2026 12:00 (UTC).");
     expect(pixReplies[0]?.text).toContain("Pix copia e cola:");
     expect(pixReplies[0]?.text).toContain("0002010102122688pix-alpha-002");
   });
@@ -3338,7 +3338,7 @@ describe("telegram webhook reply flow", () => {
 
     expect(failedOrder?.currentStep).toBe("failed");
     expect(failedOrder?.status).toBe("failed");
-    expect(telegramMessages[telegramMessages.length - 1]).toContain("Nao consegui criar seu Pix agora.");
+    expect(telegramMessages[telegramMessages.length - 1]).toContain("Não consegui criar seu Pix agora.");
     expect(telegramMessages[telegramMessages.length - 1]).toContain("Envie /start para recomecar");
     expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(1);
   });
