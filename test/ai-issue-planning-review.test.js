@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import issuePlanningWorkflowText from "../.github/workflows/ai-issue-planning-review.yml?raw";
 
 import {
+  buildIssueRefinementDispatchInputs,
+  buildIssueRefinementDispatchRequest,
   buildDiscussionHistoryContext,
   buildIssueCommentContext,
   buildIssuePlanningAutomationSection,
@@ -32,6 +34,7 @@ import {
   parseManualPlanningTarget,
   parseReferencedIssueNumbers,
   resolveReferencedIssueFetchSkipReason,
+  resolveIssueRefinementDispatchRef,
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
   isIgnorableReferencedIssueFetchError,
@@ -559,6 +562,11 @@ describe("ai issue planning review", () => {
       "https://github.com/dev865077/depix-mvp/discussions/212",
       ["technical"],
     );
+    const issueChangesStatus = buildIssuePlanningStatusComment(
+      "Request changes",
+      "https://github.com/dev865077/depix-mvp/discussions/212",
+      ["technical"],
+    );
 
     expect(comments).toHaveLength(4);
     expect(comments[2].body).toContain("<!-- ai-issue-planning-role:scrum -->");
@@ -576,8 +584,62 @@ describe("ai issue planning review", () => {
     expect(issueReadyStatus).toContain("<!-- ai-issue-planning-status:openai -->");
     expect(issueReadyStatus).toContain("ready_for_codex: `true`");
     expect(issueReadyStatus).toContain("next_action: `open_branch_and_pr`");
+    expect(issueBlockedStatus).toContain("next_actor: `dependency_owner`");
+    expect(issueBlockedStatus).toContain("next_action: `wait_for_dependencies`");
     expect(issueBlockedStatus).toContain("blocked_by_dependencies: `true`");
     expect(issueBlockedStatus).toContain("blocking_roles: `technical`");
+    expect(issueChangesStatus).toContain("next_actor: `issue_refinement_agent`");
+    expect(issueChangesStatus).toContain("next_action: `refine_issue_and_reply_to_planning_conclusion`");
+  });
+
+  it("builds the exact workflow dispatch request used by issue refinement handoff", () => {
+    const request = buildIssueRefinementDispatchRequest(
+      "dev865077/depix-mvp",
+      {
+        issueNumber: 291,
+        discussionNumber: 292,
+        planningStatus: "request_changes",
+        blockingRoles: ["product", "technical"],
+        blockedByDependencies: false,
+      },
+      " trunk ",
+    );
+
+    expect(buildIssueRefinementDispatchInputs({
+      issueNumber: 291,
+      discussionNumber: 292,
+      planningStatus: "blocked",
+      blockingRoles: ["risk"],
+      blockedByDependencies: true,
+    })).toEqual({
+      issue_number: "291",
+      discussion_number: "292",
+      planning_status: "blocked",
+      blocking_roles: "risk",
+      blocked_by_dependencies: "true",
+    });
+    expect(resolveIssueRefinementDispatchRef({ repository: { default_branch: "trunk" } }, {})).toBe("trunk");
+    expect(resolveIssueRefinementDispatchRef({}, { GITHUB_REF: "refs/heads/main" })).toBe("main");
+    expect(request.url).toBe(
+      "https://api.github.com/repos/dev865077/depix-mvp/actions/workflows/ai-issue-refinement.yml/dispatches",
+    );
+    expect(request.init.method).toBe("POST");
+    expect(request.init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(request.init.body)).toEqual({
+      ref: "trunk",
+      inputs: {
+        issue_number: "291",
+        discussion_number: "292",
+        planning_status: "request_changes",
+        blocking_roles: "product,technical",
+        blocked_by_dependencies: "false",
+      },
+    });
+    expect(() => buildIssueRefinementDispatchRequest("invalid", {
+      issueNumber: 291,
+      discussionNumber: 292,
+      planningStatus: "request_changes",
+    }, "main")).toThrow("Invalid repository");
   });
 
   it("builds a managed planning section directly on the issue body", () => {

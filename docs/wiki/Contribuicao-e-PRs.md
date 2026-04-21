@@ -27,6 +27,7 @@
 - a triagem automatica nao cria Discussion; ela so publica a rota canonica na issue
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
 - o planning nao deve ouvir `issues` nem `issue_comment` como entrada automatica paralela; esses gatilhos redundantes foram removidos para manter uma unica porta canonica de planejamento
+- quando o planning terminar em `Request changes`, o workflow `AI Issue Refinement` deve entrar automaticamente, refinar a issue via API, responder na thread da conclusao mais recente e decidir se o planning deve rerodar agora ou se a issue ja amadureceu ate um bloqueio externo explicito
 - para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
@@ -36,18 +37,21 @@
   - `Approve`: issue pronta para execucao
   - `Blocked`: issue boa e bem especificada, mas ainda depende de trabalho upstream explicito
   - `Request changes`: issue ainda tem lacuna real de backlog, decomposicao, aceite, ordem ou evidencia
+- `Blocked` nao deve abrir loop novo de refinement por padrao; ele encerra a rodada automatica da issue ate a dependencia externa mudar
 - a issue so deve ser tratada como pronta para execucao quando os quatro papeis retornarem `Approve`
 - quando o planning aprova, ele publica na propria issue `canonical_state: issue_ready_for_codex` e `ready_for_codex: true`
 - durante o planning, a automacao tambem reescreve a secao gerenciada do corpo da issue com sintese de produto, tecnica, scrum e risco, para que a issue amadureca sem depender de Codex
+- durante o refinement, a automacao continua dona da issue: ela pode reescrever titulo e corpo humano, criar child issues concretas, atualizar a secao gerenciada e publicar o estado canonico antes de reabrir o planning
 - Codex so deve entrar para abrir branch e PR depois desse handoff canonico ou quando a triage direta publicar `ready_for_codex: true`
 - a thread canonica de cada nova rodada e a reply humana na conclusao mais recente da Discussion
 - a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte
+- a reply automatizada de refinement tambem acontece nessa mesma thread canonica e pode disparar o proximo `workflow_dispatch` do planning sem intervencao humana
 - quando uma nova rodada aprova, a automacao responde nessa thread explicando por que agora passou
 - comentarios automatizados antigos dos especialistas nao devem entrar como contexto bruto da nova rodada; o contexto operacional valido e a thread da conclusao e comentarios humanos soltos relevantes
 - quando houver follow-up, a automacao deve incorporar tambem os ultimos memos dos revisores especialistas antes de abrir novos blockers, para evitar regressao de contexto
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
 - itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos explicitamente pelo `workflow_dispatch` com `issue_number`, nunca por edicao ou comentario humano com marker colado
-- se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
+- se houver falso positivo ou falha operacional na lane de planning review ou refinement, o mantenedor deve registrar a ocorrencia na propria Discussion e rerodar o workflow apropriado; a automacao normal nao deve depender de comentario humano para evoluir a issue
 - enquanto a issue estiver em planning, a evolucao da issue e da Discussion pertence aos workflows via API; o implementador/Codex so entra depois do estado `ready_for_codex: true`
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 - o parser de referencias do planning nao deve tratar mencoes em prosa como `PR #209` ou `pull request #209` como child issues; apenas referencias reais de issues entram na lista de contexto

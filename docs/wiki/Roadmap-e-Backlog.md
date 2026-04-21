@@ -55,6 +55,7 @@ O backlog do projeto ja separa bem o que e fundacao, persistencia, integracao e 
 - webhook principal real: avancado
 - recheck real: avancado, com `deposit-status` por deposito e `deposits` por janela
 - backlog novo passa por gate de planning review em Discussions antes da implementacao de itens de maior impacto
+- itens novos que ainda falharem no planning entram na lane automatica de refinement da issue antes de qualquer trabalho de codigo
 - itens antigos nao entram nesse gate automaticamente: o mantenedor deve reenfileirar por comentario na Discussion ou por rerun manual do workflow
 - a visao futura de plataforma esta documentada em [Visao Futura da Plataforma](Visao-Futura-da-Plataforma), separada do escopo operacional imediato
 

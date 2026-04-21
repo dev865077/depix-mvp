@@ -1,0 +1,61 @@
+name: AI Issue Refinement
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Open issue number to refine before rerunning planning
+        required: true
+        type: string
+      discussion_number:
+        description: Canonical planning Discussion number linked to the issue
+        required: true
+        type: string
+      planning_status:
+        description: Latest planning status (`request_changes` or `blocked`)
+        required: true
+        type: string
+      blocking_roles:
+        description: Comma-separated blocking specialist roles
+        required: false
+        type: string
+      blocked_by_dependencies:
+        description: Whether the latest planning result was dependency-blocked
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+  discussions: write
+  issues: write
+
+concurrency:
+  group: ai-issue-refinement-${{ github.event.inputs.discussion_number != '' && format('discussion-{0}', github.event.inputs.discussion_number) || format('issue-{0}', github.event.inputs.issue_number) }}
+  cancel-in-progress: true
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run AI issue refinement
+        env:
+          AI_ISSUE_REFINEMENT_PROMPT_PATH: .github/prompts/ai-issue-refinement.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ISSUE_REFINEMENT_MODEL: ${{ vars.OPENAI_ISSUE_REFINEMENT_MODEL || 'gpt-5.4-mini' }}
+          OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL }}
+          AI_ISSUE_REFINEMENT_PROVIDER: ${{ vars.AI_ISSUE_REFINEMENT_PROVIDER || 'openai_chat_completions' }}
+          AI_ISSUE_REFINEMENT_ENDPOINT: ${{ vars.AI_ISSUE_REFINEMENT_ENDPOINT }}
+          AI_ISSUE_REFINEMENT_BEARER_TOKEN: ${{ secrets.AI_ISSUE_REFINEMENT_BEARER_TOKEN }}
+          AI_ISSUE_REFINEMENT_MAX_ROUNDS: ${{ vars.AI_ISSUE_REFINEMENT_MAX_ROUNDS || '3' }}
+        run: node scripts/ai-issue-refinement.mjs

@@ -24,6 +24,7 @@ const ISSUE_AUTOMATION_END_MARKER = "<!-- ai-issue-automation:end -->";
 const ISSUE_TITLE_PREFIX = "[Issue #";
 const ROUTE_DIRECT_PR = "direct_pr";
 const ROUTE_DISCUSSION_BEFORE_PR = "discussion_before_pr";
+const ISSUE_REFINEMENT_WORKFLOW_FILE = "ai-issue-refinement.yml";
 
 /**
  * Prompt-budget limits for issue and Discussion context.
@@ -295,6 +296,102 @@ async function githubGraphqlRequest(query, variables = {}) {
   }
 
   return payload.data;
+}
+
+/**
+ * Build the workflow_dispatch payload used to hand issue refinement to Actions.
+ *
+ * @param {{
+ *   issueNumber: number,
+ *   discussionNumber: number,
+ *   planningStatus: "approve" | "blocked" | "request_changes",
+ *   blockingRoles?: string[],
+ *   blockedByDependencies?: boolean
+ * }} input Dispatch input.
+ * @returns {{ issue_number: string, discussion_number: string, planning_status: string, blocking_roles: string, blocked_by_dependencies: string }} Workflow inputs.
+ */
+export function buildIssueRefinementDispatchInputs(input) {
+  if (!Number.isInteger(input?.issueNumber) || input.issueNumber <= 0) {
+    throw new Error(`Invalid issue number for refinement dispatch: ${String(input?.issueNumber)}`);
+  }
+
+  if (!Number.isInteger(input?.discussionNumber) || input.discussionNumber <= 0) {
+    throw new Error(`Invalid discussion number for refinement dispatch: ${String(input?.discussionNumber)}`);
+  }
+
+  const planningStatus = typeof input?.planningStatus === "string" ? input.planningStatus.trim() : "";
+
+  if (!["approve", "blocked", "request_changes"].includes(planningStatus)) {
+    throw new Error(`Invalid planning status for refinement dispatch: ${String(input?.planningStatus)}`);
+  }
+
+  return {
+    issue_number: String(input.issueNumber),
+    discussion_number: String(input.discussionNumber),
+    planning_status: planningStatus,
+    blocking_roles: Array.isArray(input.blockingRoles) ? input.blockingRoles.join(",") : "",
+    blocked_by_dependencies: String(input.blockedByDependencies === true),
+  };
+}
+
+/**
+ * Resolve the ref used for refinement workflow dispatch.
+ *
+ * @param {any} event Raw GitHub event payload.
+ * @param {NodeJS.ProcessEnv} [env] Environment source.
+ * @returns {string} Branch or ref accepted by workflow_dispatch.
+ */
+export function resolveIssueRefinementDispatchRef(event, env = process.env) {
+  return env.GITHUB_REF_NAME?.trim()
+    || env.GITHUB_REF?.replace(/^refs\/heads\//, "")
+    || event?.repository?.default_branch
+    || "main";
+}
+
+/**
+ * Build the GitHub Actions workflow_dispatch request for issue refinement.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {{ issueNumber: number, discussionNumber: number, planningStatus: "approve" | "blocked" | "request_changes", blockingRoles?: string[], blockedByDependencies?: boolean }} input Dispatch input.
+ * @param {string} ref Git ref to run the refinement workflow on.
+ * @returns {{ url: string, init: RequestInit }} Fetch request descriptor.
+ */
+export function buildIssueRefinementDispatchRequest(repoFullName, input, ref) {
+  const trimmedRef = typeof ref === "string" ? ref.trim() : "";
+
+  if (typeof repoFullName !== "string" || !/^[^/]+\/[^/]+$/.test(repoFullName)) {
+    throw new Error(`Invalid repository for refinement dispatch: ${String(repoFullName)}`);
+  }
+
+  if (!trimmedRef) {
+    throw new Error("Invalid ref for refinement dispatch.");
+  }
+
+  return {
+    url: `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_REFINEMENT_WORKFLOW_FILE}/dispatches`,
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ref: trimmedRef,
+        inputs: buildIssueRefinementDispatchInputs(input),
+      }),
+    },
+  };
+}
+
+/**
+ * Trigger the issue refinement workflow through the GitHub Actions API.
+ *
+ * @param {string} repoFullName Repository in owner/name form.
+ * @param {{ issueNumber: number, discussionNumber: number, planningStatus: "approve" | "blocked" | "request_changes", blockingRoles?: string[], blockedByDependencies?: boolean }} input Dispatch input.
+ * @param {string} ref Git ref to run the refinement workflow on.
+ * @returns {Promise<void>} Resolves when GitHub accepts the dispatch.
+ */
+async function dispatchIssueRefinementWorkflow(repoFullName, input, ref) {
+  const request = buildIssueRefinementDispatchRequest(repoFullName, input, ref);
+
+  await githubRequest(request.url, request.init);
 }
 
 /**
@@ -1323,8 +1420,8 @@ export function buildIssuePlanningStatusComment(recommendation, discussionUrl, b
     : isBlocked
       ? "issue_planning_blocked"
       : "issue_planning_request_changes";
-  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
-  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_refinement_agent";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "refine_issue_and_reply_to_planning_conclusion";
   const blockerLine = !isApproved && blockingRoles.length > 0
     ? `blocking_roles: \`${blockingRoles.join(",")}\``
     : "blocking_roles: ``";
@@ -1369,8 +1466,8 @@ export function buildIssuePlanningAutomationSection(input) {
     : isBlocked
       ? "issue_planning_blocked"
       : "issue_planning_request_changes";
-  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
-  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_refinement_agent";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "refine_issue_and_reply_to_planning_conclusion";
   const roleSections = [
     ["Product", input.debate.product],
     ["Technical", input.debate.technical],
@@ -1394,8 +1491,8 @@ export function buildIssuePlanningAutomationSection(input) {
   const handoff = isApproved
     ? "Codex may open the implementation branch and PR now. Use the human-authored issue text above plus linked child issues as the backlog contract; no further planning round is required."
     : isBlocked
-      ? "Do not open a branch yet. Wait for the explicit upstream dependency to land, then reply in the latest planning conclusion thread to trigger the next round."
-      : "Do not open a branch yet. Update the human-authored issue text above to close the blockers below, then reply in the latest planning conclusion thread to trigger the next round.";
+      ? "Do not open a branch yet. The artifact is well specified, but explicit upstream dependencies still need to land before implementation can start."
+      : "Do not open a branch yet. The issue refinement agent will update the issue, reply in the latest planning conclusion thread, and rerun planning automatically.";
 
   return [
     "## Canonical automation handoff",
@@ -1605,8 +1702,8 @@ export function buildIssuePlanningCompletionComment(recommendation, blockingRole
     : isBlocked
       ? "issue_planning_blocked"
       : "issue_planning_request_changes";
-  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_author";
-  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "reply_to_planning_conclusion";
+  const nextActor = isApproved ? "codex" : isBlocked ? "dependency_owner" : "issue_refinement_agent";
+  const nextAction = isApproved ? "open_branch_and_pr" : isBlocked ? "wait_for_dependencies" : "refine_issue_and_reply_to_planning_conclusion";
   const policyLine =
     "Execution readiness requires unanimous `Approve` from `product`, `technical`, `scrum`, and `risk`.";
   const canonicalLine =
@@ -2170,6 +2267,7 @@ async function main() {
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const [owner, name] = repository.split("/");
   const concurrencyTarget = resolvePlanningConcurrencyTarget(event);
+  const refinementWorkflowRef = resolveIssueRefinementDispatchRef(event);
 
   if (!owner || !name) {
     throw new Error(`Invalid GITHUB_REPOSITORY value: ${repository}`);
@@ -2269,6 +2367,26 @@ async function main() {
     lifecycleState,
     discussionUrl: context.discussion.url,
   });
+
+  if (evaluation.recommendation === "Request changes") {
+    await dispatchIssueRefinementWorkflow(
+      repository,
+      {
+        issueNumber: context.issue.number,
+        discussionNumber: context.discussion.number,
+        planningStatus: evaluation.recommendation.toLowerCase().replace(/\s+/g, "_"),
+        blockingRoles: evaluation.blockingRoles,
+        blockedByDependencies: evaluation.recommendation === "Blocked",
+      },
+      refinementWorkflowRef,
+    );
+    logOperationalEvent("ai_issue_planning_review.refinement.dispatched", {
+      issueNumber: context.issue.number,
+      discussionNumber: context.discussion.number,
+      planningStatus: evaluation.recommendation.toLowerCase().replace(/\s+/g, "_"),
+      ref: refinementWorkflowRef,
+    });
+  }
 
   if (evaluation.recommendation === "Request changes") {
     throw new Error("AI issue planning review requested changes. The workflow failed because the final recommendation is blocking.");

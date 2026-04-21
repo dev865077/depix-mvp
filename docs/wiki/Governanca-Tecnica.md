@@ -31,12 +31,15 @@
 - quando a rota e `discussion_before_pr`, a triagem dispara explicitamente o workflow de planning por `workflow_dispatch`, em vez de depender de comentario criado pelo bot para acionar outro `issue_comment`
 - o workflow de planning foi endurecido para nao manter portas paralelas de entrada por `issues` ou `issue_comment`; o contrato canonico agora e a decisao da triagem + `workflow_dispatch`
 - a planning review roda quatro papeis especializados: produto, technical, scrum e risk
+- quando a planning review termina em `Request changes`, o proximo ator canonico deixa de ser humano por padrao: o workflow `AI Issue Refinement` assume a issue, refina titulo/corpo/decomposicao via API e responde na thread da conclusao mais recente
+- a automacao de refinement pode criar ou reutilizar child issues concretas, reclassificar `epic:` falsa para `track:` e decidir entre rerodar o planning imediatamente ou parar em `issue_planning_blocked` quando o que restar for dependencia externa explicita
 - a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
 - em follow-up, a revisao deve tambem carregar os ultimos memos especialistas antes de formular novos bloqueios, para evitar mover o alvo da discussao
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
 - a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis e a propria issue publicar `canonical_state: issue_ready_for_codex`
 - o corpo humano da issue continua sendo a fonte editavel pelo operador; a secao gerenciada da automacao fica abaixo e e reescrita a cada rodada sem destruir o texto humano
 - quando a planning review concluir `Blocked`, a issue nao esta rejeitada; ela esta especificada, mas ainda depende de trabalho upstream explicito antes da implementacao
+- o refinement usa limite de rodadas configuravel para evitar loop infinito silencioso; quando esse limite estoura, a issue fica visivelmente fora de `ready_for_codex` e a operacao precisa de recuperacao explicita
 - na review de PR por IA, qualquer `Request changes` precisa publicar um `## Blocker contract` canonico no memo, ou o resultado e tratado como invalido pela automacao
 - o contrato canonico de blocker usa os mesmos rotulos em product, technical e risk para manter decisao consistente entre roles
 - quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`

@@ -22,6 +22,7 @@ on:
       - edited
 
 permissions:
+  actions: write
   contents: read
   discussions: write
   issues: write
