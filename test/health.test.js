@@ -1,6 +1,7 @@
 /**
  * Smoke test do healthcheck do Worker.
  */
+// @vitest-pool cloudflare
 import { SELF } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -167,5 +168,21 @@ describe("health route", () => {
     expect(JSON.stringify(body.configuration.operations.depositRecheck.tenantOverrides)).not.toContain(
       "ALPHA_OPS_ROUTE_BEARER_TOKEN",
     );
+  });
+
+  it("fails through the global handler when TENANT_REGISTRY is invalid", async function assertInvalidRegistryHealthFailure() {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const response = await createApp().fetch(
+      new Request("https://example.com/health"),
+      createHealthEnv({
+        TENANT_REGISTRY: "{",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("request_failed");
+    expect(body.status).not.toBe("ok");
   });
 });

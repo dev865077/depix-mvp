@@ -1,6 +1,7 @@
 /**
  * Testes do recheck operacional de deposito via `deposit-status`.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +11,7 @@ import { listDepositEventsByDepositEntryId } from "../src/db/repositories/deposi
 import { createDeposit, getDepositByDepositEntryId } from "../src/db/repositories/deposits-repository.js";
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
 import * as telegramRuntimeModule from "../src/telegram/runtime.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -158,7 +159,7 @@ async function requestDepositRecheck(options = {}) {
     headers.authorization = "Bearer ops-route-test-token";
   }
 
-  return app.request(
+  const response = await app.request(
     options.url ?? "https://example.com/ops/alpha/recheck/deposit",
     {
       method: "POST",
@@ -169,6 +170,13 @@ async function requestDepositRecheck(options = {}) {
     },
     createWorkerEnv(options.envOverrides),
   );
+  const body = await response.text();
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 afterEach(function restoreRecheckMocks() {

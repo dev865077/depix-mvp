@@ -40,6 +40,7 @@ const RUN_MODE_AUTO = "auto";
 const RUN_MODE_CLASSIFY = "classify";
 const RUN_MODE_DIRECT = "direct";
 const RUN_MODE_DISCUSSION = "discussion";
+const RUN_MODE_AWAIT_CI = "await_ci";
 const MAX_FILES = 24;
 const MAX_DISCUSSION_LOOKBACK = 100;
 const MAX_DISCUSSION_CONTEXT_COMMENTS = 20;
@@ -1903,6 +1904,95 @@ export function isCiTestCheckGreen(statusCheckContexts) {
 }
 
 /**
+ * Describe the canonical `CI / Test` check state for the current PR.
+ *
+ * @param {Array<any>} statusCheckContexts Pull-request status-check contexts.
+ * @returns {{ found: boolean, completed: boolean, green: boolean }} Parsed CI state.
+ */
+export function getCiTestCheckState(statusCheckContexts) {
+  const ciContext = (Array.isArray(statusCheckContexts) ? statusCheckContexts : []).find((context) => (
+    context?.__typename === "CheckRun"
+      ? context.name === "Test" && context.workflowName === "CI"
+      : context?.__typename === "StatusContext"
+        && context.context === "CI / Test"
+  ));
+
+  if (!ciContext) {
+    return { found: false, completed: false, green: false };
+  }
+
+  if (ciContext.__typename === "CheckRun") {
+    const conclusion = String(ciContext.conclusion ?? "").toUpperCase();
+    const completed = String(ciContext.status ?? "").toUpperCase() === "COMPLETED" || conclusion.length > 0;
+
+    return {
+      found: true,
+      completed,
+      green: conclusion === "SUCCESS",
+    };
+  }
+
+  const state = String(ciContext.state ?? "").toUpperCase();
+
+  return {
+    found: true,
+    completed: state.length > 0 && !["PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"].includes(state),
+    green: state === "SUCCESS",
+  };
+}
+
+/**
+ * Decide whether a discussion-side rerun must wait for the canonical CI / Test
+ * result instead of generating another blocking round from stale status data.
+ *
+ * @param {string} eventName GitHub event name.
+ * @param {{ id?: string } | null} latestFinalComment Latest automated final comment.
+ * @param {Array<any>} statusCheckContexts Current PR status contexts.
+ * @returns {boolean} True when the rerun must defer until CI is green.
+ */
+export function shouldDeferDiscussionReviewUntilCiGreen(eventName, latestFinalComment, statusCheckContexts) {
+  return eventName === "discussion_comment"
+    && Boolean(latestFinalComment?.id)
+    && !isCiTestCheckGreen(statusCheckContexts);
+}
+
+/**
+ * Wait until the canonical `CI / Test` check reaches a terminal state.
+ *
+ * GitHub Actions cannot express `needs` across workflows, so the discussion
+ * lane must poll the PR status rollup before it can safely reconcile blocker
+ * contracts against the final CI result of the same head commit.
+ *
+ * @param {string} repository Repository in owner/name form.
+ * @param {number} pullRequestNumber Pull request number.
+ * @param {{ timeoutMs?: number, pollIntervalMs?: number }} [options] Timing options.
+ * @returns {Promise<{ found: boolean, completed: boolean, green: boolean }>} Final CI state.
+ */
+export async function waitForCiTestConclusion(
+  repository,
+  pullRequestNumber,
+  options = {},
+) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 15 * 60 * 1000;
+  const pollIntervalMs = Number.isFinite(options.pollIntervalMs) ? options.pollIntervalMs : 5000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() <= deadline) {
+    const state = getCiTestCheckState(await fetchPullRequestStatusCheckRollup(repository, pullRequestNumber));
+
+    if (state.completed) {
+      return state;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, pollIntervalMs);
+    });
+  }
+
+  throw new Error(`Timed out waiting for CI / Test on PR #${pullRequestNumber}.`);
+}
+
+/**
  * Build stable diff-evidence needles from one blocker field.
  *
  * Full fields stay in play, but code-ish fragments inside backticks also count
@@ -2241,7 +2331,10 @@ async function resolvePullRequestContext(repository, event) {
   }
 
   if (!event.discussion?.number) {
-    throw new Error("Unsupported GitHub event for AI PR review.");
+    logOperationalEvent("ai_pr_review.skip", {
+      reason: "unsupported_event",
+    });
+    return null;
   }
 
   const [owner, name] = repository.split("/");
@@ -2852,10 +2945,11 @@ export function buildAutomationEvidenceContext(inputs) {
     hasChangedFile(files, ".github/workflows/ai-pr-review.yml")
     && prReviewWorkflow.includes("discussion_comment:")
     && prReviewWorkflow.includes("discussion-review:")
+    && prReviewWorkflow.includes("Wait for canonical CI / Test conclusion")
     && prReviewWorkflow.includes("discussions: write")
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` and `discussion_comment` both route into the same workflow, and the `discussion-review` job requests `discussions: write` for Discussion publication.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, `discussion-review` explicitly waits for the canonical `CI / Test` conclusion before publishing, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
     );
   }
 
@@ -3925,6 +4019,7 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
 async function main() {
   const eventPath = readRequiredEnv("GITHUB_EVENT_PATH");
   const repository = readRequiredEnv("GITHUB_REPOSITORY");
+  const eventName = process.env.GITHUB_EVENT_NAME?.trim() || "";
   const runMode = process.env.AI_PR_REVIEW_MODE?.trim() || RUN_MODE_AUTO;
   const reviewPromptPath = process.env.AI_REVIEW_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-review.md";
   const doctrinePromptPath = process.env.AI_PR_DISCUSSION_DOCTRINE_PATH?.trim() || ".github/prompts/ai-pr-review-doctrine.md";
@@ -3957,6 +4052,25 @@ async function main() {
     await writeGitHubOutput("requires_discussion", String(gate.requiresDiscussion));
     await writeGitHubOutput("reason", gate.reason);
 
+    return;
+  }
+
+  if (runMode === RUN_MODE_AWAIT_CI) {
+    const ciState = await waitForCiTestConclusion(repository, pullRequest.number);
+
+    logOperationalEvent("ai_pr_review.ci_test.awaited", {
+      pullRequestNumber: pullRequest.number,
+      found: ciState.found,
+      completed: ciState.completed,
+      green: ciState.green,
+    });
+
+    await writeStepSummary([
+      "## AI PR Review CI gate",
+      "",
+      `Canonical \`CI / Test\` completed: \`${ciState.completed}\``,
+      `Canonical \`CI / Test\` green: \`${ciState.green}\``,
+    ].join("\n"));
     return;
   }
 
@@ -4014,6 +4128,26 @@ async function main() {
   );
 
   if (gate.requiresDiscussion) {
+    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
+    const statusCheckContexts = latestFinalComment
+      ? await fetchPullRequestStatusCheckRollup(repository, pullRequest.number)
+      : [];
+
+    if (shouldDeferDiscussionReviewUntilCiGreen(eventName, latestFinalComment, statusCheckContexts)) {
+      logOperationalEvent("ai_pr_review.skip", {
+        reason: "awaiting_green_ci_test",
+        pullRequestNumber: pullRequest.number,
+        discussionNumber: discussionThread?.number ?? discussion?.number ?? null,
+      });
+      await writeStepSummary([
+        "## AI PR Review deferred",
+        "",
+        "Discussion rerun skipped because the current `CI / Test` check is not green yet.",
+        "The next `workflow_run` event from `CI` will re-run the discussion lane after the canonical test result is available.",
+      ].join("\n"));
+      return;
+    }
+
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
       readPrompt(doctrinePromptPath),
       readPrompt(productPromptPath),
@@ -4032,10 +4166,7 @@ async function main() {
       userPrompt,
       model,
     );
-    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
-
     if (latestFinalComment) {
-      const statusCheckContexts = await fetchPullRequestStatusCheckRollup(repository, pullRequest.number);
       const unresolvedFollowUpBlockers = reconcileFollowUpTestableBlockers(
         latestFinalComment,
         files,

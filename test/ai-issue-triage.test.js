@@ -1,7 +1,7 @@
 /**
  * Testes das validacoes do triador automatico de issues.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertValidIssueTriagePlan,
@@ -261,6 +261,9 @@ describe("ai issue triage validation", () => {
       },
     };
 
+    vi.stubEnv("GITHUB_REF_NAME", "");
+    vi.stubEnv("GITHUB_REF", "");
+
     await runIssueTriageWorkflow({
       repository: "dev865077/depix-mvp",
       issue: {
@@ -274,6 +277,8 @@ describe("ai issue triage validation", () => {
       promptPath: ".github/prompts/ai-issue-triage.md",
       model: "gpt-test",
     }, runtime);
+
+    vi.unstubAllEnvs();
 
     expect(calls).toEqual([
       ["upsert", "dev865077/depix-mvp", 217, true],
@@ -321,6 +326,9 @@ describe("ai issue triage validation", () => {
       },
     };
 
+    vi.stubEnv("GITHUB_REF_NAME", "");
+    vi.stubEnv("GITHUB_REF", "");
+
     await expect(runIssueTriageWorkflow({
       repository: "dev865077/depix-mvp",
       issue: {
@@ -334,6 +342,8 @@ describe("ai issue triage validation", () => {
       promptPath: ".github/prompts/ai-issue-triage.md",
       model: "gpt-test",
     }, runtime)).rejects.toThrow("dispatch rejected");
+
+    vi.unstubAllEnvs();
 
     expect(calls).toEqual(["upsert", "dispatch"]);
   });

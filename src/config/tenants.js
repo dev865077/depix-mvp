@@ -22,6 +22,58 @@ const OPTIONAL_TENANT_OPS_BINDING_KEYS = [
   "depositRecheckBearerToken",
 ];
 
+const DEFAULT_TENANT_REGISTRY_STAGE = "initial_materialization";
+
+/**
+ * Erro canonico para falhas de contrato do TENANT_REGISTRY.
+ */
+export class TenantRegistryValidationError extends Error {
+  /**
+   * @param {{
+   *   tenantId: string | null,
+   *   field: string,
+   *   reason: "missing_required_key" | "invalid_type" | "empty_binding_name" | "malformed_tenant" | "invalid_json" | "empty_registry",
+   *   stage: "initial_materialization" | "tenant_lookup"
+   * }} input Dados estruturados do erro.
+   */
+  constructor({ tenantId, field, reason, stage }) {
+    super(`Invalid tenant registry: ${field} (${reason})`);
+    this.name = "TenantRegistryValidationError";
+    this.code = "invalid_tenant_registry";
+    this.tenantId = tenantId;
+    this.field = field;
+    this.reason = reason;
+    this.stage = stage;
+  }
+
+  toJSON() {
+    return {
+      code: this.code,
+      tenantId: this.tenantId,
+      field: this.field,
+      reason: this.reason,
+      stage: this.stage,
+    };
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function createValidationContext(tenantId, stage = DEFAULT_TENANT_REGISTRY_STAGE) {
+  return { tenantId, stage };
+}
+
+function throwTenantRegistryValidationError(context, field, reason) {
+  throw new TenantRegistryValidationError({
+    tenantId: context.tenantId,
+    field,
+    reason,
+    stage: context.stage,
+  });
+}
+
 /**
  * Garante que um valor do registry seja um objeto JSON simples.
  *
@@ -33,9 +85,13 @@ const OPTIONAL_TENANT_OPS_BINDING_KEYS = [
  * @param {string} field Caminho logico do campo.
  * @returns {Record<string, unknown>} Objeto validado.
  */
-function assertTenantObject(value, field) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Invalid tenant object: ${field}`);
+function assertTenantObject(value, field, context) {
+  if (typeof value === "undefined") {
+    throwTenantRegistryValidationError(context, field, "missing_required_key");
+  }
+
+  if (!isPlainObject(value)) {
+    throwTenantRegistryValidationError(context, field, "malformed_tenant");
   }
 
   return value;
@@ -48,9 +104,17 @@ function assertTenantObject(value, field) {
  * @param {string} field Caminho logico do campo.
  * @returns {string} Texto limpo e valido.
  */
-function assertTenantString(value, field) {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Invalid tenant field: ${field}`);
+function assertTenantString(value, field, context) {
+  if (typeof value === "undefined") {
+    throwTenantRegistryValidationError(context, field, "missing_required_key");
+  }
+
+  if (typeof value !== "string") {
+    throwTenantRegistryValidationError(context, field, "invalid_type");
+  }
+
+  if (value.trim().length === 0) {
+    throwTenantRegistryValidationError(context, field, "empty_binding_name");
   }
 
   return value.trim();
@@ -69,8 +133,9 @@ function assertTenantString(value, field) {
  * @param {string[]} requiredKeys Chaves obrigatorias esperadas.
  * @returns {Record<string, string>} Mapa de bindings normalizado.
  */
-function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys) {
-  const bindingMap = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.${registryField}`);
+function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys, stage) {
+  const context = createValidationContext(tenantId, stage);
+  const bindingMap = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.${registryField}`, context);
 
   return Object.fromEntries(
     requiredKeys.map((bindingKey) => [
@@ -78,6 +143,7 @@ function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys)
       assertTenantString(
         bindingMap[bindingKey],
         `TENANT_REGISTRY.${tenantId}.${registryField}.${bindingKey}`,
+        context,
       ),
     ]),
   );
@@ -95,9 +161,9 @@ function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys)
  * @param {Record<string, unknown>} input Conteudo bruto dos bindings de split.
  * @returns {{ depixSplitAddress: string, splitFee: string }} Bindings validados.
  */
-function normalizeTenantSplitConfigBindings(tenantId, input) {
+function normalizeTenantSplitConfigBindings(tenantId, input, stage) {
   return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (
-    normalizeTenantBindingMap(tenantId, input, "splitConfigBindings", REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS)
+    normalizeTenantBindingMap(tenantId, input, "splitConfigBindings", REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS, stage)
   );
 }
 
@@ -113,12 +179,13 @@ function normalizeTenantSplitConfigBindings(tenantId, input) {
  * @param {unknown} input Conteudo bruto dos bindings operacionais.
  * @returns {{ depositRecheckBearerToken?: string }} Bindings opcionais validados.
  */
-function normalizeTenantOpsBindings(tenantId, input) {
+function normalizeTenantOpsBindings(tenantId, input, stage) {
   if (typeof input === "undefined") {
     return {};
   }
 
-  const opsBindings = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.opsBindings`);
+  const context = createValidationContext(tenantId, stage);
+  const opsBindings = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.opsBindings`, context);
 
   return Object.fromEntries(
     OPTIONAL_TENANT_OPS_BINDING_KEYS.flatMap((bindingKey) => {
@@ -130,7 +197,7 @@ function normalizeTenantOpsBindings(tenantId, input) {
 
       return [[
         bindingKey,
-        assertTenantString(bindingValue, `TENANT_REGISTRY.${tenantId}.opsBindings.${bindingKey}`),
+        assertTenantString(bindingValue, `TENANT_REGISTRY.${tenantId}.opsBindings.${bindingKey}`, context),
       ]];
     }),
   );
@@ -163,22 +230,27 @@ function normalizeTenantOpsBindings(tenantId, input) {
  *   secretBindings: Record<string, string>
  * }} Tenant validado.
  */
-function normalizeTenantConfig(tenantId, input) {
-  const tenantConfig = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}`);
+function normalizeTenantConfig(tenantId, input, stage = DEFAULT_TENANT_REGISTRY_STAGE) {
+  const context = createValidationContext(tenantId, stage);
+  const tenantConfig = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}`, context);
+  const displayName = typeof tenantConfig.displayName === "undefined"
+    ? tenantId
+    : assertTenantString(tenantConfig.displayName, `TENANT_REGISTRY.${tenantId}.displayName`, context);
 
   return {
     tenantId,
-    displayName: assertTenantString(tenantConfig.displayName ?? tenantId, `TENANT_REGISTRY.${tenantId}.displayName`),
+    displayName,
     eulenPartnerId: typeof tenantConfig.eulenPartnerId === "string" && tenantConfig.eulenPartnerId.trim().length > 0
       ? tenantConfig.eulenPartnerId.trim()
       : undefined,
-    splitConfigBindings: normalizeTenantSplitConfigBindings(tenantId, tenantConfig.splitConfigBindings),
-    opsBindings: normalizeTenantOpsBindings(tenantId, tenantConfig.opsBindings),
+    splitConfigBindings: normalizeTenantSplitConfigBindings(tenantId, tenantConfig.splitConfigBindings, stage),
+    opsBindings: normalizeTenantOpsBindings(tenantId, tenantConfig.opsBindings, stage),
     secretBindings: normalizeTenantBindingMap(
       tenantId,
       tenantConfig.secretBindings,
       "secretBindings",
       REQUIRED_TENANT_SECRET_BINDINGS,
+      stage,
     ),
   };
 }
@@ -189,11 +261,23 @@ function normalizeTenantConfig(tenantId, input) {
  * @param {Record<string, unknown>} env Bindings do Worker.
  * @returns {Record<string, ReturnType<typeof normalizeTenantConfig>>} Registro de tenants pronto para uso.
  */
-export function readTenantRegistry(env) {
+export function readTenantRegistry(env, options = {}) {
+  const stage = options.stage ?? DEFAULT_TENANT_REGISTRY_STAGE;
+  const context = createValidationContext(null, stage);
   const rawRegistry = env.TENANT_REGISTRY;
 
   if (typeof rawRegistry !== "string" || rawRegistry.trim().length === 0) {
-    throw new Error("Missing required binding: TENANT_REGISTRY");
+    const reason = typeof rawRegistry === "undefined"
+      ? "missing_required_key"
+      : typeof rawRegistry !== "string"
+        ? "invalid_type"
+        : "empty_registry";
+
+    throwTenantRegistryValidationError(
+      context,
+      "TENANT_REGISTRY",
+      reason,
+    );
   }
 
   let parsedRegistry;
@@ -201,19 +285,19 @@ export function readTenantRegistry(env) {
   try {
     parsedRegistry = JSON.parse(rawRegistry);
   } catch {
-    throw new Error("Invalid JSON binding: TENANT_REGISTRY");
+    throwTenantRegistryValidationError(context, "TENANT_REGISTRY", "invalid_json");
   }
 
-  const registry = assertTenantObject(parsedRegistry, "TENANT_REGISTRY");
+  const registry = assertTenantObject(parsedRegistry, "TENANT_REGISTRY", context);
 
   const entries = Object.entries(registry);
 
   if (entries.length === 0) {
-    throw new Error("TENANT_REGISTRY must define at least one tenant");
+    throwTenantRegistryValidationError(context, "TENANT_REGISTRY", "empty_registry");
   }
 
   return Object.fromEntries(
-    entries.map(([tenantId, tenantConfig]) => [tenantId, normalizeTenantConfig(tenantId, tenantConfig)]),
+    entries.map(([tenantId, tenantConfig]) => [tenantId, normalizeTenantConfig(tenantId, tenantConfig, stage)]),
   );
 }
 
@@ -261,7 +345,13 @@ export function resolveTenantFromRequest(runtimeConfig, path, tenantHeader) {
     return undefined;
   }
 
-  return runtimeConfig.tenants[resolvedTenantId];
+  const tenantConfig = runtimeConfig.tenants[resolvedTenantId];
+
+  if (!tenantConfig) {
+    return undefined;
+  }
+
+  return normalizeTenantConfig(resolvedTenantId, tenantConfig, "tenant_lookup");
 }
 
 /**

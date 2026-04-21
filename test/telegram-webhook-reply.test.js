@@ -8,6 +8,7 @@
  * - erros outbound sao mapeados para contrato HTTP local
  * - requests fora de escopo nao geram retry operacional desnecessario
  */
+// @vitest-pool cloudflare
 import { BotError, GrammyError, HttpError } from "grammy";
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -914,7 +915,7 @@ describe("telegram webhook reply flow", () => {
 
     const workerEnv = createWorkerEnv();
 
-    await app.request(
+    const startResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -936,7 +937,7 @@ describe("telegram webhook reply flow", () => {
 
     expect(firstOrder?.orderId).toBeTruthy();
 
-    await app.request(
+    const resumeResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -993,7 +994,7 @@ describe("telegram webhook reply flow", () => {
       "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
     };
 
-    await app.request(
+    const cancelResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1007,8 +1008,7 @@ describe("telegram webhook reply flow", () => {
       },
       workerEnv,
     );
-
-    await app.request(
+    const amountResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1023,7 +1023,7 @@ describe("telegram webhook reply flow", () => {
       workerEnv,
     );
 
-    await app.request(
+    const staleAmountResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1186,7 +1186,7 @@ describe("telegram webhook reply flow", () => {
       workerEnv,
     );
 
-    await app.request(
+    const cancelResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1406,7 +1406,7 @@ describe("telegram webhook reply flow", () => {
       });
     });
 
-    await app.request(
+    const cancelResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1423,8 +1423,9 @@ describe("telegram webhook reply flow", () => {
       },
       workerEnv,
     );
+    await cancelResponse.text();
 
-    await app.request(
+    const restartResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1553,7 +1554,7 @@ describe("telegram webhook reply flow", () => {
       });
     });
 
-    await app.request(
+    const cancelResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1570,8 +1571,9 @@ describe("telegram webhook reply flow", () => {
       },
       workerEnv,
     );
+    await cancelResponse.text();
 
-    await app.request(
+    const restartResponse = await app.request(
       "https://example.com/telegram/alpha/webhook",
       {
         method: "POST",
@@ -1588,9 +1590,12 @@ describe("telegram webhook reply flow", () => {
       },
       workerEnv,
     );
+    await restartResponse.text();
 
     const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "899");
 
+    expect(cancelResponse.status).toBe(200);
+    expect(restartResponse.status).toBe(200);
     expect(currentOrder).toBeNull();
     expect(replies[0]).toContain("Nao existe pedido aberto para cancelar.");
     expect(replies[1]).toContain("Nao existe pedido aberto para recomecar.");

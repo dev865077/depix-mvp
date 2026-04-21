@@ -5,9 +5,10 @@
  * suite cobre o contrato que importa:
  * - bearer operacional obrigatorio
  * - leitura segura do estado atual do webhook
- * - registro explicito do webhook com `secret_token`
  * - falha fechada quando o ambiente nao materializa os segredos do tenant
+ * - registro explicito do webhook com `secret_token`
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

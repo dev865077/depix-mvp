@@ -7,7 +7,16 @@
  */
 import { describe, expect, it } from "vitest";
 
+import {
+  ORDER_STATUSES,
+  ORDER_STEPS,
+} from "../src/types/domain.ts";
+import {
+  ORDER_PROGRESS_STATES,
+  ORDER_STATUS_BY_STEP,
+} from "../src/order-flow/order-progress-constants.js";
 import { readRuntimeConfig } from "../src/config/runtime.js";
+import { TenantRegistryValidationError } from "../src/config/tenants.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -103,6 +112,52 @@ function createTenantScopedAlphaRegistry() {
   });
 }
 
+function createTenantRegistryObject(overrides = {}) {
+  return {
+    alpha: {
+      displayName: "Alpha",
+      eulenPartnerId: "partner-alpha",
+      splitConfigBindings: {
+        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+      },
+      ...overrides,
+    },
+  };
+}
+
+function createTenantRegistry(overrides = {}) {
+  return JSON.stringify(createTenantRegistryObject(overrides));
+}
+
+function captureTenantRegistryError(callback) {
+  try {
+    callback();
+  } catch (error) {
+    expect(error).toBeInstanceOf(TenantRegistryValidationError);
+    return error;
+  }
+
+  throw new Error("Expected TenantRegistryValidationError to be thrown");
+}
+
+function expectTenantRegistryError(overrides, expectedError) {
+  const error = captureTenantRegistryError(() => {
+    readRuntimeConfig(createRuntimeEnv(overrides));
+  });
+
+  expect(error.toJSON()).toEqual({
+    code: "invalid_tenant_registry",
+    ...expectedError,
+  });
+}
+
 describe("runtime config", () => {
   it("marks deposit recheck ready when enabled with the global bearer token", () => {
     const runtimeConfig = readRuntimeConfig(createRuntimeEnv());
@@ -175,5 +230,185 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
+  });
+
+  it("keeps the domain type constants aligned with the runtime order constants", () => {
+    expect(ORDER_STEPS).toEqual(Object.values(ORDER_PROGRESS_STATES));
+    expect(ORDER_STATUSES).toEqual([...new Set(Object.values(ORDER_STATUS_BY_STEP))]);
+  });
+
+  it("ignores unknown tenant fields instead of preserving them in the normalized registry", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      TENANT_REGISTRY: createTenantRegistry({
+        futureField: "ignored",
+      }),
+    }));
+
+    expect(runtimeConfig.tenants.alpha.futureField).toBeUndefined();
+  });
+
+  it("keeps legacy tenant registries working when displayName is omitted", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      TENANT_REGISTRY: JSON.stringify(createTenantRegistryObject({
+        displayName: undefined,
+      })),
+    }));
+
+    expect(runtimeConfig.tenants.alpha.displayName).toBe("alpha");
+  });
+
+  it("fails closed on invalid JSON in TENANT_REGISTRY", () => {
+    expectTenantRegistryError(
+      { TENANT_REGISTRY: "{" },
+      {
+        tenantId: null,
+        field: "TENANT_REGISTRY",
+        reason: "invalid_json",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed on an empty TENANT_REGISTRY", () => {
+    expectTenantRegistryError(
+      { TENANT_REGISTRY: "{}" },
+      {
+        tenantId: null,
+        field: "TENANT_REGISTRY",
+        reason: "empty_registry",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed on a malformed top-level TENANT_REGISTRY object", () => {
+    expectTenantRegistryError(
+      { TENANT_REGISTRY: "[]" },
+      {
+        tenantId: null,
+        field: "TENANT_REGISTRY",
+        reason: "malformed_tenant",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when splitConfigBindings is absent", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: createTenantRegistry({
+          splitConfigBindings: undefined,
+        }),
+      },
+      {
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.splitConfigBindings",
+        reason: "missing_required_key",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when secretBindings is malformed", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: createTenantRegistry({
+          secretBindings: [],
+        }),
+      },
+      {
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.secretBindings",
+        reason: "malformed_tenant",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when a required tenant binding key is absent", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: createTenantRegistry({
+          secretBindings: {
+            telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+            eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+            eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+          },
+        }),
+      },
+      {
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.secretBindings.telegramBotToken",
+        reason: "missing_required_key",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when a required tenant binding has an invalid type", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: createTenantRegistry({
+          splitConfigBindings: {
+            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+            splitFee: 10,
+          },
+        }),
+      },
+      {
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.splitConfigBindings.splitFee",
+        reason: "invalid_type",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when a required tenant binding name is empty", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: createTenantRegistry({
+          splitConfigBindings: {
+            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+            splitFee: " ",
+          },
+        }),
+      },
+      {
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.splitConfigBindings.splitFee",
+        reason: "empty_binding_name",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("does not return a partially materialized registry when one tenant is invalid", () => {
+    expectTenantRegistryError(
+      {
+        TENANT_REGISTRY: JSON.stringify({
+          ...createTenantRegistryObject(),
+          beta: {
+            displayName: "Beta",
+            splitConfigBindings: {
+              depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+              splitFee: "",
+            },
+            secretBindings: {
+              telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
+              telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
+              eulenApiToken: "BETA_EULEN_API_TOKEN",
+              eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
+            },
+          },
+        }),
+      },
+      {
+        tenantId: "beta",
+        field: "TENANT_REGISTRY.beta.splitConfigBindings.splitFee",
+        reason: "empty_binding_name",
+        stage: "initial_materialization",
+      },
+    );
   });
 });

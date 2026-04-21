@@ -1,11 +1,16 @@
 /**
  * Testes da fundacao multi-tenant do Worker.
  */
+// @vitest-pool cloudflare
 import { SELF, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import {
+  resolveTenantFromRequest,
+  TenantRegistryValidationError,
+} from "../src/config/tenants.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 async function fetchJson(url, init = {}) {
   const response = await SELF.fetch(url, { method: "POST", ...init });
@@ -137,5 +142,78 @@ describe("tenant routing", () => {
     expect(response.status).toBe(404);
     expect(body.error.code).toBe("request_failed");
     expect(body.error.message).toContain("Unknown tenant: gamma");
+  });
+
+  it("keeps direct tenant lookup behavior for valid normalized config", function assertValidTenantLookup() {
+    const runtimeConfig = {
+      tenants: {
+        alpha: {
+          tenantId: "alpha",
+          displayName: "Alpha",
+          splitConfigBindings: {
+            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+            splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+          },
+          opsBindings: {},
+          secretBindings: {
+            telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+            telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+            eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+            eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+          },
+        },
+      },
+    };
+
+    expect(
+      resolveTenantFromRequest(runtimeConfig, "/telegram/alpha/webhook"),
+    ).toMatchObject({
+      tenantId: "alpha",
+      displayName: "Alpha",
+    });
+  });
+
+  it("revalidates malformed tenant config during lookup with the canonical error", function assertLookupStageValidation() {
+    const runtimeConfig = {
+      tenants: {
+        alpha: {
+          tenantId: "alpha",
+          displayName: "Alpha",
+          splitConfigBindings: {
+            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+            splitFee: "",
+          },
+          opsBindings: {},
+          secretBindings: {
+            telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+            telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+            eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+            eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+          },
+        },
+      },
+    };
+
+    expect(() => {
+      resolveTenantFromRequest(runtimeConfig, "/telegram/alpha/webhook");
+    }).toThrow(TenantRegistryValidationError);
+
+    try {
+      resolveTenantFromRequest(runtimeConfig, "/telegram/alpha/webhook");
+    } catch (error) {
+      expect(error.toJSON()).toEqual({
+        code: "invalid_tenant_registry",
+        tenantId: "alpha",
+        field: "TENANT_REGISTRY.alpha.splitConfigBindings.splitFee",
+        reason: "empty_binding_name",
+        stage: "tenant_lookup",
+      });
+    }
+  });
+
+  it("does not convert missing tenants into registry validation errors", function assertUnknownTenantIsNotRegistryInvalid() {
+    const runtimeConfig = { tenants: {} };
+
+    expect(resolveTenantFromRequest(runtimeConfig, "/telegram/gamma/webhook")).toBeUndefined();
   });
 });

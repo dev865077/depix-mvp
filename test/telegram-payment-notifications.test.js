@@ -1,6 +1,7 @@
 /**
  * Testes unitarios do service de notificacao pos-pagamento no Telegram.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,7 +14,7 @@ import {
   notifyTelegramOrderTransitionSafely,
   resolveTelegramNotificationKind,
 } from "../src/services/telegram-payment-notifications.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 afterEach(function restoreTelegramPaymentNotificationTestState() {
   vi.restoreAllMocks();

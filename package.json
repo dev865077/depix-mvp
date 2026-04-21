@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
-    "test": "vitest --run",
+    "test": "node scripts/run-vitest-sequential.mjs",
     "obsidian:export": "node scripts/exportar-repositorio-para-obsidian-md.js",
     "cf:types": "wrangler types",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",

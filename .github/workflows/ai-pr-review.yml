@@ -108,6 +108,12 @@ jobs:
         with:
           node-version: 20
 
+      - name: Wait for canonical CI / Test conclusion
+        env:
+          AI_PR_REVIEW_MODE: await_ci
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ai-pr-review.mjs
+
       - name: Run multi-bot Discussion PR review
         env:
           AI_PR_REVIEW_MODE: discussion

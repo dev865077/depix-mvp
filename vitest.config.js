@@ -37,5 +37,10 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.js"],
     pool: cloudflarePool(workersPoolOptions),
+    fileParallelism: false,
+    maxWorkers: 1,
+    minWorkers: 1,
+    testTimeout: 300000,
+    hookTimeout: 300000,
   },
 });

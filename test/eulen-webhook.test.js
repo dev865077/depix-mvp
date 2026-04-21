@@ -1,6 +1,7 @@
 /**
  * Testes do webhook principal de deposito da Eulen.
  */
+// @vitest-pool cloudflare
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -16,7 +17,7 @@ import {
 import { createOrder, getOrderById, updateOrderById } from "../src/db/repositories/orders-repository.js";
 import { reconcileOrderPatch } from "../src/services/eulen-deposit-webhook.js";
 import * as telegramRuntimeModule from "../src/telegram/runtime.js";
-import { resetDatabaseSchema } from "./db.repositories.test.js";
+import { resetDatabaseSchema } from "./helpers/database-schema.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
