@@ -2,6 +2,7 @@
  * Testes das validacoes do triador automatico de issues.
  */
 import { describe, expect, it, vi } from "vitest";
+import issueTriageWorkflowText from "../.github/workflows/ai-issue-triage.yml?raw";
 
 import {
   assertValidIssueTriagePlan,
@@ -18,6 +19,13 @@ import {
 } from "../scripts/ai-issue-triage.mjs";
 
 describe("ai issue triage validation", () => {
+  it("supports both visual issue events and API workflow_dispatch", () => {
+    expect(issueTriageWorkflowText).toContain("issues:");
+    expect(issueTriageWorkflowText).toContain("workflow_dispatch:");
+    expect(issueTriageWorkflowText).toContain("issue_number:");
+    expect(issueTriageWorkflowText).toContain("github.event.issue.number || github.event.inputs.issue_number");
+  });
+
   it("parses plain and fenced JSON responses", () => {
     const plan = {
       impact: "baixo",

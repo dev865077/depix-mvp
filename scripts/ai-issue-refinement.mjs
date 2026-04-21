@@ -24,6 +24,7 @@ const ISSUE_AUTOMATION_END_MARKER = "<!-- ai-issue-automation:end -->";
 const ISSUE_REFINEMENT_COMMENT_MARKER = "<!-- ai-issue-refinement:openai -->";
 const CHILD_ISSUE_MARKER_PREFIX = "<!-- ai-issue-refinement-child:";
 const ISSUE_PLANNING_WORKFLOW_FILE = "ai-issue-planning-review.yml";
+const ISSUE_TRIAGE_WORKFLOW_FILE = "ai-issue-triage.yml";
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const MAX_OUTPUT_TOKENS = 2400;
 const MAX_CHILD_ISSUES = 6;
@@ -986,6 +987,42 @@ async function dispatchPlanningRerun(repoFullName, discussionNumber, ref) {
   await githubRequest(request.url, request.init);
 }
 
+export function buildIssueTriageDispatchRequest(repoFullName, issueNumber, ref) {
+  const trimmedRef = typeof ref === "string" ? ref.trim() : "";
+
+  if (typeof repoFullName !== "string" || !/^[^/]+\/[^/]+$/.test(repoFullName)) {
+    throw new Error(`Invalid repository for child triage dispatch: ${String(repoFullName)}`);
+  }
+
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    throw new Error(`Invalid issue number for child triage dispatch: ${String(issueNumber)}`);
+  }
+
+  if (!trimmedRef) {
+    throw new Error("Invalid ref for child triage dispatch.");
+  }
+
+  return {
+    url: `https://api.github.com/repos/${repoFullName}/actions/workflows/${ISSUE_TRIAGE_WORKFLOW_FILE}/dispatches`,
+    init: {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ref: trimmedRef,
+        inputs: {
+          issue_number: String(issueNumber),
+        },
+      }),
+    },
+  };
+}
+
+async function dispatchIssueTriage(repoFullName, issueNumber, ref) {
+  const request = buildIssueTriageDispatchRequest(repoFullName, issueNumber, ref);
+
+  await githubRequest(request.url, request.init);
+}
+
 async function generateIssueRefinementWithOpenAI(systemPrompt, userPrompt, model) {
   const apiKey = readRequiredEnv("OPENAI_API_KEY");
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -1114,6 +1151,7 @@ async function generateIssueRefinementWithEndpoint(endpoint, payload) {
  * @property {(repoFullName: string, issueNumber: number, body: string) => Promise<void>} upsertIssuePlanningStatusComment
  * @property {(discussionId: string, replyToId: string, body: string) => Promise<void>} createDiscussionReply
  * @property {(repoFullName: string, parentIssue: any, childIssueDrafts: Array<{ title: string, body: string }>) => Promise<any[]>} createOrReuseChildIssues
+ * @property {(repoFullName: string, issueNumber: number, ref: string) => Promise<void>} dispatchIssueTriage
  * @property {(repoFullName: string, discussionNumber: number, ref: string) => Promise<void>} dispatchPlanningRerun
  * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateWithOpenAI
  * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateWithChatCompletions
@@ -1129,6 +1167,7 @@ const ISSUE_REFINEMENT_RUNTIME = {
   upsertIssuePlanningStatusComment,
   createDiscussionReply,
   createOrReuseChildIssues,
+  dispatchIssueTriage,
   dispatchPlanningRerun,
   generateWithOpenAI: generateIssueRefinementWithOpenAI,
   generateWithChatCompletions: generateIssueRefinementWithChatCompletions,
@@ -1331,6 +1370,15 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
       blockingDependencies: plan.blockingDependencies,
     }),
   );
+
+  for (const childIssue of createdChildIssues) {
+    await runtime.dispatchIssueTriage(repository, childIssue.number, workflowRef);
+    logOperationalEvent("ai_issue_refinement.child_triage.dispatched", {
+      parentIssueNumber: issue.number,
+      childIssueNumber: childIssue.number,
+      ref: workflowRef,
+    });
+  }
 
   if (plan.shouldRerunPlanning) {
     await runtime.dispatchPlanningRerun(repository, discussion.number, workflowRef);

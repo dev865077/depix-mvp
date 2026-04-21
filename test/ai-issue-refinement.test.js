@@ -7,6 +7,7 @@ import issueRefinementWorkflowText from "../.github/workflows/ai-issue-refinemen
 import {
   assertValidIssueRefinementPlan,
   buildIssuePlanningRerunDispatchRequest,
+  buildIssueTriageDispatchRequest,
   buildIssueRefinementAutomationSection,
   buildIssueRefinementReplyBody,
   buildIssueRefinementStatusComment,
@@ -229,6 +230,19 @@ describe("ai issue refinement", () => {
     });
   });
 
+  it("builds the exact workflow dispatch request used to triage child issues", () => {
+    const request = buildIssueTriageDispatchRequest("dev865077/depix-mvp", 301, " main ");
+
+    expect(request.url).toBe(
+      "https://api.github.com/repos/dev865077/depix-mvp/actions/workflows/ai-issue-triage.yml/dispatches",
+    );
+    expect(request.init.method).toBe("POST");
+    expect(JSON.parse(request.init.body)).toEqual({
+      ref: "main",
+      inputs: { issue_number: "301" },
+    });
+  });
+
   it("runs refinement end to end and reruns planning automatically", async () => {
     const calls = [];
     const runtime = {
@@ -271,6 +285,9 @@ describe("ai issue refinement", () => {
         number: 301 + index,
         title: draft.title,
       })),
+      dispatchIssueTriage: async (...args) => {
+        calls.push(["child-triage", ...args]);
+      },
       dispatchPlanningRerun: async (...args) => {
         calls.push(["rerun", ...args]);
       },
@@ -326,6 +343,12 @@ describe("ai issue refinement", () => {
       "planning-final-1",
       expect.stringContaining("Issue refinement update"),
     ]);
+    expect(calls.find((call) => call[0] === "child-triage")).toEqual([
+      "child-triage",
+      "dev865077/depix-mvp",
+      301,
+      "main",
+    ]);
     expect(calls.find((call) => call[0] === "rerun")).toEqual([
       "rerun",
       "dev865077/depix-mvp",
@@ -373,6 +396,9 @@ describe("ai issue refinement", () => {
         calls.push(["reply", ...args]);
       },
       createOrReuseChildIssues: async () => [],
+      dispatchIssueTriage: async (...args) => {
+        calls.push(["child-triage", ...args]);
+      },
       dispatchPlanningRerun: async (...args) => {
         calls.push(["rerun", ...args]);
       },
@@ -413,6 +439,7 @@ describe("ai issue refinement", () => {
     }, runtime);
 
     expect(result.nextPhase).toBe("blocked");
+    expect(calls.some((call) => call[0] === "child-triage")).toBe(false);
     expect(calls.some((call) => call[0] === "rerun")).toBe(false);
     expect(calls.find((call) => call[0] === "updateIssue")[4]).toContain("canonical_state: `issue_planning_blocked`");
   });
