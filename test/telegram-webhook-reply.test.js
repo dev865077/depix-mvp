@@ -384,8 +384,9 @@ describe("telegram webhook reply flow", () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
-    expect(body.error.code).toBe("telegram_order_registration_failed");
-    expect(body.error.details.reason).toBe("missing_telegram_chat_id");
+    expect(body.error.code).toBe("invalid_webhook_payload");
+    expect(body.error.details.reason).toBe("telegram_chat_missing");
+    expect(body.error.details.field).toBe("message.chat");
     expect(currentOrder).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -3104,6 +3105,44 @@ describe("telegram webhook route behavior", () => {
 
     expect(response.status).toBe(204);
     expect(await response.text()).toBe("");
+  });
+
+  it("fails closed with a structured error when the inbound update shape is invalid", async function assertStructuredInvalidPayloadError() {
+    const app = createApp();
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: JSON.stringify({
+          update_id: 9,
+          message: {
+            message_id: 12,
+            text: "/start",
+            from: {
+              id: 505,
+              is_bot: false,
+              first_name: "Pedro",
+            },
+          },
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error.code).toBe("invalid_webhook_payload");
+    expect(payload.error.details).toMatchObject({
+      code: "telegram_invalid_payload",
+      source: "telegram",
+      reason: "telegram_chat_missing",
+      field: "message.chat",
+      updateType: "message",
+    });
   });
 });
 
