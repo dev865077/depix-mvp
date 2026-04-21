@@ -25,7 +25,7 @@ import {
   updateOrderById,
   updateOrderByIdWithStepGuard,
 } from "../src/db/repositories/orders-repository.js";
-import { ORDER_PROGRESS_EVENTS, ORDER_PROGRESS_STATES, advanceOrderProgression } from "../src/order-flow/order-progress-machine.js";
+import { ORDER_PROGRESS_EVENTS, ORDER_PROGRESS_STATES, advanceOrderProgression } from "../src/order-flow/order-progress-machine.ts";
 
 const LEGACY_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS orders (

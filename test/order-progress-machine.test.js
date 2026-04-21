@@ -14,7 +14,7 @@ import {
   advanceOrderProgression,
   createInitialOrderProgression,
   normalizePersistedOrderProgressStep,
-} from "../src/order-flow/order-progress-machine.js";
+} from "../src/order-flow/order-progress-machine.ts";
 
 const BASE_CONTEXT = {
   tenantId: "alpha",

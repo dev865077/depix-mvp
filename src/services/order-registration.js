@@ -23,7 +23,7 @@ import {
   ORDER_PROGRESS_EVENTS,
   ORDER_PROGRESS_STATES,
   normalizePersistedOrderProgressStep,
-} from "../order-flow/order-progress-machine.js";
+} from "../order-flow/order-progress-machine.ts";
 import { parseTelegramBrlAmount } from "../telegram/brl-amount.js";
 import { parseTelegramWalletAddress } from "../telegram/wallet-address.js";
 

@@ -9,7 +9,7 @@
  */
 import { log } from "../lib/logger.js";
 import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
-import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
+import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.ts";
 import {
   cancelTelegramOpenOrder,
   getTelegramOpenOrderForUser,
