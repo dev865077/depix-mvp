@@ -10,7 +10,7 @@
 - `npm run db:query:local`
 - `npm run deploy:test`
 - `npm run deploy:production`
-- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO] [--order-id ORDER_ID] [--deposit-entry-id DEPOSIT_ENTRY_ID] [--limit N]`
+- `node scripts/collect-qr-flow-evidence.mjs --env <test|production> [--tenant alpha|beta] [--since ISO] [--order-id ORDER_ID] [--deposit-entry-id DEPOSIT_ENTRY_ID] [--limit N] [--require-split-proof]`
 
 ## Hosts publicos canonicos
 
@@ -93,45 +93,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - sem header Bearer, responde `401 ops_authorization_required`
 - com token invalido, responde `403 ops_authorization_invalid`
 - se a Eulen nao responder com lista utilizavel, responde erro controlado `502`
-- a validacao autorizada em `production` deve usar janela controlada, payload de baixo volume e registro de `requestId`
-
-## Validacao remota de recuperacao operacional
-
-Hosts canonicos:
-
-```bash
-TEST_HOST=https://depix-mvp-test.dev865077.workers.dev
-PRODUCTION_HOST=https://depix-mvp-production.dev865077.workers.dev
-```
-
-Health deve mostrar readiness sem expor segredo:
-
-```bash
-curl -fsS "$TEST_HOST/health"
-curl -fsS "$PRODUCTION_HOST/health"
-```
-
-Recheck deve ser validado com header operacional e payload minimo:
-
-```bash
-curl -fsS -X POST "$TEST_HOST/ops/alpha/recheck/deposit" \
-  -H 'Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>' \
-  -H 'Content-Type: application/json' \
-  --data '{"depositEntryId":"deposit_entry_alpha_001"}'
-```
-
-Evidencia de QR-flow deve ser coletada com o script canonico quando a issue pedir auditoria de conciliacao, split ou recheck:
-
-```bash
-node scripts/collect-qr-flow-evidence.mjs --env test --tenant alpha --since 2026-04-21T14:20:00Z
-```
-
-Use `--order-id` e `--deposit-entry-id` quando a evidencia precisar ser restrita a um agregado especifico.
-Use `--require-split-proof` quando a evidencia for gate de release ou auditoria de split: o script ainda imprime o relatorio, mas retorna exit code `1` se `splitProof.status` nao for `proved`.
-
-## Regra operacional
-
-- o recheck nao deve apagar `bankTxId` ou `blockchainTxId` que vierem do `deposit-status` e forem uteis para auditoria
-- o resumo de evidencia deve tornar explicita qualquer lacuna de split-audit em vez de inferir cobertura completa
-- o dump de evidencia continua sendo material de auditoria; nao deve incluir segredos nem payloads sensiveis desnecessarios
-- mudanças de contrato operacional, evidencia ou runbook devem ser refletidas na wiki na mesma PR
+- a
