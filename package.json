@@ -20,6 +20,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@grammyjs/parse-mode": "^2.3.0",
     "bech32": "2.0.0",
     "blech32": "1.1.2",
     "grammy": "^1.42.0",

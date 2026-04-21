@@ -7,6 +7,8 @@
  * - o bot produz uma resposta outbound real quando houver canal de resposta
  * - logs suficientes permitem rastrear o caminho inteiro
  */
+import { b, fmt } from "@grammyjs/parse-mode";
+
 import { log } from "../lib/logger.js";
 import { readTenantSecret } from "../config/tenants.js";
 import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
@@ -172,7 +174,7 @@ export function installTelegramReplyFlow(bot, input) {
           logTelegramAmountResult(ctx, input, amountSession);
 
           if (amountSession.parseResult && !amountSession.parseResult.ok) {
-            await ctx.reply(buildTelegramInvalidAmountReply(amountSession.parseResult));
+            await replyTelegramFormattedText(ctx, formatTelegramInvalidAmountReply(amountSession.parseResult));
             return;
           }
 
@@ -484,6 +486,13 @@ function buildTelegramReplyOptionsForOrder(order) {
     : undefined;
 }
 
+async function replyTelegramFormattedText(ctx, formatted, options = undefined) {
+  await ctx.reply(formatted.text, {
+    ...options,
+    entities: formatted.entities,
+  });
+}
+
 async function replyTelegramOrderStep(ctx, input, order, deposit = null) {
   const resolvedDeposit = order?.currentStep === ORDER_PROGRESS_STATES.AWAITING_PAYMENT && !deposit
     ? await readLatestDepositForTelegramOrder(input, order)
@@ -499,11 +508,22 @@ async function replyTelegramOrderStep(ctx, input, order, deposit = null) {
   }
 
   const options = buildTelegramReplyOptionsForOrder(order);
+
+  if (order?.currentStep === ORDER_PROGRESS_STATES.WALLET) {
+    await replyTelegramFormattedText(ctx, formatTelegramWalletPrompt(input.tenant, order), options);
+    return;
+  }
+
+  if (order?.currentStep === ORDER_PROGRESS_STATES.CONFIRMATION) {
+    await replyTelegramConfirmationPrompt(ctx, order);
+    return;
+  }
+
   await ctx.reply(buildTelegramOrderStepReply(input.tenant, order), options);
 }
 
 async function replyTelegramConfirmationPrompt(ctx, order) {
-  await ctx.reply(buildTelegramConfirmationPrompt(order), {
+  await replyTelegramFormattedText(ctx, formatTelegramConfirmationPrompt(order), {
     reply_markup: buildTelegramConfirmationReplyMarkup(),
   });
 }
@@ -602,16 +622,35 @@ export function buildTelegramInvalidAmountReply(parseResult) {
   const maxAmount = formatBrlAmountInCents(parseResult.maxAmountInCents);
   const reasonByCode = {
     empty: "Você enviou uma mensagem vazia.",
-    invalid_format: "Não consegui entender esse valor.",
+    invalid_format: "Não consegui validar esse valor.",
     non_positive: "O valor precisa ser maior que zero.",
     above_limit: `O limite inicial por pedido é ${maxAmount}.`,
   };
 
   return [
-    reasonByCode[parseResult.reason] ?? "Não consegui entender esse valor.",
-    "Envie apenas o valor em BRL, por exemplo: 10,50 ou R$ 10,50.",
+    reasonByCode[parseResult.reason] ?? "Não consegui validar esse valor.",
+    "Envie apenas o valor em BRL.",
+    "Exemplo: 10,50 ou R$ 10,50.",
     `Limite inicial: ${maxAmount}.`,
   ].join("\n\n");
+}
+
+function formatTelegramInvalidAmountReply(parseResult) {
+  const maxAmount = formatBrlAmountInCents(parseResult.maxAmountInCents);
+  const reasonByCode = {
+    empty: "Você enviou uma mensagem vazia.",
+    invalid_format: "Não consegui validar esse valor.",
+    non_positive: "O valor precisa ser maior que zero.",
+    above_limit: `O limite inicial por pedido é ${maxAmount}.`,
+  };
+
+  return fmt`${reasonByCode[parseResult.reason] ?? "Não consegui validar esse valor."}
+
+Envie apenas o valor em BRL.
+
+${b}Exemplo:${b} 10,50 ou R$ 10,50.
+
+${b}Limite inicial:${b} ${maxAmount}.`;
 }
 
 /**
@@ -648,8 +687,29 @@ function buildTelegramWalletPrompt(tenant, order) {
 
   return [
     amountLine,
-    "Agora envie seu endereço DePix/Liquid para continuarmos.",
+    "Agora envie seu endereço DePix/Liquid.",
+    "Aceito endereços que comecem com lq1 ou ex1.",
   ].join("\n\n");
+}
+
+function formatTelegramWalletPrompt(tenant, order) {
+  const amount = Number.isSafeInteger(order?.amountInCents)
+    ? formatBrlAmountInCents(order.amountInCents)
+    : null;
+
+  if (!amount) {
+    return fmt`Seu pedido ${tenant.displayName} já tem um valor registrado.
+
+Agora envie seu endereço DePix/Liquid.
+
+Aceito endereços que comecem com lq1 ou ex1.`;
+  }
+
+  return fmt`${b}Valor recebido:${b} ${amount}.
+
+Agora envie seu endereço DePix/Liquid.
+
+Aceito endereços que comecem com lq1 ou ex1.`;
 }
 
 /**
@@ -667,12 +727,27 @@ function buildTelegramConfirmationPrompt(order) {
     : "Endereço: pendente";
 
   return [
-    "Confira seu pedido:",
+    "Revise seu pedido:",
     amountLine,
     walletLine,
-    "Se estiver tudo certo, envie: sim, confirmar ou ok.",
-    "Se quiser encerrar este pedido, envie: cancelar.",
+    "Toque em Confirmar ou envie: sim, confirmar ou ok.",
+    "Para encerrar este pedido, toque em Cancelar ou envie: cancelar.",
   ].join("\n");
+}
+
+function formatTelegramConfirmationPrompt(order) {
+  const amountLine = Number.isSafeInteger(order?.amountInCents)
+    ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
+    : "Valor: pendente";
+  const walletLine = typeof order?.walletAddress === "string" && order.walletAddress.length > 0
+    ? `Endereço: ${order.walletAddress}`
+    : "Endereço: pendente";
+
+  return fmt`${b}Revise seu pedido:${b}
+${b}Valor:${b} ${Number.isSafeInteger(order?.amountInCents) ? formatBrlAmountInCents(order.amountInCents) : "pendente"}
+${b}Endereço:${b} ${typeof order?.walletAddress === "string" && order.walletAddress.length > 0 ? order.walletAddress : "pendente"}
+Toque em ${b}Confirmar${b} ou envie: sim, confirmar ou ok.
+Para encerrar este pedido, toque em ${b}Cancelar${b} ou envie: cancelar.`;
 }
 
 /**
@@ -1052,7 +1127,7 @@ function isTelegramRestartDecision(normalizedText) {
 function buildTelegramAmountPrompt(tenant) {
   return [
     `Olá! Este é o bot ${tenant.displayName} da DePix.`,
-    "Para começar, envie o valor em BRL que você quer comprar.",
+    "Envie o valor em BRL que você quer comprar.",
     "Exemplo: 100,00",
     "Se precisar de ajuda, envie /help.",
     "Para recomeçar um pedido aberto, envie recomecar.",
