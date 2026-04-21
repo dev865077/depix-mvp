@@ -40,6 +40,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; nesta etapa o cron fica ativo apenas em `test` e production continua com `triggers.crons = []`
+- `test` e `production` habilitam `ENABLE_OPS_DEPOSIT_RECHECK=true` e `ENABLE_OPS_DEPOSITS_FALLBACK=true`; ambas as rotas continuam inacessiveis sem `OPS_ROUTE_BEARER_TOKEN`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 - o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
@@ -77,6 +78,69 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
 - se a consulta remota falhar, responde `502 deposit_status_unavailable`
 - recheck repetido com a mesma verdade remota e idempotente: nao duplica `deposit_events` e pode apenas reparar o agregado se um estado historico tiver ficado incompleto
+
+## Fallback operacional por janela
+
+- pre-condicao de rollout: `ENABLE_OPS_DEPOSITS_FALLBACK=true`
+- payload minimo seguro para validacao controlada: `{ "limit": 1 }`
+- header obrigatorio: `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>`
+- fonte de verdade remota: `deposits`
+- trilha local: evento `deposit_events.source = "recheck_deposits_list"` por linha reparada ou deduplicada
+- efeito esperado: reparar linhas pendentes por `qrId` e aplicar o status reconciliado em `deposits` e `orders`
+- sem `ENABLE_OPS_DEPOSITS_FALLBACK=true`, responde `503 ops_deposits_fallback_disabled`
+- sem header Bearer, responde `401 ops_authorization_required`
+- com token invalido, responde `403 ops_authorization_invalid`
+- se a Eulen nao responder com lista utilizavel, responde erro controlado `502`
+- a validacao autorizada em `production` deve usar janela controlada, payload de baixo volume e registro de `requestId`
+
+## Validacao remota de recuperacao operacional
+
+Hosts canonicos:
+
+```bash
+TEST_HOST=https://depix-mvp-test.dev865077.workers.dev
+PRODUCTION_HOST=https://depix-mvp-production.dev865077.workers.dev
+```
+
+Health deve mostrar readiness sem expor segredo:
+
+```bash
+curl -fsS "$TEST_HOST/health"
+curl -fsS "$PRODUCTION_HOST/health"
+```
+
+Campos esperados:
+
+- `configuration.operations.depositRecheck.state = "ready"`
+- `configuration.operations.depositRecheck.ready = true`
+- `configuration.operations.depositRecheck.tenantOverrides.invalidCount = 0`
+- `configuration.operations.depositsFallback.state = "ready"`
+- `configuration.operations.depositsFallback.ready = true`
+- `configuration.operations.depositsFallback.tenantOverrides.invalidCount = 0`
+
+Chamadas negativas obrigatorias antes de qualquer uso autorizado:
+
+```bash
+curl -sS -o /tmp/depix-recheck-missing-auth.json -w "%{http_code}\n" \
+  -X POST "$TEST_HOST/ops/alpha/recheck/deposit" \
+  -H "content-type: application/json" \
+  --data '{"depositEntryId":"validation-only"}'
+
+curl -sS -o /tmp/depix-fallback-invalid-auth.json -w "%{http_code}\n" \
+  -X POST "$TEST_HOST/ops/alpha/reconcile/deposits" \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer invalid" \
+  --data '{"limit":1}'
+```
+
+Repita o mesmo contrato em `production` antes da janela controlada.
+
+Condição de abort:
+
+- se `/health` nao estiver `ready`, nao execute chamada autorizada
+- se chamada sem bearer nao retornar `401`, nao execute chamada autorizada
+- se bearer invalido nao retornar `403`, nao execute chamada autorizada
+- se a chamada autorizada nao tiver fixture segura, registre apenas readiness e auth negativa e execute a chamada real dentro da issue #124 ou #125 com evidencia D1 antes/depois
 
 ## Reconciliacao agendada de depositos
 

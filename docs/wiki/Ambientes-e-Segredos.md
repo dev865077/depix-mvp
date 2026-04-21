@@ -71,13 +71,13 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 - `ENABLE_OPS_DEPOSITS_FALLBACK=true` usa o mesmo bearer operacional, mas abre apenas `POST /ops/:tenantId/reconcile/deposits`
 - `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` ou ausente: o cron faz skip operacional e nao chama Eulen
 - `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` exige D1 e secrets por tenant configurados; nao exige `OPS_ROUTE_BEARER_TOKEN`, porque nao passa por HTTP
-- `wrangler.jsonc` habilita Cron Trigger apenas no env `test`; em `production`, `triggers.crons = []` remove triggers ate a habilitacao controlada de #126
+- `wrangler.jsonc` habilita Cron Trigger apenas no env `test`; em `production`, `triggers.crons = []` remove triggers ate uma issue propria de cron em production
 
 ## Ambientes de lancamento
 
 - `local`: pode habilitar para desenvolvimento e testes locais
-- `test`: recebe `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` e cron `*/15 * * * *` versionados para validacao controlada; rotas `/ops` continuam dependendo das flags e secrets proprios
-- `production`: fica com `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` e `triggers.crons = []` ate #126; rotas `/ops` devem receber a flag desejada (`ENABLE_OPS_DEPOSIT_RECHECK=true` e/ou `ENABLE_OPS_DEPOSITS_FALLBACK=true`) e o token operacional antes de uso de suporte
+- `test`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true`, `ENABLE_OPS_DEPOSITS_FALLBACK=true`, `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`, cron `*/15 * * * *` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store
+- `production`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true`, `ENABLE_OPS_DEPOSITS_FALLBACK=true` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store; `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` e `triggers.crons = []` permanecem para evitar cron automatico em production
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 
