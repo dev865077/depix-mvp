@@ -6,6 +6,7 @@ import issueRefinementWorkflowText from "../.github/workflows/ai-issue-refinemen
 
 import {
   assertValidIssueRefinementPlan,
+  buildGitHubSubIssueLinkRequest,
   buildIssuePlanningRerunDispatchRequest,
   buildIssueTriageDispatchRequest,
   buildIssueRefinementAutomationSection,
@@ -13,13 +14,19 @@ import {
   buildIssueRefinementStatusComment,
   buildIssueRefinementUserPrompt,
   countIssueRefinementRounds,
+  countRefinementChildrenForParent,
+  createOrReuseChildIssuesWithRequest,
   extractAutomationField,
   extractIssueAutomationSection,
+  extractRefinementChildParentNumber,
   findLatestPlanningFinalComment,
+  isRefinementChildIssue,
+  normalizeChildIssueDrafts,
   normalizeIssueArtifactTitle,
   parseIssueRefinementDispatchInput,
   parseIssueRefinementResponse,
   runIssueRefinementWorkflow,
+  selectChildIssueDraftsForCreation,
 } from "../scripts/ai-issue-refinement.mjs";
 
 describe("ai issue refinement", () => {
@@ -134,6 +141,176 @@ describe("ai issue refinement", () => {
     expect(plan.newChildIssues).toHaveLength(1);
     expect(normalizeIssueArtifactTitle(plan.updatedTitle, 1)).toBe("track: readiness 0.1");
     expect(normalizeIssueArtifactTitle(plan.updatedTitle, 2)).toBe("epic: readiness 0.1");
+  });
+
+  it("bounds child issue drafts to four per refinement round", () => {
+    const drafts = Array.from({ length: 8 }, (_, index) => ({
+      title: `sub-issue: ${index}`,
+      body: `Body ${index}`,
+    }));
+
+    expect(normalizeChildIssueDrafts(drafts)).toHaveLength(4);
+  });
+
+  it("detects refinement child issues and blocks recursive child creation", () => {
+    const childIssue = {
+      number: 371,
+      body: [
+        "<!-- ai-issue-refinement-child:328:shared-reconciliation -->",
+        "Parent issue: #328 - track: tornar confirmação resiliente",
+        "",
+        "Body.",
+      ].join("\n"),
+    };
+
+    expect(extractRefinementChildParentNumber(childIssue)).toBe(328);
+    expect(isRefinementChildIssue(childIssue)).toBe(true);
+    expect(selectChildIssueDraftsForCreation(childIssue, [], [
+      { title: "sub-issue: should not exist", body: "Body." },
+    ])).toEqual([]);
+  });
+
+  it("enforces a root-level cap of twelve refinement child issues", () => {
+    const parentIssue = { number: 328, body: "Root body." };
+    const openIssues = Array.from({ length: 10 }, (_, index) => ({
+      number: 330 + index,
+      state: "open",
+      body: `<!-- ai-issue-refinement-child:328:child-${index} -->\nParent issue: #328`,
+    }));
+    const drafts = Array.from({ length: 6 }, (_, index) => ({
+      title: `sub-issue: new ${index}`,
+      body: `Body ${index}`,
+    }));
+
+    expect(countRefinementChildrenForParent(openIssues, 328)).toBe(10);
+    expect(selectChildIssueDraftsForCreation(parentIssue, openIssues, drafts)).toHaveLength(2);
+    expect(selectChildIssueDraftsForCreation(parentIssue, [
+      ...openIssues,
+      { number: 340, state: "closed", body: "<!-- ai-issue-refinement-child:328:child-10 -->\nParent issue: #328" },
+      { number: 341, state: "closed", body: "<!-- ai-issue-refinement-child:328:child-11 -->\nParent issue: #328" },
+    ], drafts)).toEqual([]);
+  });
+
+  it("counts closed refinement child issues toward the root-level cap", () => {
+    const parentIssue = { number: 328, body: "Root body." };
+    const historicalIssues = Array.from({ length: 12 }, (_, index) => ({
+      number: 330 + index,
+      state: index % 2 === 0 ? "closed" : "open",
+      body: `<!-- ai-issue-refinement-child:328:child-${index} -->\nParent issue: #328`,
+    }));
+
+    expect(countRefinementChildrenForParent(historicalIssues, 328)).toBe(12);
+    expect(selectChildIssueDraftsForCreation(parentIssue, historicalIssues, [
+      { title: "sub-issue: should not be created", body: "Body." },
+    ])).toEqual([]);
+  });
+
+  it("builds the GitHub native sub-issue link request", () => {
+    const request = buildGitHubSubIssueLinkRequest("dev865077/depix-mvp", 328, 123456);
+
+    expect(request.url).toBe("https://api.github.com/repos/dev865077/depix-mvp/issues/328/sub_issues");
+    expect(request.init.method).toBe("POST");
+    expect(JSON.parse(request.init.body)).toEqual({ sub_issue_id: 123456 });
+  });
+
+  it("fetches all issues before enforcing the root-level cap", async () => {
+    const urls = [];
+    const requestGitHub = async (url) => {
+      urls.push(url);
+
+      if (url.includes("/issues?state=all&per_page=100&page=1")) {
+        return Array.from({ length: 12 }, (_, index) => ({
+          id: 1000 + index,
+          number: 330 + index,
+          state: index % 2 === 0 ? "closed" : "open",
+          title: `sub-issue: historical ${index}`,
+          body: `<!-- ai-issue-refinement-child:328:historical-${index} -->\nParent issue: #328`,
+        }));
+      }
+
+      throw new Error(`Unexpected GitHub request: ${url}`);
+    };
+
+    const created = await createOrReuseChildIssuesWithRequest(requestGitHub, "dev865077/depix-mvp", {
+      number: 328,
+      title: "track: root",
+      body: "Root.",
+    }, [
+      { title: "sub-issue: should not be created", body: "Body." },
+    ]);
+
+    expect(created).toEqual([]);
+    expect(urls).toEqual([
+      "https://api.github.com/repos/dev865077/depix-mvp/issues?state=all&per_page=100&page=1",
+    ]);
+  });
+
+  it("falls back visibly when native sub-issue linking fails after child creation", async () => {
+    const requestGitHub = async (url, init = {}) => {
+      if (url.includes("/issues?state=all&per_page=100&page=1")) {
+        return [];
+      }
+
+      if (url.endsWith("/issues") && init.method === "POST") {
+        return {
+          id: 123456,
+          number: 301,
+          title: "sub-issue: validate callback proof",
+          body: "Body.",
+        };
+      }
+
+      if (url.endsWith("/issues/291/sub_issues") && init.method === "POST") {
+        throw new Error("GitHub API request failed (403)");
+      }
+
+      throw new Error(`Unexpected GitHub request: ${url}`);
+    };
+
+    const createdIssues = await createOrReuseChildIssuesWithRequest(
+      requestGitHub,
+      "dev865077/depix-mvp",
+      { number: 291, title: "track: root", body: "Root." },
+      [{ title: "sub-issue: validate callback proof", body: "Body." }],
+    );
+
+    expect(createdIssues).toEqual([
+      expect.objectContaining({
+        number: 301,
+        subIssueLink: {
+          linked: false,
+          reason: "GitHub API request failed (403)",
+        },
+      }),
+    ]);
+    expect(buildIssueRefinementReplyBody({
+      phase: "rerun_planning",
+      replyBody: "Child issue created; native link fallback surfaced.",
+      createdChildIssues: createdIssues,
+      blockingDependencies: [],
+    })).toContain("native_sub_issue_link_fallback: #301 - GitHub API request failed (403)");
+    expect(buildIssueRefinementStatusComment({
+      phase: "rerun_planning",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/292",
+      planningStatus: "request_changes",
+      blockingRoles: ["risk"],
+      blockingDependencies: [],
+      roundCount: 2,
+      createdChildIssues: createdIssues,
+    })).toContain("native_sub_issue_link_fallback_count: `1`");
+    expect(buildIssueRefinementAutomationSection({
+      phase: "rerun_planning",
+      model: "gpt-test",
+      provider: "openai_responses",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/292",
+      planningStatus: "request_changes",
+      blockingRoles: ["risk"],
+      blockingDependencies: [],
+      roundCount: 2,
+      summary: "Refined the issue.",
+      resolutionSummary: "Created a child issue and surfaced link fallback.",
+      createdChildIssues: createdIssues,
+    })).toContain("## Native sub-issue link fallbacks");
   });
 
   it("builds prompt and canonical issue outputs for refinement", () => {

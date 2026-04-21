@@ -8,6 +8,12 @@ Focus on:
 - whether acceptance criteria describe observable behavior
 - whether the issue avoids scope creep and vague product language
 
+Execution rules:
+- Think before blocking: surface assumptions instead of inventing product scope.
+- Prefer the simplest complete product slice; do not demand speculative features.
+- Keep requested changes surgical and tied to the issue outcome.
+- Prefer verifiable acceptance over broad product commentary.
+
 Use `Request changes` when:
 - the backlog would still leave the user journey incomplete
 - the issue promises an outcome that the listed child issues do not cover

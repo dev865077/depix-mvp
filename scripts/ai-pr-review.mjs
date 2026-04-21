@@ -1873,13 +1873,15 @@ function extractPullRequestNumberFromText(value) {
     return null;
   }
 
-  const match = value.match(/(?:\[PR\s*#|Pull request origem:\s*#|Pull request origin:\s*#)\s*(\d+)/i);
+  const match = value.match(
+    /<!--\s*ai-pr-discussion-pr-number\s*:\s*(\d+)\s*-->|(?:\[PR\s*#|Pull request origem:\s*#|Pull request origin:\s*#)\s*(\d+)|\/pull\/(\d+)(?:\b|[/?#])/i,
+  );
 
   if (!match) {
     return null;
   }
 
-  const number = Number.parseInt(match[1], 10);
+  const number = Number.parseInt(match[1] ?? match[2] ?? match[3], 10);
 
   return Number.isInteger(number) && number > 0 ? number : null;
 }
@@ -2231,9 +2233,69 @@ function extractDiffEvidenceNeedles(value) {
     if (fragment.length >= 3) {
       pushUniqueSummaryValue(needles, fragment);
     }
+
+    for (const identifierMatch of match[1].matchAll(/[A-Za-z_$][A-Za-z0-9_$]{2,}/g)) {
+      const identifier = identifierMatch[0];
+
+      if (/[A-Z_$]/.test(identifier) || String(match[1]).includes("(")) {
+        pushUniqueSummaryValue(needles, normalizeComparableText(identifier));
+      }
+    }
   }
 
   return needles;
+}
+
+function extractFollowUpEvidenceTerms(value) {
+  const stopWords = new Set([
+    "after",
+    "again",
+    "against",
+    "before",
+    "being",
+    "current",
+    "either",
+    "explicit",
+    "file",
+    "from",
+    "into",
+    "must",
+    "only",
+    "path",
+    "rule",
+    "should",
+    "that",
+    "the",
+    "then",
+    "this",
+    "when",
+    "where",
+    "with",
+    "without",
+    "workflow",
+  ]);
+
+  return [...new Set((normalizeComparableText(value).match(/[a-z0-9_$-]{4,}/g) ?? [])
+    .map((term) => term.replace(/(?:ing|ed|s)$/u, ""))
+    .filter((term) => term.length >= 4 && !stopWords.has(term)))];
+}
+
+function hasTermEvidenceForFollowUpBlocker(candidateText, blocker) {
+  const terms = [
+    ...extractFollowUpEvidenceTerms(blocker.behaviorProtected),
+    ...extractFollowUpEvidenceTerms(blocker.minimumScenario),
+    ...blocker.essentialAssertions.flatMap(extractFollowUpEvidenceTerms),
+    ...extractFollowUpEvidenceTerms(blocker.resolutionCondition),
+  ];
+  const uniqueTerms = [...new Set(terms)];
+
+  if (uniqueTerms.length === 0) {
+    return false;
+  }
+
+  const matchedTerms = uniqueTerms.filter((term) => candidateText.includes(term));
+
+  return matchedTerms.length >= Math.min(4, uniqueTerms.length);
 }
 
 /**
@@ -3201,7 +3263,8 @@ export function collectFollowUpEvidenceRecords(
       ...extractDiffEvidenceNeedles(blocker.resolutionCondition),
     ];
     const hasPatchEvidence = evidenceNeedles.some((needle) => candidatePatchText.includes(needle));
-    const hasRepositoryEvidence = evidenceNeedles.some((needle) => candidateRepositoryText.includes(needle));
+    const hasRepositoryEvidence = evidenceNeedles.some((needle) => candidateRepositoryText.includes(needle))
+      || hasTermEvidenceForFollowUpBlocker(candidateRepositoryText, blocker);
     const hasReplyEvidence = hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker);
     const status = !matchedTestFile
       ? "missing_test_file"
@@ -3283,6 +3346,47 @@ export function workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow) {
 }
 
 /**
+ * Prove Discussion-triggered reruns execute against the linked PR head.
+ *
+ * `discussion_comment` events are anchored on the default branch by GitHub.
+ * The workflow must resolve the PR from the Discussion marker before checkout,
+ * otherwise follow-up rounds evaluate stale `main` code instead of the PR diff.
+ *
+ * @param {string} prReviewWorkflow Current workflow YAML.
+ * @returns {boolean} True when Discussion reruns checkout the linked PR SHA.
+ */
+export function workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow) {
+  const discussionCommentIndex = prReviewWorkflow.indexOf("discussion_comment:");
+  const resolverIndex = prReviewWorkflow.indexOf("Resolve discussion pull request head");
+  const missingPullRequestGuardIndex = prReviewWorkflow.indexOf("Could not resolve the linked pull request");
+  const resolverFailureIndex = prReviewWorkflow.indexOf("exit 1", missingPullRequestGuardIndex);
+  const canonicalMarkerParserIndex = prReviewWorkflow.indexOf("ai-pr-discussion-pr-number", resolverIndex);
+  const originParserIndex = prReviewWorkflow.indexOf("Pull request origem", resolverIndex);
+  const pullUrlParserIndex = Math.max(
+    prReviewWorkflow.indexOf("/pull/", resolverIndex),
+    prReviewWorkflow.indexOf("\\/pull\\/", resolverIndex),
+  );
+  const pullRequestApiIndex = prReviewWorkflow.indexOf('gh api "repos/${REPOSITORY}/pulls/${pr_number}"');
+  const discussionCheckoutIndex = prReviewWorkflow.indexOf("Checkout discussion pull request head", pullRequestApiIndex);
+  const discussionOnlyRefIndex = prReviewWorkflow.indexOf("ref: ${{ steps.discussion-pr-head.outputs.sha }}", discussionCheckoutIndex);
+  const unsafePullRequestFallbackIndex = prReviewWorkflow.indexOf("steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha", discussionCheckoutIndex);
+  const unsafeGithubShaFallbackIndex = prReviewWorkflow.indexOf("|| github.sha", discussionCheckoutIndex);
+
+  return discussionCommentIndex >= 0
+    && resolverIndex > discussionCommentIndex
+    && missingPullRequestGuardIndex > resolverIndex
+    && resolverFailureIndex > missingPullRequestGuardIndex
+    && canonicalMarkerParserIndex > resolverIndex
+    && originParserIndex > resolverIndex
+    && pullUrlParserIndex > resolverIndex
+    && pullRequestApiIndex > resolverIndex
+    && discussionCheckoutIndex > pullRequestApiIndex
+    && discussionOnlyRefIndex > discussionCheckoutIndex
+    && unsafePullRequestFallbackIndex < 0
+    && unsafeGithubShaFallbackIndex < 0;
+}
+
+/**
  * Build a concise evidence block for automation-contract PRs.
  *
  * Broad automation PRs can leave the model staring at a large diff without the
@@ -3323,9 +3427,10 @@ export function buildAutomationEvidenceContext(inputs) {
     && prReviewWorkflow.includes("discussion_comment:")
     && prReviewWorkflow.includes("ai-pr-review-${{ github.event_name }}")
     && prReviewWorkflow.includes("discussions: write")
+    && workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow)
   ) {
     bullets.push(
-      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, the visible `discussion-review` job runs `AI_PR_REVIEW_MODE=await_ci` before `AI_PR_REVIEW_MODE=discussion`, event-scoped concurrency prevents stale runs from canceling visible PR checks, and `discussion_comment` remains available for reruns while the job still requests `discussions: write`.",
+      "- Current PR review workflow state: `pull_request` keeps the visible PR checks, the visible `discussion-review` job runs `AI_PR_REVIEW_MODE=await_ci` before `AI_PR_REVIEW_MODE=discussion`, event-scoped concurrency prevents stale runs from canceling visible PR checks, and `discussion_comment` reruns resolve the linked PR head SHA before checkout while the job still requests `discussions: write`.",
     );
   }
 
@@ -3937,6 +4042,7 @@ async function generateDiscussionDebate(promptBundle, userPrompt, model) {
  */
 export function buildPullRequestDiscussionBody(pullRequest, gate, debate, model) {
   return [
+    `<!-- ai-pr-discussion-pr-number:${pullRequest.number} -->`,
     `Pull request origem: #${pullRequest.number} - ${sanitizePlainTextForGitHubTitle(pullRequest.title)} (${pullRequest.html_url})`,
     "",
     "## Discussion gate",

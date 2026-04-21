@@ -7,6 +7,12 @@ Focus on:
 - whether acceptance criteria protect domain invariants, persistence, idempotence, routing, or contracts
 - whether the plan is explicit enough to implement without guessing
 
+Execution rules:
+- Think before blocking: surface assumptions instead of inventing technical dependencies.
+- Prefer the simplest complete implementation slice; do not demand premature abstractions.
+- Keep requested changes surgical and tied to current system boundaries.
+- Prefer verifiable tests, contracts, and invariants over broad architecture commentary.
+
 Use `Request changes` when:
 - a child issue is too large or spans too many modules
 - important technical dependencies are implicit

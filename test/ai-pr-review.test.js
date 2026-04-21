@@ -50,6 +50,7 @@ import {
   summarizePullRequestScope,
   waitForCiTestConclusion,
   workflowHasVisibleDiscussionReviewCiGate,
+  workflowChecksOutDiscussionPullRequestHead,
   collectFollowUpEvidenceRecords,
 } from "../scripts/ai-pr-review.mjs";
 
@@ -764,6 +765,7 @@ describe("ai pr review discussion rendering", () => {
     );
 
     expect(body).toContain("## Review comments");
+    expect(body).toContain("<!-- ai-pr-discussion-pr-number:57 -->");
     expect(body).toContain("- Product and scope");
     expect(body).toContain("- Technical and architecture");
     expect(body).toContain("- Risk, security, and operations");
@@ -2216,6 +2218,35 @@ describe("ai pr review discussion rendering", () => {
     expect(unresolved).toEqual([]);
   });
 
+  it("clears a follow-up blocker when code identifiers prove the requested test behavior", () => {
+    const finalComment = {
+      body: [
+        "## Discussion status",
+        "",
+        "## Acceptance tests requested",
+        "",
+        "- Roles `technical` -> `test/ai-issue-refinement.test.js`: protect A root issue cannot exceed 12 automation-created child issues across open and closed issues.; minimum scenario: Seed a root with 12 prior child issues where some are closed, then run `selectChildIssueDraftsForCreation()` with new drafts.; essential assertions: The selector returns `[]` once the total historical child count hits 12; closed child issues still count toward the limit.; resolution condition: Count all refinement child issues for the root, not only open ones, before allowing any new creation or reuse.",
+        "- Roles `risk` -> `test/ai-issue-refinement.test.js`: protect Native sub-issue links must not fail silently when GitHub supports them.; minimum scenario: Mock `githubRequest` to reject during `linkGitHubSubIssue` for an otherwise valid created child.; essential assertions: The workflow must either surface a failure state or emit an explicit fallback signal that the parent/child link was not created. It must not complete as if the link succeeded.; resolution condition: If the link API fails, the run must produce an observable non-success outcome or a clearly machine-detectable fallback path.",
+      ].join("\n"),
+      replies: { nodes: [] },
+    };
+    const files = [
+      {
+        filename: "test/ai-issue-refinement.test.js",
+        patch: "@@\n+expect(selectChildIssueDraftsForCreation(parentIssue, historicalIssues, drafts)).toEqual([]);\n+await expect(createOrReuseChildIssuesWithRequest(requestGitHub, repo, parentIssue, drafts)).rejects.toThrow();",
+      },
+    ];
+    const checks = [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }];
+    const repositoryFileContents = {
+      "test/ai-issue-refinement.test.js": [
+        "selectChildIssueDraftsForCreation(parentIssue, historicalIssues, drafts)",
+        "createOrReuseChildIssuesWithRequest(requestGitHub, repo, parentIssue, drafts)",
+      ].join("\n"),
+    };
+
+    expect(reconcileFollowUpTestableBlockers(finalComment, files, checks, repositoryFileContents)).toEqual([]);
+  });
+
   it("accepts an explicitly cited equivalent test file in the conclusion thread", () => {
     const unresolved = reconcileFollowUpTestableBlockers(
       {
@@ -2499,6 +2530,28 @@ describe("ai pr review discussion rendering", () => {
       "    permissions:",
       "      discussions: write",
       "    steps:",
+      "      - name: Resolve discussion pull request head",
+      "        id: discussion-pr-head",
+      "        if: github.event_name == 'discussion_comment'",
+      "        run: |",
+      "          /<!--\\s*ai-pr-discussion-pr-number\\s*:\\s*(\\d+)\\s*-->/i,",
+      "          /Pull request origem:\\s*#(\\d+)/i,",
+      "          /\\/pull\\/(\\d+)(?:\\b|[/?#])/i,",
+      "          if [ -z \"$pr_number\" ]; then",
+      "            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"",
+      "            exit 1",
+      "          fi",
+      "          head_sha=\"$(gh api \"repos/${REPOSITORY}/pulls/${pr_number}\" --jq '.head.sha')\"",
+      "      - name: Checkout discussion pull request head",
+      "        if: github.event_name == 'discussion_comment'",
+      "        uses: actions/checkout@v4",
+      "        with:",
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha }}",
+      "      - name: Checkout pull request head",
+      "        if: github.event_name != 'discussion_comment'",
+      "        uses: actions/checkout@v4",
+      "        with:",
+      "          ref: ${{ github.event.pull_request.head.sha }}",
       "      - name: Wait for canonical CI / Test conclusion",
       "        env:",
       "          AI_PR_REVIEW_MODE: await_ci",
@@ -2508,8 +2561,21 @@ describe("ai pr review discussion rendering", () => {
     ].join("\n");
 
     expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow)).toBe(true);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow)).toBe(true);
     expect(workflowHasVisibleDiscussionReviewCiGate(prReviewWorkflow.replace(
       "          AI_PR_REVIEW_MODE: await_ci\n      - name: Run multi-bot Discussion PR review\n        env:\n",
+      "",
+    ))).toBe(false);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha }}",
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha || github.event.pull_request.head.sha }}",
+    ))).toBe(false);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
+      "          ref: ${{ steps.discussion-pr-head.outputs.sha }}",
+      "          ref: ${{ github.sha }}",
+    ))).toBe(false);
+    expect(workflowChecksOutDiscussionPullRequestHead(prReviewWorkflow.replace(
+      "          if [ -z \"$pr_number\" ]; then\n            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"\n            exit 1\n          fi\n",
       "",
     ))).toBe(false);
 
@@ -2564,6 +2630,7 @@ describe("ai pr review discussion rendering", () => {
     expect(evidence).toContain("discussion-review");
     expect(evidence).toContain("AI_PR_REVIEW_MODE=await_ci");
     expect(evidence).toContain("AI_PR_REVIEW_MODE=discussion");
+    expect(evidence).toContain("linked PR head SHA before checkout");
     expect(evidence).toContain("$GITHUB_STEP_SUMMARY");
     expect(evidence).toContain("Blocked");
     expect(evidence).toContain("medio -> direct_pr");
