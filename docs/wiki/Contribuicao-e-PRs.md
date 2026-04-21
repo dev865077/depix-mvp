@@ -28,7 +28,7 @@
 - quando a rota for `discussion_before_pr`, o workflow `AI Issue Planning Review` e disparado explicitamente pela triagem via `workflow_dispatch` para criar ou reutilizar uma unica Discussion canonica da issue
 - o planning nao deve ouvir `issues` nem `issue_comment` como entrada automatica paralela; esses gatilhos redundantes foram removidos para manter uma unica porta canonica de planejamento
 - quando o planning terminar em `Request changes`, o workflow `AI Issue Refinement` deve entrar automaticamente, refinar a issue via API, responder na thread da conclusao mais recente e decidir se o planning deve rerodar agora ou se a issue ja amadureceu ate um bloqueio externo explicito
-- para issues antigas ou ja roteadas antes deste contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
+- para issues antigas ou ja roteadas antes desse contrato, o caminho oficial de migracao continua sendo `workflow_dispatch` do `AI Issue Planning Review` com `issue_number`; esse rerun cria ou reutiliza a Discussion canonica da issue
 - o backfill de issues em andamento e manual por desenho: listar as issues abertas ja marcadas como `discussion_before_pr` e executar `AI Issue Planning Review` com `issue_number` para cada uma
 - a categoria da Discussion de planning pode ser configurada por `AI_ISSUE_PLANNING_DISCUSSION_CATEGORY`; se ausente, o workflow aceita temporariamente `AI_ISSUE_TRIAGE_DISCUSSION_CATEGORY` como fallback de migracao e depois usa `Ideas`
 - a lane de planning review roda quatro papeis especializados: `product`, `technical`, `scrum` e `risk`
@@ -56,6 +56,11 @@
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 - o parser de referencias do planning nao deve tratar mencoes em prosa como `PR #209` ou `pull request #209` como child issues; apenas referencias reais de issues entram na lista de contexto
 - referencias opcionais de child issue que retornem `403` ou `404` devem ser ignoradas com aviso operacional, sem abortar o planning da issue raiz
+- a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel na lista do `pull_request`
+- o workflow de review nao deve depender de um trigger duplicado em `workflow_run` para publicar o check visivel
+- o gate de `discussion-review` deve permanecer travado ate o `CI / Test` canonico ficar verde
+- especialistas so devem executar depois que o CI canonico concluir com sucesso, para evitar confusao entre skip, cancelamento e revisao prematura
+- o contrato operacional da review deve preservar o check visivel mesmo quando a publicacao de comentarios de Discussion for adiada pelo gate de CI
 
 ## Corpo obrigatorio da PR
 
@@ -78,11 +83,13 @@ Explicitar:
 
 ## Regra extra para PR TypeScript
 
-- preservar `src/index.ts` como entrypoi
+- preservar `src/index.ts` como entrypoint canonico
+- atualizar `Migracao-TypeScript` quando entrypoint, runner, comandos canonicos ou contratos de runtime mudarem
 
-## Regra extra para review automatica de PR
+## Antes de abrir o PR
 
-- `pull_request` nao deve iniciar a Discussion: esse evento apenas prepara a classificacao e mantem a review visivel sem abrir a lane multi-comentario
-- a Discussion de review deve ser retomada por `workflow_run` depois que o `CI / Test` canonico terminar com sucesso
-- o contrato de revisao nao deve cancelar a execucao anterior ao publicar comentarios de Discussion, para evitar perder evidencias no mesmo grupo de concorrencia
-- a evidencia da automacao deve registrar explicitamente que a lane de Discussion foi deferida para o run canonico de CI, preservando o contrato de nao-cancelamento
+- confirmar que a branch nao depende de um gate oculto ou de uma segunda rota automatica para o mesmo check
+- confirmar que os checks visiveis no PR representam o fluxo canonico de CI e review
+- confirmar que qualquer review especializado so vai rodar depois do `CI / Test` verde quando esse for o contrato do workflow
+
+```

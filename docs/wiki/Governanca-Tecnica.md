@@ -54,9 +54,14 @@
 - o fluxo de review automatica de PR nao deve iniciar a Discussion durante `pull_request`; esse evento apenas prepara a classificacao e preserva os checks visiveis sem abrir a lane multi-comentario
 - a Discussion de review deve ser retomada por `workflow_run` somente depois que o `CI / Test` canonico estiver verde
 - a evidencia operacional precisa registrar o contrato de nao-cancelamento: o run que publica comentarios de Discussion nao deve ser cancelado por reuse de concurrency group entre eventos `pull_request` e `workflow_run`
+- os checks visiveis do PR devem permanecer coerentes com o gatilho canonico, sem duplicar o mesmo review entre eventos concorrentes
+- a visibilidade do check `AI PR Review / discussion-review` no `pull_request` deve ser preservada mesmo quando a revisao especializada aguarda o CI verde
+- o gate de CI deve ser explicitado no proprio workflow de review para que especialistas so executem depois do `CI / Test` canonico concluir com sucesso
 - falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
 - quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
 
 ## Regra de longo prazo
 
 Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em issue, comentario ou conversa oral. Ela precisa ficar registrada em documentacao versionada.
+
+```

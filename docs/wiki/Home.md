@@ -41,6 +41,9 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a reconciliação agendada bounded de depositos pendentes ja existe como Cloudflare Cron Trigger no Worker Module, ativa apenas em `test` e desativada em `production`
 - a conciliacao de pagamento agora pode disparar notificacao assincrona no Telegram quando o estado visivel do pedido muda para confirmacao
 - a notificacao assincrona do Telegram foi desenhada para ser idempotente e nao repetir a mesma mensagem em webhook, recheck ou fallback
+- a revisao automatica de PR agora permanece visivel como check `AI PR Review / discussion-review` no `pull_request`
+- o gate de discussao de PR agora espera o `CI / Test` canonico ficar verde antes de rodar especialistas
+- o workflow de review de PR nao depende mais de um trigger duplicado em `workflow_run` para publicar o check visivel
 - a triagem de issues agora publica rota canonica na issue sem criar Discussion prematura
 - a triagem de issues agora tambem atualiza uma secao canônica gerenciada no corpo da issue, para que a propria issue amadureca via API antes de entrar em implementacao
 - quando a rota exigir planning, a planning review cria ou reutiliza uma unica Discussion via API, roda quatro papeis especializados, reescreve a secao canonica da issue com a sintese da rodada e, se ainda houver bloqueios, despacha automaticamente o refinement da issue antes de liberar Codex com `ready_for_codex: true`
@@ -110,9 +113,6 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 ## Fonte de verdade
 
 - Wiki: narrativa institucional, onboarding, mapa do sistema e leitura guiada
-- repositorio: implementacao real, configuracao, migrations, testes e contratos versionados
-- quando houver divergencia, o repositorio e a fonte de verdade tecnica
+- repositorio: implementacao real, comportamento corrente e contratos operacionais
 
-## Leitura correta do projeto
-
-O projeto ja tem base tecnica suficiente para desenvolvimento incremental serio, mas ainda nao tem o fluxo funcional completo do MVP no `main`. A leitura correta nao e "sistema pronto"; e "fundacao operacional pronta para evolucao controlada".
+```
