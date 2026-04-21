@@ -17,6 +17,7 @@ import {
 } from "../src/order-flow/order-progress-constants.js";
 import { readRuntimeConfig } from "../src/config/runtime.js";
 import { TenantRegistryValidationError } from "../src/config/tenants.js";
+import { DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES } from "../src/services/telegram-conversation-timeout.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -170,6 +171,15 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositsFallback.ready).toBe(true);
     expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("disabled");
     expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
+    expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES);
+  });
+
+  it("accepts an explicit Telegram conversation timeout override", () => {
+    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+      TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES: "45",
+    }));
+
+    expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(45);
   });
 
   it("marks scheduled deposit reconciliation ready only with flag, D1 and tenant secrets", () => {

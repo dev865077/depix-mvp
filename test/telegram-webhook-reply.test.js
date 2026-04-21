@@ -1265,6 +1265,58 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("treats /iniciar as an alias of /start", async function assertStartAlias() {
+    const app = createApp();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(payload.text).toContain("Para começar, envie o valor em BRL");
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 10,
+          date: 1713434411,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/iniciar",
+          chatId: 7017,
+          fromId: 717,
+          updateId: 23,
+        }),
+      },
+      createWorkerEnv(),
+    );
+    const currentOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", "717");
+
+    expect(response.status).toBe(200);
+    expect(currentOrder?.currentStep).toBe("amount");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("stores a valid BRL amount and ignores stale valid amount replay after wallet", async function assertAmountCollection() {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
@@ -2075,6 +2127,106 @@ describe("telegram webhook reply flow", () => {
     expect(replies[2]).toContain("envie o valor em BRL");
     expect(replies[3]).toContain("envie o valor em BRL");
     expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    {
+      userId: 931,
+      currentStep: "amount",
+      amountInCents: null,
+      walletAddress: null,
+    },
+    {
+      userId: 932,
+      currentStep: "wallet",
+      amountInCents: 1000,
+      walletAddress: null,
+    },
+    {
+      userId: 933,
+      currentStep: "confirmation",
+      amountInCents: 1000,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+    },
+  ])("expires a stale open Telegram order in $currentStep before consuming the next message", async function assertTimedOutConversation(entry) {
+    const app = createApp();
+    const workerEnv = createWorkerEnv({
+      TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES: "30",
+    });
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const payload = JSON.parse(String(init?.body));
+      replies.push(payload.text);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: replies.length,
+          date: 1713434419,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: `order_stale_${entry.currentStep}`,
+      userId: String(entry.userId),
+      channel: "telegram",
+      productType: "depix",
+      currentStep: entry.currentStep,
+      status: "draft",
+      amountInCents: entry.amountInCents,
+      walletAddress: entry.walletAddress,
+      telegramChatId: `chat_${entry.currentStep}`,
+    });
+    await getDatabase(env)
+      .prepare("UPDATE orders SET updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+      .bind("2026-04-21T17:30:00.000Z", "alpha", `order_stale_${entry.currentStep}`)
+      .run();
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "entrada residual",
+          chatId: 9123,
+          fromId: entry.userId,
+          updateId: 930,
+        }),
+      },
+      workerEnv,
+    );
+
+    const timedOutOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status AS status FROM orders WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", `order_stale_${entry.currentStep}`)
+      .first();
+    const replacementOrder = await getLatestOpenOrderByUser(getDatabase(env), "alpha", String(entry.userId));
+
+    expect(response.status).toBe(200);
+    expect(timedOutOrder?.currentStep).toBe("canceled");
+    expect(timedOutOrder?.status).toBe("canceled");
+    expect(replacementOrder?.orderId).not.toBe(`order_stale_${entry.currentStep}`);
+    expect(replacementOrder?.currentStep).toBe("amount");
+    expect(replacementOrder?.amountInCents).toBeNull();
+    expect(replies[0]).toContain("expirou por inatividade");
+    expect(replies[0]).toContain("envie o valor em BRL");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does not create a second Eulen deposit when confirmar is replayed after awaiting_payment", async function assertConfirmationReplayIdempotency() {
