@@ -5,13 +5,18 @@
  * a chamada direta ao service idempotente de `deposit-status`.
  */
 import { readTenantSecret } from "../config/tenants.js";
-import { listPendingTelegramDepositsForScheduledReconciliation } from "../db/repositories/deposits-repository.js";
+import {
+  claimPendingTelegramDepositForScheduledReconciliation,
+  listPendingTelegramDepositsForScheduledReconciliation,
+  releaseScheduledDepositReconciliationClaim,
+} from "../db/repositories/deposits-repository.js";
 import { log } from "../lib/logger.js";
 import { processDepositRecheck } from "./eulen-deposit-recheck.js";
 import { notifyTelegramOrderTransitionSafely } from "./telegram-payment-notifications.js";
 
 export const SCHEDULED_DEPOSIT_RECONCILIATION_PER_TENANT_LIMIT = 5;
 export const SCHEDULED_DEPOSIT_RECONCILIATION_WINDOW_MS = 2 * 60 * 60 * 1000;
+export const SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STALE_MS = 10 * 60 * 1000;
 
 function toIsoDate(value) {
   const date = value instanceof Date ? value : new Date(value);
@@ -22,6 +27,12 @@ function toIsoDate(value) {
 function buildWindowStartIso(scheduledTime) {
   return new Date(
     new Date(toIsoDate(scheduledTime)).getTime() - SCHEDULED_DEPOSIT_RECONCILIATION_WINDOW_MS,
+  ).toISOString();
+}
+
+function buildClaimStaleBeforeIso(scheduledTime) {
+  return new Date(
+    new Date(toIsoDate(scheduledTime)).getTime() - SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STALE_MS,
   ).toISOString();
 }
 
@@ -49,6 +60,7 @@ function createEmptyTenantSummary(tenantId) {
     selected: 0,
     processed: 0,
     duplicates: 0,
+    claimSkipped: 0,
     failed: 0,
     notificationDelivered: 0,
     notificationSkipped: 0,
@@ -62,6 +74,7 @@ function combineTenantSummaries(tenantSummaries) {
     selected: summary.selected + tenantSummary.selected,
     processed: summary.processed + tenantSummary.processed,
     duplicates: summary.duplicates + tenantSummary.duplicates,
+    claimSkipped: summary.claimSkipped + tenantSummary.claimSkipped,
     failed: summary.failed + tenantSummary.failed,
     notificationDelivered: summary.notificationDelivered + tenantSummary.notificationDelivered,
     notificationSkipped: summary.notificationSkipped + tenantSummary.notificationSkipped,
@@ -71,6 +84,7 @@ function combineTenantSummaries(tenantSummaries) {
     selected: 0,
     processed: 0,
     duplicates: 0,
+    claimSkipped: 0,
     failed: 0,
     notificationDelivered: 0,
     notificationSkipped: 0,
@@ -137,6 +151,43 @@ async function reconcileScheduledDeposit(input) {
   };
 }
 
+async function claimScheduledDeposit(input) {
+  return claimPendingTelegramDepositForScheduledReconciliation(
+    input.db,
+    input.tenant.tenantId,
+    input.deposit.depositEntryId,
+    input.deposit.externalStatus,
+    input.deposit.updatedAt,
+    new Date().toISOString(),
+  );
+}
+
+async function releaseScheduledDepositClaim(input) {
+  try {
+    await releaseScheduledDepositReconciliationClaim(
+      input.db,
+      input.tenant.tenantId,
+      input.deposit.depositEntryId,
+      new Date().toISOString(),
+    );
+  } catch (error) {
+    const summarizedError = summarizeError(error);
+
+    log(input.runtimeConfig, {
+      level: "error",
+      message: "ops.scheduled_deposit_reconciliation.claim_release_failed",
+      tenantId: input.tenant.tenantId,
+      requestId: input.requestId,
+      details: {
+        depositEntryId: input.deposit.depositEntryId,
+        orderId: input.deposit.orderId,
+        code: summarizedError.code,
+        cause: summarizedError.message,
+      },
+    });
+  }
+}
+
 async function reconcileScheduledTenant(input) {
   const tenantSummary = createEmptyTenantSummary(input.tenant.tenantId);
   let eulenApiToken;
@@ -169,6 +220,7 @@ async function reconcileScheduledTenant(input) {
       input.tenant.tenantId,
       input.windowStartIso,
       SCHEDULED_DEPOSIT_RECONCILIATION_PER_TENANT_LIMIT,
+      input.claimStaleBeforeIso,
     );
   } catch (error) {
     tenantSummary.failed += 1;
@@ -191,7 +243,32 @@ async function reconcileScheduledTenant(input) {
   tenantSummary.selected = deposits.length;
 
   for (const deposit of deposits) {
+    let claimed = false;
+
     try {
+      claimed = await claimScheduledDeposit({
+        ...input,
+        deposit,
+      });
+
+      if (!claimed) {
+        tenantSummary.claimSkipped += 1;
+
+        log(input.runtimeConfig, {
+          level: "info",
+          message: "ops.scheduled_deposit_reconciliation.deposit_skipped",
+          tenantId: input.tenant.tenantId,
+          requestId: input.requestId,
+          details: {
+            depositEntryId: deposit.depositEntryId,
+            orderId: deposit.orderId,
+            reason: "claim_not_acquired",
+          },
+        });
+
+        continue;
+      }
+
       const { result, notificationState } = await reconcileScheduledDeposit({
         ...input,
         eulenApiToken,
@@ -212,6 +289,13 @@ async function reconcileScheduledTenant(input) {
         tenantSummary.notificationSkipped += 1;
       }
     } catch (error) {
+      if (claimed) {
+        await releaseScheduledDepositClaim({
+          ...input,
+          deposit,
+        });
+      }
+
       tenantSummary.failed += 1;
       const summarizedError = summarizeError(error);
 
@@ -258,6 +342,7 @@ export async function runScheduledDepositReconciliation(input) {
   const requestId = buildRequestId(input);
   const scheduledTime = toIsoDate(input.scheduledTime ?? new Date());
   const windowStartIso = buildWindowStartIso(scheduledTime);
+  const claimStaleBeforeIso = buildClaimStaleBeforeIso(scheduledTime);
   const operation = input.runtimeConfig.operations.scheduledDepositReconciliation;
 
   if (!operation.ready) {
@@ -310,6 +395,7 @@ export async function runScheduledDepositReconciliation(input) {
       cron: input.cron ?? null,
       scheduledTime,
       windowStartIso,
+      claimStaleBeforeIso,
       perTenantLimit: SCHEDULED_DEPOSIT_RECONCILIATION_PER_TENANT_LIMIT,
     },
   });
@@ -324,6 +410,7 @@ export async function runScheduledDepositReconciliation(input) {
       tenant,
       requestId,
       windowStartIso,
+      claimStaleBeforeIso,
     }));
   }
 
@@ -338,6 +425,7 @@ export async function runScheduledDepositReconciliation(input) {
       cron: input.cron ?? null,
       scheduledTime,
       windowStartIso,
+      claimStaleBeforeIso,
     },
   });
 
@@ -346,6 +434,7 @@ export async function runScheduledDepositReconciliation(input) {
     skipped: false,
     requestId,
     windowStartIso,
+    claimStaleBeforeIso,
     ...summary,
   };
 }

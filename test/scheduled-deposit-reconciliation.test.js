@@ -192,6 +192,18 @@ function mockDepositStatus(fetchStatuses) {
   });
 }
 
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+
+  return {
+    promise,
+    resolve,
+  };
+}
+
 afterEach(function restoreScheduledMocks() {
   vi.restoreAllMocks();
 });
@@ -345,6 +357,7 @@ describe("scheduled deposit reconciliation", () => {
     expect(successOrder?.status).toBe("paid");
     expect(successOrder?.currentStep).toBe("completed");
     expect(failureOrder?.status).toBe("pending");
+    expect((await getDepositByDepositEntryId(env.DB, "alpha", "deposit_failure"))?.externalStatus).toBe("pending");
     expect(await countDepositEvents("deposit_success")).toBe(1);
     expect(await countDepositEvents("deposit_failure")).toBe(0);
     expect(fetchSpy).toHaveBeenCalledTimes(3);
@@ -383,6 +396,91 @@ describe("scheduled deposit reconciliation", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(await countDepositEvents("deposit_alpha_tenant_ok")).toBe(1);
     expect(await countDepositEvents("deposit_beta_tenant_fail", "beta")).toBe(0);
+  });
+
+  it("prevents overlapping runs from processing and notifying the same deposit twice", async function assertOverlapClaim() {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    await resetDatabaseSchema();
+    await seedDepositAggregate({
+      orderId: "order_overlap",
+      depositEntryId: "deposit_overlap",
+      updatedAt: "2026-04-21T09:25:00.000Z",
+    });
+
+    const remoteStarted = createDeferred();
+    const releaseRemote = createDeferred();
+    let eulenCalls = 0;
+    let telegramCalls = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockOverlappingFetch(input) {
+      const url = String(input);
+
+      if (url.startsWith("https://depix.eulen.app/api/deposit-status")) {
+        eulenCalls += 1;
+        remoteStarted.resolve();
+        await releaseRemote.promise;
+
+        return new Response(JSON.stringify({
+          response: {
+            qrId: "qr_deposit_overlap",
+            status: "depix_sent",
+            expiration: "2026-04-21T12:00:00Z",
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.startsWith("https://api.telegram.org/bot")) {
+        telegramCalls += 1;
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 902,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const firstRun = runScheduler({ requestId: "scheduled-overlap-1" });
+
+    await remoteStarted.promise;
+
+    const secondResult = await runScheduler({ requestId: "scheduled-overlap-2" });
+
+    releaseRemote.resolve();
+
+    const firstResult = await firstRun;
+    const overlapDeposit = await getDepositByDepositEntryId(env.DB, "alpha", "deposit_overlap");
+    const overlapOrder = await getOrderById(env.DB, "alpha", "order_overlap");
+
+    expect(secondResult).toMatchObject({
+      selected: 0,
+      processed: 0,
+      failed: 0,
+    });
+    expect(firstResult).toMatchObject({
+      selected: 1,
+      processed: 1,
+      failed: 0,
+      notificationDelivered: 1,
+    });
+    expect(overlapDeposit?.externalStatus).toBe("depix_sent");
+    expect(overlapOrder?.status).toBe("paid");
+    expect(await countDepositEvents("deposit_overlap")).toBe(1);
+    expect(eulenCalls).toBe(1);
+    expect(telegramCalls).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it("keeps repeated pending rechecks idempotent", async function assertPendingRecheckIdempotency() {

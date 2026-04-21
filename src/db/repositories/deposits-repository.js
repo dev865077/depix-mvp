@@ -19,6 +19,7 @@ import { getAllowedPatchEntries } from "../client.js";
  * nomes diferentes para a mesma barreira.
  */
 export const DEPOSITS_TENANT_ORDER_UNIQUE_INDEX = "deposits_tenant_order_unique_idx";
+export const SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS = "pending_scheduled_recheck";
 /**
  * Erro estruturado para tentativa de criar mais de um deposito no mesmo pedido.
  *
@@ -226,9 +227,16 @@ export async function listDepositsNeedingQrIdReconciliation(db, tenantId) {
  * @param {string} tenantId Tenant atual.
  * @param {string} sinceIso Limite inferior da janela de reconciliacao.
  * @param {number} limit Limite maximo por tenant.
+ * @param {string} [staleClaimBeforeIso=sinceIso] Claims anteriores a este instante podem ser retomados.
  * @returns {Promise<DepositRecord[]>} Depositos candidatos em ordem de antiguidade.
  */
-export async function listPendingTelegramDepositsForScheduledReconciliation(db, tenantId, sinceIso, limit) {
+export async function listPendingTelegramDepositsForScheduledReconciliation(
+    db,
+    tenantId,
+    sinceIso,
+    limit,
+    staleClaimBeforeIso = sinceIso,
+) {
     const normalizedLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 0;
     if (normalizedLimit === 0) {
         return [];
@@ -254,15 +262,93 @@ export async function listPendingTelegramDepositsForScheduledReconciliation(db, 
       AND o.channel = 'telegram'
       AND o.current_step = 'awaiting_payment'
       AND o.status = 'pending'
-      AND d.external_status = 'pending'
+      AND (
+        d.external_status = 'pending'
+        OR (
+          d.external_status = ?
+          AND julianday(d.updated_at) < julianday(?)
+        )
+      )
       AND (
         julianday(d.updated_at) >= julianday(?)
         OR julianday(d.created_at) >= julianday(?)
       )
     ORDER BY julianday(d.updated_at) ASC, julianday(d.created_at) ASC
     LIMIT ?
-  `).bind(tenantId, sinceIso, sinceIso, normalizedLimit).all();
+  `).bind(
+        tenantId,
+        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
+        staleClaimBeforeIso,
+        sinceIso,
+        sinceIso,
+        normalizedLimit,
+    ).all();
     return result.results;
+}
+/**
+ * Tenta adquirir a posse temporaria de um deposito para uma execucao agendada.
+ *
+ * A atualizacao e condicional no snapshot visto pela selecao. Assim, duas
+ * execucoes concorrentes que lerem a mesma linha nao conseguem processa-la em
+ * duplicidade: apenas uma troca `external_status` para o status interno de
+ * claim antes da chamada remota.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @param {string} expectedExternalStatus Status visto pela selecao.
+ * @param {string} expectedUpdatedAt Timestamp visto pela selecao.
+ * @param {string} claimedAtIso Momento do claim.
+ * @returns {Promise<boolean>} Verdadeiro quando o claim foi adquirido.
+ */
+export async function claimPendingTelegramDepositForScheduledReconciliation(
+    db,
+    tenantId,
+    depositEntryId,
+    expectedExternalStatus,
+    expectedUpdatedAt,
+    claimedAtIso,
+) {
+    const result = await db.prepare(`
+    UPDATE deposits
+    SET external_status = ?, updated_at = ?
+    WHERE tenant_id = ?
+      AND deposit_entry_id = ?
+      AND external_status = ?
+      AND updated_at = ?
+  `).bind(
+        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
+        claimedAtIso,
+        tenantId,
+        depositEntryId,
+        expectedExternalStatus,
+        expectedUpdatedAt,
+    ).run();
+    return Number(result.meta?.changes ?? 0) === 1;
+}
+/**
+ * Solta um claim agendado quando o recheck falha antes de aplicar a verdade remota.
+ *
+ * @param {D1Database} db Database D1.
+ * @param {string} tenantId Tenant atual.
+ * @param {string} depositEntryId Deposito alvo.
+ * @param {string} releasedAtIso Momento de release.
+ * @returns {Promise<boolean>} Verdadeiro quando uma linha foi liberada.
+ */
+export async function releaseScheduledDepositReconciliationClaim(db, tenantId, depositEntryId, releasedAtIso) {
+    const result = await db.prepare(`
+    UPDATE deposits
+    SET external_status = 'pending', updated_at = ?
+    WHERE tenant_id = ?
+      AND deposit_entry_id = ?
+      AND external_status = ?
+  `).bind(
+        releasedAtIso,
+        tenantId,
+        depositEntryId,
+        SCHEDULED_DEPOSIT_RECONCILIATION_CLAIM_STATUS,
+    ).run();
+    return Number(result.meta?.changes ?? 0) === 1;
 }
 /**
  * Atualiza parcialmente um deposito usando `depositEntryId` como ancora local.
