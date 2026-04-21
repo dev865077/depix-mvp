@@ -16,6 +16,11 @@ Estado atual:
 - o inbound do Telegram agora passa por normalizacao com contrato explicito antes de chegar ao fluxo do bot
 - o update inbound invalido falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot ja tem um fluxo inicial de resposta para `/start`, `/help` e mensagens de texto
+- a superficie publica canonica do bot registra apenas `/start`, `/help`, `/status` e `/cancel`
+- o alias legado `/iniciar` continua aceito no runtime, mas nao aparece na listagem publica canonica
+- o menu button do Telegram espelha a mesma superficie publica canonica de comandos
+- o webhook do Telegram registra a lista publica de comandos e o menu button durante o setup da webhook
+- o webhook do Telegram agora inclui `callback_query` entre os updates permitidos, para manter a UX inline acessivel
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
 - ao receber `/help`, o runtime pode ler o pedido aberto para contextualizar a resposta, mas nao cria nem muta pedidos
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
@@ -95,6 +100,4 @@ O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-s
 
 Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e fica desabilitada quando o segredo operacional nao estiver configurado.
 
-O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` cobre um deposito especifico e `deposits` cobre uma janela curta quando callbacks atrasarem ou faltarem.
-
-Na persistencia local, `depositEntryId` e `qrId`
+O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` e `deposits` continuam como mecanismos de reconciliacao e suporte operacional.

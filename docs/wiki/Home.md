@@ -29,6 +29,10 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o inbound do Telegram agora normaliza um contrato explicito de update com `updateKind`, `chatId`, `fromId`, `text`, `command`, `callbackData`, `hasReplyChannel` e `rawUpdateType`
 - payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
+- a superficie publica canonica do Telegram agora e registrada no webhook com os comandos visiveis `/start`, `/help`, `/status` e `/cancel`
+- o alias legado `/iniciar` segue aceito em runtime, mas fica fora da listagem publica canonica
+- o menu button do Telegram espelha a mesma superficie publica canonica de comandos
+- o webhook do Telegram agora inclui `callback_query` entre os `allowed_updates`, para manter a UX inline alcancavel
 - em `confirmation`, o fluxo agora oferece CTAs inline de `Confirmar` e `Cancelar`
 - no estado `awaiting_payment`, as respostas de status e entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
 - callback queries suportadas sao tratadas pelo mesmo fluxo de pedido, com fallback por texto preservado
@@ -78,4 +82,9 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 1. [Leitura Inicial](Leitura-Inicial)
 2. [Visao Geral do Produto](Visao-Geral-do-Produto)
 3. [Arquitetura Geral](Arquitetura-Geral)
-4. [Estrutura do Repositorio
+4. [Estrutura do Repositorio](Estrutura-do-Repositorio)
+5. [Contribuicao e PRs](Contribuicao-e-PRs)
+
+## Regra de manutencao
+
+Se uma mudanca altera arquitetura, schema, integracao ou operacao, a documentacao correspondente precisa mudar na mesma PR.
