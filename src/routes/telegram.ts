@@ -7,14 +7,24 @@
 import { Hono } from "hono";
 
 import { readTenantSecret } from "../config/tenants.js";
+import { dispatchNonBlockingTask } from "../lib/background-tasks.js";
 import { jsonError } from "../lib/http.js";
 import { log } from "../lib/logger.js";
+import { ensureTelegramWebhookPublicSurface } from "../services/telegram-webhook-ops.js";
 import { normalizeTelegramWebhookError } from "../telegram/errors.js";
 import { parseTelegramRawUpdateEnvelope } from "../telegram/raw-update.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
 import type { AppBindings, AppContext } from "../types/runtime";
 
 export const telegramRouter = new Hono<AppBindings>();
+
+function shouldEnsureTelegramPublicSurface(runtimeConfig: { environment?: string } | undefined): boolean {
+  return runtimeConfig?.environment !== "local";
+}
+
+function buildTelegramPublicBaseUrl(requestUrl: string): string {
+  return new URL(requestUrl).origin;
+}
 
 /**
  * Encaminha o webhook do Telegram para o runtime real do grammY.
@@ -61,6 +71,47 @@ export async function handleTelegramWebhook(c: AppContext): Promise<Response> {
       readTenantSecret(c.env, tenant, "telegramBotToken"),
       readTenantSecret(c.env, tenant, "telegramWebhookSecret"),
     ]);
+
+    if (shouldEnsureTelegramPublicSurface(runtimeConfig)) {
+      await dispatchNonBlockingTask(
+        c,
+        ensureTelegramWebhookPublicSurface({
+          env: c.env,
+          tenant,
+          environment: runtimeConfig.environment,
+          publicBaseUrl: buildTelegramPublicBaseUrl(c.req.url),
+          telegramBotToken,
+          telegramWebhookSecret,
+        }).then((result) => {
+          if (!result.repaired && !result.reason) {
+            return;
+          }
+
+          log(runtimeConfig, {
+            level: result.repaired ? "warn" : "info",
+            message: "telegram.public_surface.ensure_completed",
+            tenantId: tenant.tenantId,
+            requestId: c.get("requestId"),
+            method: c.req.method,
+            path: c.req.path,
+            details: result,
+          });
+        }).catch((error) => {
+          log(runtimeConfig, {
+            level: "warn",
+            message: "telegram.public_surface.ensure_failed",
+            tenantId: tenant.tenantId,
+            requestId: c.get("requestId"),
+            method: c.req.method,
+            path: c.req.path,
+            details: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }),
+      );
+    }
+
     const webhookHandler = telegramRuntime.createWebhookCallback({
       telegramBotToken,
       telegramWebhookSecret,

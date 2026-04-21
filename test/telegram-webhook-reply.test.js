@@ -19,6 +19,7 @@ import { createDeposit, getLatestDepositByOrderId } from "../src/db/repositories
 import { createOrder, getLatestOpenOrderByUser } from "../src/db/repositories/orders-repository.js";
 import { handleTelegramWebhook } from "../src/routes/telegram.js";
 import { createTelegramOrderDepositNonce } from "../src/services/telegram-order-nonce.js";
+import { clearTelegramWebhookPublicSurfaceEnsureCache } from "../src/services/telegram-webhook-ops.js";
 import { normalizeTelegramBotError } from "../src/telegram/errors.js";
 import {
   buildTelegramHelpReply,
@@ -346,9 +347,101 @@ beforeEach(async function resetTelegramPersistence() {
 afterEach(function resetTelegramTests() {
   vi.restoreAllMocks();
   clearTelegramRuntimeCache();
+  clearTelegramWebhookPublicSurfaceEnsureCache();
 });
 
 describe("telegram webhook reply flow", () => {
+  it("self-heals production Telegram webhook updates before users press inline buttons", async function assertProductionWebhookAllowedUpdatesRepair() {
+    const app = createApp();
+    const calls = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = init?.body ? JSON.parse(String(init.body)) : {};
+
+      calls.push({ url, payload });
+
+      if (url.includes("/getWebhookInfo")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            url: "https://depix-mvp-production.dev865077.workers.dev/telegram/alpha/webhook",
+            allowed_updates: ["message"],
+            pending_update_count: 0,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (
+        url.includes("/setWebhook")
+        || url.includes("/setMyCommands")
+        || url.includes("/setChatMenuButton")
+      ) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: true,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 71,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+            text: payload.text,
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected Telegram method call: ${url}`);
+    });
+
+    const response = await app.request(
+      "https://depix-mvp-production.dev865077.workers.dev/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 9101,
+          fromId: 9101,
+          updateId: 101,
+        }),
+      },
+      createWorkerEnv({
+        APP_ENV: "production",
+      }),
+    );
+    const setWebhookPayload = calls.find((call) => call.url.includes("/setWebhook"))?.payload;
+
+    expect(response.status).toBe(200);
+    expect(setWebhookPayload?.allowed_updates).toEqual(["message", "callback_query"]);
+    expect(calls.some((call) => call.url.includes("/setMyCommands"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("/setChatMenuButton"))).toBe(true);
+  });
+
   it("returns a tenant-aware webhook reply for /start and emits structured logs", async function assertStartReplyFlow() {
     const app = createApp();
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});

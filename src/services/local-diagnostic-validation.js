@@ -20,6 +20,7 @@ import {
 import { readTenantSecret, readTenantSplitConfig } from "../config/tenants.js";
 import { createDeposit } from "../db/repositories/deposits-repository.js";
 import { createOrder } from "../db/repositories/orders-repository.js";
+import { TELEGRAM_ALLOWED_UPDATES } from "../telegram/public-surface.js";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const ALLOWED_EULEN_ASYNC_MODES = new Set(["auto", "true", "false"]);
@@ -553,7 +554,7 @@ export async function registerTelegramWebhookDiagnostic(input) {
   const setWebhookResult = await callTelegramApi(telegramBotToken, "setWebhook", {
     url: webhookUrl,
     secret_token: telegramWebhookSecret,
-    allowed_updates: ["message"],
+    allowed_updates: TELEGRAM_ALLOWED_UPDATES,
   });
   const webhookInfoResult = await callTelegramApi(telegramBotToken, "getWebhookInfo");
 

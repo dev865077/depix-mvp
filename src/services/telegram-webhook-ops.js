@@ -19,6 +19,7 @@ import {
 } from "../telegram/public-surface.js";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+const telegramPublicSurfaceEnsureCache = new Map();
 
 /**
  * Erro controlado das operacoes de webhook do Telegram.
@@ -102,6 +103,10 @@ export function normalizeTelegramWebhookPublicBaseUrl(rawBaseUrl) {
  */
 function buildTelegramWebhookUrl(publicBaseUrl, tenantId) {
   return `${publicBaseUrl}/telegram/${tenantId}/webhook`;
+}
+
+export function clearTelegramWebhookPublicSurfaceEnsureCache() {
+  telegramPublicSurfaceEnsureCache.clear();
 }
 
 /**
@@ -213,6 +218,16 @@ function summarizeTelegramWebhookInfo(responseBody) {
   };
 }
 
+function hasCanonicalAllowedUpdates(allowedUpdates) {
+  if (!Array.isArray(allowedUpdates)) {
+    return false;
+  }
+
+  return TELEGRAM_ALLOWED_UPDATES.every(function hasAllowedUpdate(updateType) {
+    return allowedUpdates.includes(updateType);
+  });
+}
+
 /**
  * Busca `getMe` e `getWebhookInfo` do tenant autenticado.
  *
@@ -253,6 +268,75 @@ export async function getTelegramWebhookOpsInfo(input) {
     menuButton: summarizeTelegramMenuButtonResponse(getChatMenuButtonResult.body),
     expectedPublicSurface: buildTelegramPublicSurfaceInventory(),
   };
+}
+
+export async function ensureTelegramWebhookPublicSurface(input) {
+  if (!input.publicBaseUrl) {
+    return {
+      ok: false,
+      repaired: false,
+      reason: "public_base_url_missing",
+    };
+  }
+
+  const webhookUrl = buildTelegramWebhookUrl(input.publicBaseUrl, input.tenant.tenantId);
+  const cacheKey = `${input.environment}:${input.tenant.tenantId}:${webhookUrl}:telegram-public-surface-v1`;
+  const cachedResult = telegramPublicSurfaceEnsureCache.get(cacheKey);
+
+  if (cachedResult) {
+    return {
+      ...cachedResult,
+      cacheHit: true,
+    };
+  }
+
+  const [telegramBotToken, telegramWebhookSecret] = input.telegramBotToken && input.telegramWebhookSecret
+    ? [input.telegramBotToken, input.telegramWebhookSecret]
+    : await Promise.all([
+      readRequiredTelegramTenantSecret(input.env, input.tenant, "telegramBotToken"),
+      readRequiredTelegramTenantSecret(input.env, input.tenant, "telegramWebhookSecret"),
+    ]);
+  const webhookInfoResult = await callTelegramApi(telegramBotToken, "getWebhookInfo");
+  const webhook = summarizeTelegramWebhookInfo(webhookInfoResult.body);
+  const needsRepair = webhook.url !== webhookUrl || !hasCanonicalAllowedUpdates(webhook.allowedUpdates);
+
+  if (!needsRepair) {
+    const result = {
+      ok: true,
+      repaired: false,
+      webhookUrl,
+      allowedUpdates: webhook.allowedUpdates,
+    };
+
+    telegramPublicSurfaceEnsureCache.set(cacheKey, result);
+    return result;
+  }
+
+  await Promise.all([
+    callTelegramApi(telegramBotToken, "setWebhook", {
+      url: webhookUrl,
+      secret_token: telegramWebhookSecret,
+      allowed_updates: TELEGRAM_ALLOWED_UPDATES,
+    }),
+    callTelegramApi(telegramBotToken, "setMyCommands", {
+      commands: buildTelegramPublicCommandsPayload(),
+    }),
+    callTelegramApi(telegramBotToken, "setChatMenuButton", {
+      menu_button: buildTelegramPublicMenuButtonPayload(),
+    }),
+  ]);
+
+  const result = {
+    ok: true,
+    repaired: true,
+    webhookUrl,
+    previousWebhookUrl: webhook.url,
+    previousAllowedUpdates: webhook.allowedUpdates,
+    allowedUpdates: TELEGRAM_ALLOWED_UPDATES,
+  };
+
+  telegramPublicSurfaceEnsureCache.set(cacheKey, result);
+  return result;
 }
 
 /**
