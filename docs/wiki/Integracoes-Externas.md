@@ -78,6 +78,8 @@ Estado atual:
 - a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de criacao do deposito
 - a criacao de deposito persiste `orders` e `deposits` juntos para evitar duplicidade silenciosa
 - em falha da Eulen, o pedido e marcado como `failed` e o usuario recebe instrucoes para recomecar
+- o webhook canonico da Eulen de deposito agora responde a probes em `GET` e `HEAD` na mesma URL, com erro diagnosticavel `webhook_method_not_allowed`
+- `POST` continua sendo o unico metodo que executa o processamento real do webhook
 
 ## Regra operacional central
 

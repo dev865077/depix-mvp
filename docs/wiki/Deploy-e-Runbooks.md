@@ -23,6 +23,8 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 
 - `GET /health`
 - `POST /telegram/:tenantId/webhook`
+- `GET /webhooks/eulen/:tenantId/deposit`
+- `HEAD /webhooks/eulen/:tenantId/deposit`
 - `POST /webhooks/eulen/:tenantId/deposit`
 - `POST /ops/:tenantId/recheck/deposit`
 - `POST /ops/:tenantId/reconcile/deposits`
@@ -36,6 +38,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `GET /health` responde com inventario publico redigido de tenants, sem expor mapas brutos de bindings ou nomes de bindings sensiveis
 - as fronteiras canonicas de rota ja existem
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
+- `GET /webhooks/eulen/:tenantId/deposit` e `HEAD /webhooks/eulen/:tenantId/deposit` agora respondem como probe diagnostico do webhook canonico da Eulen, sem entrar no processamento real
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
@@ -92,5 +95,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - sem `ENABLE_OPS_DEPOSITS_FALLBACK=true`, responde `503 ops_deposits_fallback_disabled`
 - sem header Bearer, responde `401 ops_authorization_required`
 - com token invalido, responde `403 ops_authorization_invalid`
-- se a Eulen nao responder com lista utilizavel, responde erro controlado `502`
-- a
+- se a Eulen nao responder com lista utilizavel, responde er
