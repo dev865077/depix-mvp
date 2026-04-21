@@ -2022,45 +2022,6 @@ function extractDiffEvidenceNeedles(value) {
 }
 
 /**
- * Check whether a candidate changed test file carries at least one required
- * assertion or behavior marker for one previous blocker.
- *
- * @param {any[]} files Current PR files.
- * @param {string[]} candidatePaths Suggested or explicitly cited test files.
- * @param {Array<{
- *   role: string,
- *   suggestedTestFile: string,
- *   behaviorProtected: string,
- *   minimumScenario: string,
- *   essentialAssertions: string[],
- *   resolutionCondition: string
- * }>} blockers Blockers being evaluated.
- * @returns {Map<string, { matchedTestFile: string | null, hasDiffEvidence: boolean }>} Per-role diff evidence result.
- */
-function collectFollowUpDiffEvidence(files, candidatePaths, blockers) {
-  const normalizedCandidatePaths = candidatePaths.map((path) => normalizeRepositoryPath(path));
-  const candidateFiles = files.filter((file) => normalizedCandidatePaths.includes(normalizeRepositoryPath(file.filename)));
-  const candidatePatchText = normalizeComparableText(candidateFiles.flatMap(getChangedPatchLines).join("\n"));
-  const evidenceByRole = new Map();
-
-  for (const blocker of blockers) {
-    const matchedTestFile = candidateFiles[0]?.filename ?? null;
-    const evidenceNeedles = [
-      ...blocker.essentialAssertions.flatMap(extractDiffEvidenceNeedles),
-      ...extractDiffEvidenceNeedles(blocker.behaviorProtected),
-    ];
-    const hasDiffEvidence = evidenceNeedles.some((needle) => candidatePatchText.includes(normalizeComparableText(needle)));
-
-    evidenceByRole.set(blocker.role, {
-      matchedTestFile,
-      hasDiffEvidence,
-    });
-  }
-
-  return evidenceByRole;
-}
-
-/**
  * Check whether the authored conclusion-thread handoff quotes any canonical
  * validation marker for a blocker.
  *
@@ -2091,6 +2052,7 @@ function hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker) {
  * @param {{ body?: string, replies?: { nodes?: any[] } }} finalComment Latest automated final-status comment.
  * @param {any[]} files Current PR files.
  * @param {Array<any>} statusCheckContexts Current PR status-check contexts.
+ * @param {Record<string, string>} [repositoryFileContents] Optional current repository file contents keyed by path.
  * @returns {Array<{
  *   role: string,
  *   suggestedTestFile: string,
@@ -2102,31 +2064,33 @@ function hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker) {
  *   missingSignals: string[]
  * }>} Unresolved testable blockers that must remain active.
  */
-export function reconcileFollowUpTestableBlockers(finalComment, files, statusCheckContexts) {
+export function reconcileFollowUpTestableBlockers(finalComment, files, statusCheckContexts, repositoryFileContents = {}) {
   const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
 
   if (previousBlockers.length === 0) {
     return [];
   }
 
-  const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
-  const replyEvidenceText = extractConclusionThreadReplyEvidenceText(finalComment?.replies?.nodes ?? []);
-  const ciTestGreen = isCiTestCheckGreen(statusCheckContexts);
+  const evidenceRecords = collectFollowUpEvidenceRecords(
+    finalComment,
+    files,
+    statusCheckContexts,
+    repositoryFileContents,
+  );
+  const evidenceByRole = new Map(evidenceRecords.map((record) => [record.role, record]));
 
   return previousBlockers.flatMap((blocker) => blocker.roles.flatMap((role) => {
-    const candidatePaths = [
-      blocker.suggestedTestFile,
-      ...explicitTestFileCitations,
-    ];
-    const diffEvidence = collectFollowUpDiffEvidence(files, candidatePaths, [{ ...blocker, role }]).get(role) ?? {
+    const evidence = evidenceByRole.get(role) ?? {
       matchedTestFile: null,
-      hasDiffEvidence: false,
+      hasPatchEvidence: false,
+      hasRepositoryEvidence: false,
+      hasReplyEvidence: false,
+      ciTestGreen: false,
     };
-    const hasReplyEvidence = hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker);
     const missingSignals = [
-      ...(diffEvidence.matchedTestFile ? [] : ["suggested_test_file_or_explicit_equivalent"]),
-      ...(diffEvidence.hasDiffEvidence || hasReplyEvidence ? [] : ["essential_assertion_or_behavior_marker"]),
-      ...(ciTestGreen ? [] : ["ci_test_green"]),
+      ...(evidence.matchedTestFile ? [] : ["suggested_test_file_or_explicit_equivalent"]),
+      ...(evidence.hasPatchEvidence || evidence.hasRepositoryEvidence || evidence.hasReplyEvidence ? [] : ["essential_assertion_or_behavior_marker"]),
+      ...(evidence.ciTestGreen ? [] : ["ci_test_green"]),
     ];
 
     if (missingSignals.length === 0) {
@@ -2140,7 +2104,7 @@ export function reconcileFollowUpTestableBlockers(finalComment, files, statusChe
       minimumScenario: blocker.minimumScenario,
       essentialAssertions: blocker.essentialAssertions,
       resolutionCondition: blocker.resolutionCondition,
-      matchedTestFile: diffEvidence.matchedTestFile,
+      matchedTestFile: evidence.matchedTestFile,
       missingSignals,
     }];
   }));
@@ -2658,8 +2622,26 @@ function isSmallReviewAutomationPolicyChange(files, summary) {
  * @returns {any[]} Files ordered for model review.
  */
 export function sortFilesForReview(files) {
+  return sortFilesForReviewWithPriorityPaths(files, []);
+}
+
+/**
+ * Sort files so the model sees explicit follow-up evidence before incidental
+ * files from the same category.
+ *
+ * @param {any[]} files Changed files from GitHub.
+ * @param {string[]} prioritizedPaths Repository-relative paths that must stay visible.
+ * @returns {any[]} Files ordered for model review.
+ */
+function sortFilesForReviewWithPriorityPaths(files, prioritizedPaths = []) {
+  const prioritizedPathSet = new Set(
+    (Array.isArray(prioritizedPaths) ? prioritizedPaths : [])
+      .map((path) => normalizeRepositoryPath(path))
+      .filter((path) => path.length > 0),
+  );
+
   return [...files].sort((left, right) => {
-    const priorityDelta = getFileReviewPriority(right) - getFileReviewPriority(left);
+    const priorityDelta = getFileReviewPriority(right, prioritizedPathSet) - getFileReviewPriority(left, prioritizedPathSet);
 
     if (priorityDelta !== 0) {
       return priorityDelta;
@@ -2678,15 +2660,17 @@ export function sortFilesForReview(files) {
  * bounded; it only changes ordering inside the already-capped review payload.
  *
  * @param {any} file GitHub changed-file payload.
+ * @param {Set<string>} [prioritizedPaths] Explicit paths that must stay visible in follow-up rounds.
  * @returns {number} Review priority score.
  */
-function getFileReviewPriority(file) {
+function getFileReviewPriority(file, prioritizedPaths = new Set()) {
   const normalizedPath = normalizeRepositoryPath(file?.filename);
   const category = classifyReviewFile(normalizedPath);
   const categoryPriority = REVIEW_FILE_PRIORITY_BY_CATEGORY[category] ?? REVIEW_FILE_PRIORITY_BY_CATEGORY.other;
   const criticalPathBoost = isCriticalReviewFile(file) ? 30 : 0;
+  const explicitFollowUpBoost = prioritizedPaths.has(normalizedPath) ? 40 : 0;
 
-  return categoryPriority + criticalPathBoost;
+  return categoryPriority + criticalPathBoost + explicitFollowUpBoost;
 }
 
 /**
@@ -2844,8 +2828,8 @@ export function assessDiscussionGate(files) {
  * @param {any[]} files Changed files from GitHub.
  * @returns {string} Compact file digest.
  */
-function buildChangedFilesDigest(files) {
-  const orderedFiles = sortFilesForReview(files);
+function buildChangedFilesDigest(files, prioritizedPaths = []) {
+  const orderedFiles = sortFilesForReviewWithPriorityPaths(files, prioritizedPaths);
   const selectedFiles = orderedFiles.slice(0, MAX_FILES);
   const digestLines = selectedFiles
     .map((file) => `- ${file.filename} (${file.status}, +${file.additions}/-${file.deletions})`)
@@ -2867,8 +2851,8 @@ function buildChangedFilesDigest(files) {
  * @param {any[]} files Changed files from GitHub.
  * @returns {string} Compact diff payload.
  */
-function buildFilesReviewPayload(files) {
-  const orderedFiles = sortFilesForReview(files);
+function buildFilesReviewPayload(files, prioritizedPaths = []) {
+  const orderedFiles = sortFilesForReviewWithPriorityPaths(files, prioritizedPaths);
   const selectedFiles = orderedFiles.slice(0, MAX_FILES);
   const sections = selectedFiles.map((file) => {
     const patchLimit = isCriticalReviewFile(file) ? MAX_CRITICAL_PATCH_CHARS_PER_FILE : MAX_PATCH_CHARS_PER_FILE;
@@ -2891,6 +2875,128 @@ function buildFilesReviewPayload(files) {
   }
 
   return truncateText(sections.join("\n\n"), MAX_REVIEW_INPUT_CHARS);
+}
+
+/**
+ * Extract the repository paths that the previous conclusion thread explicitly
+ * requires in the next round.
+ *
+ * @param {{ body?: string, replies?: { nodes?: any[] } } | null} finalComment Latest automated final-status comment.
+ * @returns {string[]} Unique repository-relative paths.
+ */
+export function extractFollowUpPriorityPaths(finalComment) {
+  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+  const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
+
+  return [...new Set([
+    ...previousBlockers.map((blocker) => blocker.suggestedTestFile),
+    ...explicitTestFileCitations,
+  ].map((path) => normalizeRepositoryPath(path)).filter((path) => path.length > 0))];
+}
+
+/**
+ * Compute deterministic follow-up evidence from the current PR plus the latest
+ * conclusion-thread blocker contract.
+ *
+ * @param {{ body?: string, replies?: { nodes?: any[] } } | null} finalComment Latest automated final-status comment.
+ * @param {any[]} files Current PR files.
+ * @param {Array<any>} statusCheckContexts Current PR status-check contexts.
+ * @param {Record<string, string>} [repositoryFileContents] Optional current repository file contents keyed by path.
+ * @returns {Array<{
+ *   role: string,
+ *   suggestedTestFile: string,
+ *   matchedTestFile: string | null,
+ *   hasPatchEvidence: boolean,
+ *   hasRepositoryEvidence: boolean,
+ *   hasReplyEvidence: boolean,
+ *   ciTestGreen: boolean,
+ *   status: "resolved" | "missing_test_file" | "missing_behavior_evidence" | "waiting_for_ci"
+ * }>} Stable evidence rows.
+ */
+export function collectFollowUpEvidenceRecords(
+  finalComment,
+  files,
+  statusCheckContexts,
+  repositoryFileContents = {},
+) {
+  const previousBlockers = extractFollowUpTestableBlockers(finalComment?.body ?? "");
+
+  if (previousBlockers.length === 0) {
+    return [];
+  }
+
+  const explicitTestFileCitations = extractConclusionThreadTestFileCitations(finalComment?.replies?.nodes ?? []);
+  const replyEvidenceText = extractConclusionThreadReplyEvidenceText(finalComment?.replies?.nodes ?? []);
+  const ciTestGreen = isCiTestCheckGreen(statusCheckContexts);
+  const normalizedRepositoryFileContents = Object.fromEntries(
+    Object.entries(repositoryFileContents).map(([path, content]) => [normalizeRepositoryPath(path), String(content ?? "")]),
+  );
+
+  return previousBlockers.flatMap((blocker) => blocker.roles.map((role) => {
+    const candidatePaths = [
+      blocker.suggestedTestFile,
+      ...explicitTestFileCitations,
+    ].map((path) => normalizeRepositoryPath(path)).filter((path) => path.length > 0);
+    const candidateFiles = files.filter((file) => candidatePaths.includes(normalizeRepositoryPath(file.filename)));
+    const matchedTestFile = candidateFiles[0]?.filename ?? null;
+    const candidatePatchText = normalizeComparableText(candidateFiles.flatMap(getChangedPatchLines).join("\n"));
+    const candidateRepositoryText = normalizeComparableText(
+      candidateFiles
+        .map((file) => normalizedRepositoryFileContents[normalizeRepositoryPath(file.filename)] ?? "")
+        .join("\n"),
+    );
+    const evidenceNeedles = [
+      ...blocker.essentialAssertions.flatMap(extractDiffEvidenceNeedles),
+      ...extractDiffEvidenceNeedles(blocker.behaviorProtected),
+      ...extractDiffEvidenceNeedles(blocker.minimumScenario),
+      ...extractDiffEvidenceNeedles(blocker.resolutionCondition),
+    ];
+    const hasPatchEvidence = evidenceNeedles.some((needle) => candidatePatchText.includes(needle));
+    const hasRepositoryEvidence = evidenceNeedles.some((needle) => candidateRepositoryText.includes(needle));
+    const hasReplyEvidence = hasReplyEvidenceForFollowUpBlocker(replyEvidenceText, blocker);
+    const status = !matchedTestFile
+      ? "missing_test_file"
+      : !(hasPatchEvidence || hasRepositoryEvidence || hasReplyEvidence)
+        ? "missing_behavior_evidence"
+        : !ciTestGreen
+          ? "waiting_for_ci"
+          : "resolved";
+
+    return {
+      role,
+      suggestedTestFile: blocker.suggestedTestFile,
+      matchedTestFile,
+      hasPatchEvidence,
+      hasRepositoryEvidence,
+      hasReplyEvidence,
+      ciTestGreen,
+      status,
+    };
+  }));
+}
+
+/**
+ * Render one deterministic follow-up evidence block for the model.
+ *
+ * @param {ReturnType<typeof collectFollowUpEvidenceRecords>} records Stable evidence rows.
+ * @returns {string} Markdown context block.
+ */
+export function buildFollowUpEvidenceContext(records) {
+  if (!Array.isArray(records) || records.length === 0) {
+    return "";
+  }
+
+  const lines = records.map((record) => (
+    `- \`${record.role}\` -> \`${record.suggestedTestFile}\` | matched file: \`${record.matchedTestFile ?? "none"}\` | patch evidence: \`${String(record.hasPatchEvidence)}\` | repository evidence: \`${String(record.hasRepositoryEvidence)}\` | reply evidence: \`${String(record.hasReplyEvidence)}\` | CI / Test green: \`${String(record.ciTestGreen)}\` | status: \`${record.status}\``
+  ));
+
+  return [
+    "## Follow-up blocker evidence",
+    "These signals are computed deterministically from the latest conclusion thread, the current changed files, the checked-out head commit, and the canonical `CI / Test` result.",
+    "Do not keep a prior acceptance-test blocker active when its status is `resolved` unless the current payload introduces a new contradictory regression.",
+    "",
+    ...lines,
+  ].join("\n");
 }
 
 /**
@@ -3092,6 +3198,8 @@ async function loadAutomationEvidenceContext(files) {
  * @param {string} [discussionContext] Prior Discussion context for append-only reruns.
  * @param {string} [automationEvidence] Current repository-state evidence for automation contract changes.
  * @param {string} [failureLogContext] Real failed GitHub Actions logs for the current PR head.
+ * @param {string} [followUpEvidenceContext] Deterministic evidence for prior acceptance-test blockers.
+ * @param {string[]} [prioritizedPaths] Repository paths that must stay visible in bounded changed-file sections.
  * @returns {string} Final user payload.
  */
 export function buildPullRequestUserPrompt(
@@ -3102,6 +3210,8 @@ export function buildPullRequestUserPrompt(
   discussionContext = "",
   automationEvidence = "",
   failureLogContext = "",
+  followUpEvidenceContext = "",
+  prioritizedPaths = [],
 ) {
   const boundedDiscussionContext = discussionContext.trim()
     ? [
@@ -3133,12 +3243,13 @@ export function buildPullRequestUserPrompt(
     "",
     ...(failureLogContext.trim() ? [failureLogContext.trim(), ""] : []),
     ...(automationEvidence.trim() ? [automationEvidence.trim(), ""] : []),
+    ...(followUpEvidenceContext.trim() ? [followUpEvidenceContext.trim(), ""] : []),
     ...boundedDiscussionContext,
     "## Changed files digest",
-    buildChangedFilesDigest(files) || "[no changed files reported]",
+    buildChangedFilesDigest(files, prioritizedPaths) || "[no changed files reported]",
     "",
     "## Changed files",
-    buildFilesReviewPayload(files),
+    buildFilesReviewPayload(files, prioritizedPaths),
   ].join("\n"), MAX_REVIEW_INPUT_CHARS);
 }
 
@@ -4088,6 +4199,11 @@ async function main() {
   let discussionPublicationFailure = null;
   let discussionContext = "";
   let discussionThread = discussion;
+  let latestFinalComment = null;
+  let statusCheckContexts = [];
+  let followUpEvidenceContext = "";
+  let prioritizedFollowUpPaths = [];
+  let followUpRepositoryFileContents = {};
   const automationEvidence = await loadAutomationEvidenceContext(files);
   const failureLogContext = await loadFailedActionsLogContext(repository, pullRequest.number);
 
@@ -4115,21 +4231,9 @@ async function main() {
       hasExistingDiscussion: Boolean(discussionUrl),
       contextChars: discussionContext.length,
     });
-  }
 
-  const userPrompt = buildPullRequestUserPrompt(
-    repository,
-    pullRequest,
-    files,
-    gate,
-    discussionContext,
-    automationEvidence,
-    failureLogContext,
-  );
-
-  if (gate.requiresDiscussion) {
-    const latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
-    const statusCheckContexts = latestFinalComment
+    latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
+    statusCheckContexts = latestFinalComment
       ? await fetchPullRequestStatusCheckRollup(repository, pullRequest.number)
       : [];
 
@@ -4148,6 +4252,44 @@ async function main() {
       return;
     }
 
+    prioritizedFollowUpPaths = latestFinalComment ? extractFollowUpPriorityPaths(latestFinalComment) : [];
+    if (latestFinalComment) {
+      const fileEntries = await Promise.all(
+        prioritizedFollowUpPaths
+          .filter((path) => hasChangedFile(files, path))
+          .map(async (path) => {
+            try {
+              return [path, await fs.readFile(path, "utf8")];
+            } catch {
+              return [path, ""];
+            }
+          }),
+      );
+      followUpRepositoryFileContents = Object.fromEntries(fileEntries);
+      followUpEvidenceContext = buildFollowUpEvidenceContext(
+        collectFollowUpEvidenceRecords(
+          latestFinalComment,
+          files,
+          statusCheckContexts,
+          followUpRepositoryFileContents,
+        ),
+      );
+    }
+  }
+
+  const userPrompt = buildPullRequestUserPrompt(
+    repository,
+    pullRequest,
+    files,
+    gate,
+    discussionContext,
+    automationEvidence,
+    failureLogContext,
+    followUpEvidenceContext,
+    prioritizedFollowUpPaths,
+  );
+
+  if (gate.requiresDiscussion) {
     const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
       readPrompt(doctrinePromptPath),
       readPrompt(productPromptPath),
@@ -4171,6 +4313,7 @@ async function main() {
         latestFinalComment,
         files,
         statusCheckContexts,
+        followUpRepositoryFileContents,
       );
 
       if (unresolvedFollowUpBlockers.length > 0) {

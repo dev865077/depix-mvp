@@ -18,6 +18,7 @@ import {
   buildDiscussionPublicationFallback,
   buildDiscussionReviewComments,
   buildFollowUpBlockingMemo,
+  buildFollowUpEvidenceContext,
   buildModelFailureMemo,
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
@@ -27,6 +28,7 @@ import {
   evaluateDiscussionRecommendation,
   extractConclusionThreadTestFileCitations,
   extractDiscussionUrlFromComment,
+  extractFollowUpPriorityPaths,
   extractFollowUpTestableBlockers,
   extractReviewRecommendation,
   getCiTestCheckState,
@@ -42,6 +44,7 @@ import {
   summarizeDiscussionBlockingContracts,
   summarizePullRequestScope,
   waitForCiTestConclusion,
+  collectFollowUpEvidenceRecords,
 } from "../scripts/ai-pr-review.mjs";
 
 /**
@@ -1491,6 +1494,57 @@ describe("ai pr review discussion rendering", () => {
     expect(body).not.toContain("### docs/wiki/Noise-8.md");
   });
 
+  it("prioritizes blocker-requested test files inside the bounded payload", () => {
+    const files = [
+      ...Array.from({ length: 24 }, (_, index) => ({
+        filename: `test/a-${String(index).padStart(2, "0")}.test.js`,
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+baseline",
+      })),
+      {
+        filename: "test/z-follow-up-evidence.test.js",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+explicit blocker evidence",
+      },
+      {
+        filename: "docs/wiki/Noise.md",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@\n+docs",
+      },
+    ];
+
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 72,
+        title: "Follow-up evidence",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/72",
+        body: "Adds a follow-up proof.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-72-follow-up-evidence" },
+      },
+      files,
+      gate,
+      "",
+      "",
+      "",
+      "## Follow-up blocker evidence\n- `technical` -> `test/z-follow-up-evidence.test.js` | status: `resolved`",
+      ["test/z-follow-up-evidence.test.js"],
+    );
+
+    expect(body).toContain("## Follow-up blocker evidence");
+    expect(body).toContain("- test/z-follow-up-evidence.test.js");
+    expect(body).not.toContain("- test/a-23.test.js");
+    expect(body).toContain("### test/z-follow-up-evidence.test.js");
+    expect(body).not.toContain("### test/a-23.test.js");
+  });
+
   it("sends complete current evidence for critical discussion-review files", () => {
     const files = [
       ...Array.from({ length: 20 }, (_, index) => ({
@@ -1906,6 +1960,53 @@ describe("ai pr review discussion rendering", () => {
 
     expect(unresolved).toHaveLength(1);
     expect(unresolved[0].missingSignals).toContain("suggested_test_file_or_explicit_equivalent");
+  });
+
+  it("computes deterministic follow-up evidence from the checked-out file when the patch omits the key assertion", () => {
+    const finalComment = {
+      body: [
+        "## Discussion status",
+        "",
+        "## Acceptance tests requested",
+        "",
+        "- Roles `product` -> `test/runtime-config.test.js`: protect Existing tenant registries without displayName continue to resolve, or the PR explicitly documents and tests the breaking migration.; minimum scenario: Load a valid tenant registry entry that omits displayName.; essential assertions: `readRuntimeConfig` keeps resolving with a fallback display name.; resolution condition: Merge only after the expected behavior for missing `displayName` is made explicit and covered by test.",
+      ].join("\n"),
+      replies: { nodes: [] },
+    };
+    const files = [
+      {
+        filename: "test/runtime-config.test.js",
+        patch: "@@\n+it('covers legacy tenant registry fallback')",
+      },
+    ];
+    const statusCheckContexts = [{ __typename: "CheckRun", name: "Test", workflowName: "CI", conclusion: "SUCCESS" }];
+    const records = collectFollowUpEvidenceRecords(
+      finalComment,
+      files,
+      statusCheckContexts,
+      {
+        "test/runtime-config.test.js": [
+          "it('keeps the legacy registry readable', () => {",
+          "  expect(readRuntimeConfig(env).tenant.displayName).toBe('Fallback tenant');",
+          "});",
+        ].join("\n"),
+      },
+    );
+
+    expect(extractFollowUpPriorityPaths(finalComment)).toContain("test/runtime-config.test.js");
+    expect(records).toEqual([
+      expect.objectContaining({
+        role: "product",
+        suggestedTestFile: "test/runtime-config.test.js",
+        matchedTestFile: "test/runtime-config.test.js",
+        hasPatchEvidence: false,
+        hasRepositoryEvidence: true,
+        ciTestGreen: true,
+        status: "resolved",
+      }),
+    ]);
+    expect(buildFollowUpEvidenceContext(records)).toContain("status: `resolved`");
+    expect(buildFollowUpEvidenceContext(records)).toContain("repository evidence: `true`");
   });
 
   it("keeps a follow-up blocker when CI is not green even if the test file changed", () => {
