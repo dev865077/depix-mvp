@@ -138,6 +138,35 @@ function createTelegramTextUpdate(input) {
 }
 
 /**
+ * Envolve o binding D1 para injetar uma falha transiente no proximo batch.
+ *
+ * O fluxo de confirmacao usa `db.batch()` para criar o deposito local; essa
+ * falha simula o ponto sensivel em que a Eulen ja retornou uma cobranca, mas o
+ * D1 ainda nao conseguiu persisti-la.
+ *
+ * @param {D1Database} db Binding D1 real do teste.
+ * @param {Error} error Falha a injetar.
+ * @returns {D1Database} Binding proxy.
+ */
+function createOnceFailingBatchDatabase(db, error) {
+  let shouldFail = true;
+
+  return {
+    prepare: db.prepare.bind(db),
+    dump: db.dump?.bind(db),
+    exec: db.exec?.bind(db),
+    batch: async function batchWithInjectedFailure(statements) {
+      if (shouldFail) {
+        shouldFail = false;
+        throw error;
+      }
+
+      return db.batch(statements);
+    },
+  };
+}
+
+/**
  * Monta um update de callback query.
  *
  * @param {{ chatId: number, fromId: number, updateId?: number }} input Dados do update.
@@ -2174,6 +2203,159 @@ describe("telegram webhook reply flow", () => {
       currentStep: "awaiting_payment",
       status: "pending",
     });
+  });
+
+  it("keeps creating_deposit retryable when D1 fails after Eulen returns a deposit", async function assertPartialFailureRetryUsesSameNonce() {
+    const app = createApp();
+    const requestHeaders = {
+      "content-type": "application/json",
+      "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+    };
+    const eulenNonces = [];
+    const telegramMessages = [];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockPartialFailureRecovery(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit") {
+        eulenNonces.push(init?.headers?.get("X-Nonce"));
+
+        return new Response(JSON.stringify({
+          response: {
+            id: "deposit_partial_recovery_001",
+            qrCopyPaste: "0002010102122688pix-partial-recovery-001",
+            qrImageUrl: "https://example.com/qr/partial-recovery-001.png",
+          },
+          async: false,
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendPhoto") || url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        telegramMessages.push(payload.caption ?? payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: telegramMessages.length,
+            date: 1713434457,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id ?? 8810,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in partial recovery flow: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_partial_recovery",
+      userId: "890",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "8810",
+      amountInCents: 2500,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      currentStep: "confirmation",
+      status: "draft",
+    });
+
+    const firstResponse = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8810,
+          fromId: 890,
+          updateId: 75,
+        }),
+      },
+      createWorkerEnv({
+        DB: createOnceFailingBatchDatabase(
+          getDatabase(env),
+          new Error("injected_d1_deposit_insert_failure"),
+        ),
+      }),
+    );
+    const retryableOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_partial_recovery")
+      .first();
+    const depositsAfterFailure = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_partial_recovery")
+      .first();
+
+    expect(firstResponse.status).toBe(200);
+    expect(retryableOrder).toEqual({
+      currentStep: "creating_deposit",
+      status: "processing",
+    });
+    expect(depositsAfterFailure?.count).toBe(0);
+    expect(telegramMessages.at(-1)).toContain("recuperacao segura");
+
+    await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: requestHeaders,
+        body: createTelegramTextUpdate({
+          text: "confirmar",
+          chatId: 8810,
+          fromId: 890,
+          updateId: 76,
+        }),
+      },
+      createWorkerEnv(),
+    );
+
+    const finalOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_partial_recovery")
+      .first();
+    const savedDeposit = await getLatestDepositByOrderId(getDatabase(env), "alpha", "order_partial_recovery");
+    const persistedDeposits = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM deposits WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_partial_recovery")
+      .first();
+
+    expect(eulenNonces).toEqual([
+      "telegram-order:alpha:order_partial_recovery",
+      "telegram-order:alpha:order_partial_recovery",
+    ]);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(2);
+    expect(finalOrder).toEqual({
+      currentStep: "awaiting_payment",
+      status: "pending",
+    });
+    expect(savedDeposit?.depositEntryId).toBe("deposit_partial_recovery_001");
+    expect(savedDeposit?.nonce).toBe("telegram-order:alpha:order_partial_recovery");
+    expect(persistedDeposits?.count).toBe(1);
+    expect(telegramMessages.some((message) => message?.includes("Pedido confirmado em Alpha."))).toBe(true);
+
+    const serializedLogs = consoleSpy.mock.calls.map(([line]) => String(line)).join("\n");
+
+    expect(serializedLogs).toContain("telegram_order_deposit_recovery_retryable");
+    expect(serializedLogs).toContain("telegram-order:alpha:order_partial_recovery");
+    expect(serializedLogs).not.toContain("0002010102122688pix-partial-recovery-001");
+    expect(serializedLogs).not.toContain("alpha-eulen-token");
+    expect(serializedLogs).not.toContain("alpha-telegram-secret");
   });
 
   it("fails closed when a reused local deposit is missing Telegram QR fields", async function assertMalformedExistingDepositFailsClosed() {

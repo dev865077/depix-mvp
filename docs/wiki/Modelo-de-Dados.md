@@ -70,11 +70,13 @@ Os contratos usados pelos repositories de D1 foram explicitados em `src/types/pe
 - escritas criticas multi-tabela devem usar `env.DB.batch()`
 - transicoes de `orders.current_step` devem usar guarda condicional de passo quando vierem da maquina XState
 - `nonce` representa a intencao da cobranca e deve ser reutilizado em retry controlado
+- na confirmacao Telegram, o nonce canonico da criacao de deposito e deterministico por `tenantId + orderId`; isso permite retry em `creating_deposit` sem representar nova intencao financeira
 - `depositEntryId` ancora a cobranca local desde o `POST /deposit`
 - `qrId` ancora webhook e reconciliacao externa quando ficar disponivel
 - cada par `tenant_id + order_id` pode ter no maximo um registro em `deposits`; esta e a invariavel financeira do MVP enquanto nao houver refund, chargeback, split em varias cobrancas ou recriacao explicita de cobranca dentro do mesmo pedido
 - retry de confirmacao deve reutilizar o deposito local existente do pedido em vez de chamar a Eulen novamente
 - a transicao `confirmation -> creating_deposit` funciona como lease do side effect externo: apenas o request que grava essa transicao pode chamar `POST /deposit`; concorrentes devem observar conflito de passo antes da Eulen
+- `creating_deposit` e retryable apenas para recuperar a mesma intencao financeira com o mesmo nonce; se o deposito local ja existir, o runtime deve reutilizar esse deposito antes de qualquer nova chamada Eulen
 - um deposito local reutilizado precisa ter `depositEntryId`, `qrCopyPaste` e `qrImageUrl`; se uma linha historica estiver malformada, o pedido falha fechado e exige operacao manual, sem criar nova cobranca externa
 - se a migration de unicidade encontrar duplicados historicos, apenas o deposito canonico permanece em `deposits`; os demais vao para quarentena auditavel antes da criacao do indice unico
 - a escolha canonica de duplicados historicos prioriza `depix_sent`, depois `pending_pix2fa`, depois `pending`, depois `expired`, e por fim o registro mais recente

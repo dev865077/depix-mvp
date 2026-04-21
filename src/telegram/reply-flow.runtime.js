@@ -176,7 +176,10 @@ export function installTelegramReplyFlow(bot, input) {
           return;
         }
 
-        if (orderSession.order.currentStep === ORDER_PROGRESS_STATES.CONFIRMATION) {
+        if (
+          orderSession.order.currentStep === ORDER_PROGRESS_STATES.CONFIRMATION
+          || orderSession.order.currentStep === ORDER_PROGRESS_STATES.CREATING_DEPOSIT
+        ) {
           if (isTelegramConfirmationDecision(normalizedText)) {
             try {
               const confirmationSession = await confirmTelegramOrder({
