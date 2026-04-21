@@ -35,6 +35,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - quando restarem bloqueios de follow-up, a automacao publica memos deterministas de `Request changes` em vez de aprovacoes nao reconciliadas
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar
+- o modulo da maquina de progresso de pedidos foi migrado para TypeScript estrito, mantendo o contrato de transicao e os consumidores com importacao minima
+- o ponto de entrada JavaScript da maquina continua carregavel em Node para compatibilidade com consumidores existentes
 - o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa
 - a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
 - a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza espacos visuais e avanca o pedido para `confirmation`

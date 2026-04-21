@@ -33,6 +33,10 @@ Runtime, tenants e resolucao de bindings.
 
 Contratos de dominio e runtime compartilhados entre o parser de tenancy e as areas que consomem o registry.
 
+### `src/order-flow/`
+
+Maquina de progresso de pedidos e constantes de dominio do fluxo inicial. O contrato autoritativo da maquina agora e TypeScript estrito, com exportacao mantida para consumidores que ainda carregam o ponto de entrada JS.
+
 ### `src/telegram/`
 
 Bootstrap e cache do runtime Telegram.

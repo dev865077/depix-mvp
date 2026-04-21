@@ -38,6 +38,8 @@ flowchart LR
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
 - recheck operacional de deposito via `POST /ops/:tenantId/recheck/deposit` ja existe
 - `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
+- a maquina de progresso de pedidos foi migrada para TypeScript estrito, com contratos explicitos de estado, evento e contexto
+- o contrato de transicao da maquina foi preservado; a compatibilidade com consumidores JS ficou restrita a imports e ao ponto de entrada carregavel
 
 ## Principios arquiteturais
 
