@@ -19,7 +19,6 @@ O rollout fica bloqueado se qualquer um destes pontos nao estiver valido no ambi
 Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
 - dashboard administrativo
-- cron automatico em production
 - reprocessamento em massa
 - multi-produto fora de DePix
 - automacao de suporte para todos os casos externos da Eulen
@@ -37,6 +36,7 @@ Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 | Pagamento real controlado | `production` | issue #125 ou evidencia equivalente ate `completed` | Sim |
 | Webhook Eulen normal | `test` ou `production` | `deposit_events.source=webhook` com `bank_tx_id` e `blockchain_tx_id` quando enviados | Sim |
 | Recheck por deposito | `test` ou incidente production | `deposit_events.source=recheck_deposit_status` e agregado consistente | Sim, se webhook falhar |
+| Reconciliação agendada | `production` | `/health.operations.scheduledDepositReconciliation.ready=true` e cron `*/15 * * * *` publicado | Sim |
 | Fallback por lista | `test` ou incidente production | `deposit_events.source=recheck_deposits_list` e janela curta documentada | Sim, se recheck nao bastar |
 | QR expirado | `test` | `deposits.external_status=expired` e pedido terminal seguro | Sim |
 | Notificacao Telegram | `test` e evidencia real | log `telegram.payment_notification.sent` ou skip/failed explicado | Sim |

@@ -42,7 +42,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
-- o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; nesta etapa o cron fica ativo apenas em `test` e production continua com `triggers.crons = []`
+- o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; `test` e `production` rodam a cada 15 minutos com janela maxima de 2 horas e limite de 5 depositos por tenant/rodada
 - `test` e `production` habilitam `ENABLE_OPS_DEPOSIT_RECHECK=true` e `ENABLE_OPS_DEPOSITS_FALLBACK=true`; ambas as rotas continuam inacessiveis sem `OPS_ROUTE_BEARER_TOKEN`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
@@ -83,6 +83,18 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
 - se a consulta remota falhar, responde `502 deposit_status_unavailable`
 - recheck repetido com a mesma verdade remota e idempotente: nao duplica `deposit_events` e pode apenas reparar o agregado se um estado historico tiver ficado incompleto
+
+## Reconciliação agendada de depositos pendentes
+
+- pre-condicao de rollout: `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`
+- cadencia em `production`: cron `*/15 * * * *`
+- elegibilidade: depositos Telegram pendentes em `orders.current_step = "awaiting_payment"`, `orders.status = "pending"` e `deposits.external_status = "pending"`
+- janela maxima: somente depositos atualizados nas ultimas 2 horas entram na selecao automatica
+- limite por rodada: ate 5 depositos por tenant
+- anti-overlap: cada deposito precisa adquirir claim antes do recheck; execucoes concorrentes perdem limpo e nao duplicam evento nem notificacao
+- fonte de verdade remota: `deposit-status`, a mesma do recheck operacional
+- parada da automacao: quando o pedido sai de `awaiting_payment/pending`, sai da janela, falha a claim ou cai em erro seguro de correlacao
+- fallback manual: `POST /ops/:tenantId/recheck/deposit` continua sendo o caminho para um `depositEntryId` especifico quando a agenda nao aplicar
 
 ## Fallback operacional por janela
 
