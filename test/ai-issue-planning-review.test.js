@@ -32,6 +32,7 @@ import {
   isAutomationDiscussionCommentEvent,
   isIssuePlanningHandoffCommentEvent,
   parseManualPlanningTarget,
+  parseGitHubRestPayload,
   parseReferencedIssueNumbers,
   resolveReferencedIssueFetchSkipReason,
   resolveIssueRefinementDispatchRef,
@@ -326,6 +327,15 @@ describe("ai issue planning review", () => {
     expect(resolvePlanningConcurrencyTarget({ issue: { number: 44 } })).toBe("issue-44");
     expect(resolvePlanningConcurrencyTarget({ discussion: { number: 12 } })).toBe("discussion-12");
     expect(resolvePlanningConcurrencyTarget({})).toBeNull();
+  });
+
+  it("parses successful GitHub REST payloads without exploding on empty bodies", () => {
+    expect(parseGitHubRestPayload("")).toBeNull();
+    expect(parseGitHubRestPayload("   ")).toBeNull();
+    expect(parseGitHubRestPayload('{\"ok\":true,\"discussion\":297}')).toEqual({
+      ok: true,
+      discussion: 297,
+    });
   });
 
   it("reads triage handoff routes and selects a planning category", () => {

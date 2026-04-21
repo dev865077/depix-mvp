@@ -244,6 +244,10 @@ async function readPrompt(promptPath) {
  * @param {RequestInit} [init] Extra fetch options.
  * @returns {Promise<any>} Parsed JSON payload.
  */
+export function parseGitHubRestPayload(body) {
+  return typeof body === "string" && body.trim().length > 0 ? JSON.parse(body) : null;
+}
+
 async function githubRequest(url, init = {}) {
   const token = readRequiredEnv("GITHUB_TOKEN");
   const response = await fetch(url, {
@@ -261,7 +265,13 @@ async function githubRequest(url, init = {}) {
     throw new Error(`GitHub API request failed (${response.status}): ${body}`);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return null;
+  }
+
+  const body = await response.text();
+
+  return parseGitHubRestPayload(body);
 }
 
 /**

@@ -112,7 +112,13 @@ async function githubRequest(url, init = {}) {
     throw new Error(`GitHub API request failed (${response.status}): ${body}`);
   }
 
-  return response.json();
+  if (response.status === 204) {
+    return null;
+  }
+
+  const body = await response.text();
+
+  return body.trim().length > 0 ? JSON.parse(body) : null;
 }
 
 /**
