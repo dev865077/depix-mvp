@@ -37,7 +37,7 @@ validacao operacional.
 | #195 | #267 | Harness Vitest preparado para specs TypeScript e pools separados |
 | #196 | #275 | Runtime final em `src/index.ts` e limpeza de duplicatas JS/TS centrais |
 | #204 | #277 | Runbook de validacao, gates e rollback tecnico por onda |
-| #185 | pendente nesta PR | Checklist documental final e fechamento da epic |
+| #185 | #279 | Checklist documental final e fechamento da epic |
 
 ## Comandos canonicos
 
