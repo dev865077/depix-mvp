@@ -245,4 +245,128 @@ describe("telegram payment notifications", () => {
     expect(telegramCalls[0].payload.caption).toContain("Pix deste pedido:");
     expect(telegramCalls[0].payload.caption).toContain("0002010102122688pix-alpha-notification-001");
   });
+
+  it("reanchors the canonical Telegram message when edit fails and fallback send succeeds", async function assertCanonicalFallbackReanchor() {
+    const db = await seedTelegramNotificationOrder();
+    const telegramCalls = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+      telegramCalls.push({
+        url,
+        payload,
+      });
+
+      if (url.includes("/editMessageCaption")) {
+        return new Response(JSON.stringify({
+          ok: false,
+          description: "message is not modified",
+        }), {
+          status: 400,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: 88,
+            date: 1713434499,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL in canonical fallback flow: ${url}`);
+    });
+
+    const firstResult = await notifyTelegramOrderTransitionSafely({
+      env: TELEGRAM_NOTIFICATION_ENV,
+      db,
+      runtimeConfig: {
+        environment: "test",
+        appName: "depix-mvp",
+      },
+      tenant: TELEGRAM_NOTIFICATION_TENANT,
+      requestContext: {
+        requestId: "test-request-id",
+        method: "POST",
+        path: "/ops/alpha/reconcile/deposits",
+      },
+      orderId: "order_alpha_notification_001",
+      depositEntryId: "deposit_alpha_notification_001",
+      externalStatus: "depix_sent",
+      orderStatus: "paid",
+      orderCurrentStep: "completed",
+      previousExternalStatus: "pending",
+      previousOrderStatus: "pending",
+      previousOrderCurrentStep: "awaiting_payment",
+    });
+    const updatedOrder = await getDatabase(env)
+      .prepare("SELECT telegram_canonical_message_id AS telegramCanonicalMessageId, telegram_canonical_message_kind AS telegramCanonicalMessageKind FROM orders WHERE tenant_id = ? AND order_id = ?")
+      .bind("alpha", "order_alpha_notification_001")
+      .first();
+
+    expect(firstResult).toEqual({
+      delivered: true,
+      skipped: false,
+      failed: false,
+      reason: "delivered",
+      kind: "payment_confirmed",
+    });
+    expect(telegramCalls[0].url).toContain("/editMessageCaption");
+    expect(telegramCalls[1].url).toContain("/sendMessage");
+    expect(updatedOrder).toEqual({
+      telegramCanonicalMessageId: 88,
+      telegramCanonicalMessageKind: "text",
+    });
+
+    telegramCalls.length = 0;
+
+    const secondResult = await notifyTelegramOrderTransitionSafely({
+      env: TELEGRAM_NOTIFICATION_ENV,
+      db,
+      runtimeConfig: {
+        environment: "test",
+        appName: "depix-mvp",
+      },
+      tenant: TELEGRAM_NOTIFICATION_TENANT,
+      requestContext: {
+        requestId: "test-request-id-2",
+        method: "POST",
+        path: "/ops/alpha/reconcile/deposits",
+      },
+      orderId: "order_alpha_notification_001",
+      depositEntryId: "deposit_alpha_notification_001",
+      externalStatus: "depix_sent",
+      orderStatus: "paid",
+      orderCurrentStep: "completed",
+      previousExternalStatus: "pending_retry",
+      previousOrderStatus: "pending",
+      previousOrderCurrentStep: "awaiting_payment",
+    });
+
+    expect(secondResult).toEqual({
+      delivered: true,
+      skipped: false,
+      failed: false,
+      reason: "delivered",
+      kind: "payment_confirmed",
+    });
+    expect(telegramCalls[0].url).toContain("/editMessageText");
+    expect(telegramCalls[0].payload.message_id).toBe(88);
+  });
 });

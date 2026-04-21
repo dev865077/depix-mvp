@@ -185,13 +185,21 @@ export async function syncTelegramCanonicalMessage(input: SyncTelegramCanonicalM
     });
 
     if (input.fallbackOnEditFailure && typeof input.order.telegramChatId === "string" && input.order.telegramChatId.length > 0) {
-      await input.api.sendMessage(
+      const fallbackMessage = await input.api.sendMessage(
         input.order.telegramChatId,
         input.fallbackOnEditFailure.text,
         buildFallbackReplyOptions(input.fallbackOnEditFailure),
       );
+      await persistCanonicalMessageMetadata(
+        input.db,
+        input.tenant.tenantId,
+        input.order.orderId,
+        fallbackMessage,
+        "text",
+      );
       logCanonicalMessageEvent(input, "telegram.canonical_message.fallback_sent", {
         nextKind: input.payload.kind,
+        fallbackMessageId: fallbackMessage.message_id,
       });
       return {
         delivered: true,

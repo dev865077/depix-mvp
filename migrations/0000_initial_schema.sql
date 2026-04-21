@@ -8,8 +8,6 @@ CREATE TABLE IF NOT EXISTS orders (
   user_id TEXT NOT NULL,
   channel TEXT NOT NULL DEFAULT 'telegram',
   product_type TEXT NOT NULL,
-  telegram_canonical_message_id INTEGER,
-  telegram_canonical_message_kind TEXT,
   amount_in_cents INTEGER,
   wallet_address TEXT,
   current_step TEXT NOT NULL DEFAULT 'draft',
