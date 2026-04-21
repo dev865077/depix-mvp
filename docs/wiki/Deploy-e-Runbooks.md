@@ -46,6 +46,8 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
 - o relatorio de evidencia agora inclui `deposit_events` sem `raw_payload`
 - o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `/health.operations.depositRecheck` e `/health.operations.depositsFallback`
+- o relatorio de evidencia agora expõe uma secao `splitProof` para explicitar lacunas de split-audit e distinguir estados como `missing_split_config`, `pending_settlement`, `missing_onchain_tx` e `proved`
+- o coletor de evidencia tambem inclui os campos persistidos de split nas ordens consultadas para sustentar esse resumo auditavel
 - a validacao de tipos do Worker passou a ter comando canonico via `npm run typecheck`
 - a verificacao de tipos gerados do Cloudflare Worker passou a ser parte do fluxo de manutencao com `npm run cf:types`
 
@@ -58,7 +60,7 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - ancora local: `depositEntryId`
 - fonte de verdade remota: `deposit-status`
 - trilha local: evento `deposit_events.source = "recheck_deposit_status"`
-- efeito esperado: hidratar `qrId` quando necessario e aplicar o status reconciliado em `deposits` e `orders`
+- efeito esperado: hidratar `qrId` quando necessario, preservar `bankTxId` e `blockchainTxId` quando o contrato remoto os devolver, e aplicar o status reconciliado em `deposits` e `orders`
 - persistencia critica: evento de auditoria + `deposits` + `orders` sao gravados no mesmo batch do D1 para reduzir risco de estado parcial
 - quando o agregado passar para estado de pagamento confirmado, a notificacao Telegram pode ser disparada em background; o recheck nao deve depender do envio para responder com sucesso
 
@@ -109,61 +111,26 @@ curl -fsS "$TEST_HOST/health"
 curl -fsS "$PRODUCTION_HOST/health"
 ```
 
-Campos esperados:
-
-- `configuration.operations.depositRecheck.state = "ready"`
-- `configuration.operations.depositRecheck.ready = true`
-- `configuration.operations.depositRecheck.tenantOverrides.invalidCount = 0`
-- `configuration.operations.depositsFallback.state = "ready"`
-- `configuration.operations.depositsFallback.ready = true`
-- `configuration.operations.depositsFallback.tenantOverrides.invalidCount = 0`
-
-Chamadas negativas obrigatorias antes de qualquer uso autorizado:
+Recheck deve ser validado com header operacional e payload minimo:
 
 ```bash
-curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$TEST_HOST/ops/alpha/recheck/deposit" -H 'Content-Type: application/json' -d '{"depositEntryId":"example"}'
-curl -sS -o /dev/null -w "%{http_code}\n" -X POST "$TEST_HOST/ops/alpha/reconcile/deposits" -H 'Content-Type: application/json' -d '{"limit":1}'
+curl -fsS -X POST "$TEST_HOST/ops/alpha/recheck/deposit" \
+  -H 'Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data '{"depositEntryId":"deposit_entry_alpha_001"}'
 ```
 
-Resultados esperados sem Bearer:
+Evidencia de QR-flow deve ser coletada com o script canonico quando a issue pedir auditoria de conciliacao, split ou recheck:
 
-- `401` para as duas rotas
-- nenhuma resposta deve expor segredo, token ou header sensivel
+```bash
+node scripts/collect-qr-flow-evidence.mjs --env test --tenant alpha --since 2026-04-21T14:20:00Z
+```
 
-Com token invalido, o esperado e `403`.
+Use `--order-id` e `--deposit-entry-id` quando a evidencia precisar ser restrita a um agregado especifico.
 
-Se a negativa nao responder como esperado, abortar o uso autorizado, registrar a falha e corrigir configuracao antes de prosseguir.
+## Regra operacional
 
-### Ordem segura de validacao em production
-
-1. checar `health` sem autenticacao
-2. rodar chamadas negativas sem Bearer
-3. confirmar `401` e `403` conforme o caso
-4. usar payload pequeno e janela controlada
-5. registrar `requestId` e resultado observavel
-6. parar imediatamente se o retorno remoto ou a persistencia divergir do contrato esperado
-
-## Condicoes de abort
-
-Abortar a validacao ou o rollout quando ocorrer qualquer um destes casos:
-
-- `GET /health` nao mostrar readiness esperado para `depositRecheck` ou `depositsFallback`
-- o header Bearer nao for exigido pelas rotas operacionais
-- o segredo operacional nao estiver presente em `test` ou `production`
-- a negative-auth nao retornar `401` e `403` conforme o contrato
-- a Eulen retornar contrato invalido ou inconsistente
-- a resposta remota exigir volume maior que o planejado para a janela de validacao
-- houver divergencia entre o estado remoto e a persistencia local que indique risco de escrita parcial
-- qualquer evidencia operativa sugerir exposure de segredo, token ou binding sensivel
-
-## Runbook de uso autorizado
-
-- manter a janela pequena
-- usar `requestId` na coleta de evidencia
-- validar primeiro a negativa, depois a autorizacao
-- interromper ao primeiro desvio de contrato
-- registrar a ocorrencia no backlog ou na issue ligada antes de repetir a execucao
-
-## Observacao de operacao
-
-A validacao remota real de `/health` e negative-auth acontece apos merge/deploy, porque a PR precisa estar em `main` para alterar os ambientes publicados.
+- o recheck nao deve apagar `bankTxId` ou `blockchainTxId` que vierem do `deposit-status` e forem uteis para auditoria
+- o resumo de evidencia deve tornar explicita qualquer lacuna de split-audit em vez de inferir cobertura completa
+- o dump de evidencia continua sendo material de auditoria; nao deve incluir segredos nem payloads sensiveis desnecessarios
+- mudanças de contrato operacional, evidencia ou runbook devem ser refletidas na wiki na mesma PR
