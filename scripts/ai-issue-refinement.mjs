@@ -820,24 +820,31 @@ export function buildGitHubSubIssueLinkRequest(repoFullName, parentIssueNumber, 
 }
 
 async function linkGitHubSubIssue(repoFullName, parentIssueNumber, childIssue) {
+  return linkGitHubSubIssueWithRequest(githubRequest, repoFullName, parentIssueNumber, childIssue);
+}
+
+async function linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssueNumber, childIssue) {
   if (!Number.isInteger(childIssue?.id)) {
-    return;
+    throw new Error(`Cannot link child issue #${childIssue?.number ?? "unknown"} as a native sub-issue because the REST issue id is missing.`);
   }
 
   const request = buildGitHubSubIssueLinkRequest(repoFullName, parentIssueNumber, childIssue.id);
 
   try {
-    await githubRequest(request.url, request.init);
+    await requestGitHub(request.url, request.init);
     logOperationalEvent("ai_issue_refinement.sub_issue.linked", {
       parentIssueNumber,
       childIssueNumber: childIssue.number,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
     logOperationalEvent("ai_issue_refinement.sub_issue.link_failed", {
       parentIssueNumber,
       childIssueNumber: childIssue.number,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     });
+    throw new Error(`Unable to link issue #${childIssue.number} as a native sub-issue of #${parentIssueNumber}: ${message}`);
   }
 }
 
@@ -873,11 +880,16 @@ async function fetchIssueComments(repoFullName, issueNumber) {
 }
 
 async function fetchAllOpenIssues(repoFullName) {
+  return fetchAllIssues(repoFullName, "open");
+}
+
+async function fetchAllIssues(repoFullName, state = "open") {
   const issues = [];
+  const normalizedState = state === "all" ? "all" : "open";
 
   for (let page = 1; ; page += 1) {
     const batch = await githubRequest(
-      `https://api.github.com/repos/${repoFullName}/issues?state=open&per_page=100&page=${page}`,
+      `https://api.github.com/repos/${repoFullName}/issues?state=${normalizedState}&per_page=100&page=${page}`,
     );
 
     if (!Array.isArray(batch) || batch.length === 0) {
@@ -989,12 +1001,33 @@ async function updateIssue(repoFullName, issueNumber, title, body) {
 }
 
 async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDrafts) {
+  return createOrReuseChildIssuesWithRequest(githubRequest, repoFullName, parentIssue, childIssueDrafts);
+}
+
+export async function createOrReuseChildIssuesWithRequest(requestGitHub, repoFullName, parentIssue, childIssueDrafts) {
   if (!Array.isArray(childIssueDrafts) || childIssueDrafts.length === 0) {
     return [];
   }
 
-  const openIssues = await fetchAllOpenIssues(repoFullName);
-  const boundedChildIssueDrafts = selectChildIssueDraftsForCreation(parentIssue, openIssues, childIssueDrafts);
+  const allIssues = [];
+
+  for (let page = 1; ; page += 1) {
+    const batch = await requestGitHub(
+      `https://api.github.com/repos/${repoFullName}/issues?state=all&per_page=100&page=${page}`,
+    );
+
+    if (!Array.isArray(batch) || batch.length === 0) {
+      break;
+    }
+
+    allIssues.push(...batch.filter((issue) => !issue.pull_request));
+
+    if (batch.length < 100) {
+      break;
+    }
+  }
+
+  const boundedChildIssueDrafts = selectChildIssueDraftsForCreation(parentIssue, allIssues, childIssueDrafts);
 
   if (boundedChildIssueDrafts.length === 0) {
     logOperationalEvent("ai_issue_refinement.child_issue.creation_skipped", {
@@ -1006,7 +1039,9 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
   }
 
   const existingByTitle = new Map(
-    openIssues.map((issue) => [String(issue.title ?? "").trim().toLowerCase(), issue]),
+    allIssues
+      .filter((issue) => String(issue.state ?? "open").toLowerCase() === "open")
+      .map((issue) => [String(issue.title ?? "").trim().toLowerCase(), issue]),
   );
   const createdIssues = [];
 
@@ -1016,7 +1051,7 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
 
     if (existingIssue) {
       createdIssues.push(existingIssue);
-      await linkGitHubSubIssue(repoFullName, parentIssue.number, existingIssue);
+      await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, existingIssue);
       continue;
     }
 
@@ -1027,7 +1062,7 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
       "",
       childIssue.body,
     ].join("\n");
-    const createdIssue = await githubRequest(`https://api.github.com/repos/${repoFullName}/issues`, {
+    const createdIssue = await requestGitHub(`https://api.github.com/repos/${repoFullName}/issues`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1038,7 +1073,7 @@ async function createOrReuseChildIssues(repoFullName, parentIssue, childIssueDra
 
     existingByTitle.set(titleKey, createdIssue);
     createdIssues.push(createdIssue);
-    await linkGitHubSubIssue(repoFullName, parentIssue.number, createdIssue);
+    await linkGitHubSubIssueWithRequest(requestGitHub, repoFullName, parentIssue.number, createdIssue);
   }
 
   return createdIssues;
