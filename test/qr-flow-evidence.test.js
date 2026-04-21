@@ -137,17 +137,19 @@ describe("qr flow evidence helpers", () => {
 
   it("derives redacted ops readiness from health without preserving extra fields", function assertOpsReadinessRedaction() {
     const readiness = buildOpsReadinessReport({
-      operations: {
-        depositRecheck: {
-          state: "ready",
-          ready: true,
-          bearerToken: "must-not-render",
-        },
-        depositsFallback: {
-          state: "disabled",
-          ready: false,
-          tenantOverrides: {
-            configured: ["alpha"],
+      configuration: {
+        operations: {
+          depositRecheck: {
+            state: "ready",
+            ready: true,
+            bearerToken: "must-not-render",
+          },
+          depositsFallback: {
+            state: "disabled",
+            ready: false,
+            tenantOverrides: {
+              configured: ["alpha"],
+            },
           },
         },
       },
@@ -165,6 +167,32 @@ describe("qr flow evidence helpers", () => {
     });
     expect(JSON.stringify(readiness)).not.toContain("must-not-render");
     expect(JSON.stringify(readiness)).not.toContain("tenantOverrides");
+  });
+
+  it("keeps backward compatibility with older health payloads that exposed operations at the root", function assertLegacyOpsReadinessCompatibility() {
+    const readiness = buildOpsReadinessReport({
+      operations: {
+        depositRecheck: {
+          state: "ready",
+          ready: true,
+        },
+        depositsFallback: {
+          state: "ready",
+          ready: true,
+        },
+      },
+    });
+
+    expect(readiness).toEqual({
+      depositRecheck: {
+        state: "ready",
+        ready: true,
+      },
+      depositsFallback: {
+        state: "ready",
+        ready: true,
+      },
+    });
   });
 
   it("marks split proof as missing onchain tx when only the fiat-side trace exists", function assertSplitProofGap() {

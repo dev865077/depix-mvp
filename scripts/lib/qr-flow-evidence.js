@@ -746,9 +746,18 @@ export function buildLatestDepositEventsQuery(input) {
  * @returns {{ depositRecheck: { state: string, ready: boolean }, depositsFallback: { state: string, ready: boolean } }} Readiness redigido.
  */
 export function buildOpsReadinessReport(health) {
-  const operations = health && typeof health.operations === "object" && health.operations !== null
+  const rootOperations = health && typeof health.operations === "object" && health.operations !== null
     ? health.operations
-    : {};
+    : null;
+  const configurationOperations =
+    health
+    && typeof health.configuration === "object"
+    && health.configuration !== null
+    && typeof health.configuration.operations === "object"
+    && health.configuration.operations !== null
+      ? health.configuration.operations
+      : null;
+  const operations = configurationOperations ?? rootOperations ?? {};
 
   return {
     depositRecheck: normalizeOperationReadiness(operations.depositRecheck),
