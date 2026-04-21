@@ -1,3 +1,5 @@
+import { GrammyError } from "grammy";
+
 import { log } from "../lib/logger.js";
 import { updateOrderById } from "../db/repositories/orders-repository.js";
 
@@ -43,6 +45,22 @@ function buildFallbackReplyOptions(input: SyncTelegramCanonicalMessageInput["fal
   return input?.replyMarkup
     ? { reply_markup: input.replyMarkup }
     : undefined;
+}
+
+function readTelegramEditErrorDescription(error: unknown) {
+  if (error instanceof GrammyError && typeof error.description === "string") {
+    return error.description;
+  }
+
+  if (error instanceof Error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isBenignTelegramNoopEditError(error: unknown) {
+  return readTelegramEditErrorDescription(error).toLowerCase().includes("message is not modified");
 }
 
 async function persistCanonicalMessageMetadata(
@@ -179,9 +197,21 @@ export async function syncTelegramCanonicalMessage(input: SyncTelegramCanonicalM
       };
     }
   } catch (error) {
+    if (isBenignTelegramNoopEditError(error)) {
+      logCanonicalMessageEvent(input, "telegram.canonical_message.edit_noop", {
+        nextKind: input.payload.kind,
+        cause: readTelegramEditErrorDescription(error),
+      });
+      return {
+        delivered: true,
+        edited: false,
+        fallbackSent: false,
+      };
+    }
+
     logCanonicalMessageError(input, "telegram.canonical_message.edit_failed", {
       nextKind: input.payload.kind,
-      cause: error instanceof Error ? error.message : String(error),
+      cause: readTelegramEditErrorDescription(error),
     });
 
     if (input.fallbackOnEditFailure && typeof input.order.telegramChatId === "string" && input.order.telegramChatId.length > 0) {
