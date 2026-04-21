@@ -7,6 +7,7 @@ Este repositório já está além de uma base vazia. A borda HTTP, o roteamento 
 ## O Que Este Repositório Contém
 
 - um único runtime em `Cloudflare Workers`
+- entrypoint canônico em `src/index.ts`
 - borda HTTP em `Hono`
 - runtime de bot em `grammY`
 - resolução de tenant e segredos por tenant
@@ -102,6 +103,12 @@ npm run dev
 npm test
 ```
 
+### Verificação de tipos
+
+```bash
+npm run typecheck
+```
+
 ### Geração de tipos do Worker
 
 ```bash
@@ -184,6 +191,8 @@ Comece por aqui:
 - [docs/wiki/Integracoes-Externas.md](./docs/wiki/Integracoes-Externas.md)
 - [docs/wiki/Ambientes-e-Segredos.md](./docs/wiki/Ambientes-e-Segredos.md)
 - [docs/wiki/Testes-e-Qualidade.md](./docs/wiki/Testes-e-Qualidade.md)
+- [docs/wiki/Migracao-TypeScript.md](./docs/wiki/Migracao-TypeScript.md)
+- [docs/wiki/Validacao-e-Rollback-TypeScript.md](./docs/wiki/Validacao-e-Rollback-TypeScript.md)
 
 Regras documentais:
 

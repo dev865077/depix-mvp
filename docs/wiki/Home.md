@@ -58,7 +58,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
 - `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
-- o Worker ganhou uma fundacao TypeScript incremental para validacao, sem substituir o runtime autoritativo em `.js`
+- a migracao TypeScript central foi encerrada com `src/index.ts` como entrypoint canonico
 - o comando canonico de verficacao de tipos e `npm run typecheck`
 - os tipos gerados do Worker sao verificados separadamente com `npm run cf:types`
 - `npm test` agora usa um runner sequencial para isolar specs Cloudflare, manter a suite deterministica e descobrir `*.test.js` e `*.test.ts`
@@ -93,6 +93,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - [Estrutura do Repositorio](Estrutura-do-Repositorio)
 - [Contribuicao e PRs](Contribuicao-e-PRs)
 - [Testes e Qualidade](Testes-e-Qualidade)
+- [Migracao TypeScript](Migracao-TypeScript)
+- [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)
 
 ### Operacao
 
