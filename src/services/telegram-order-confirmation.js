@@ -35,9 +35,20 @@ const TELEGRAM_CONFIRMATION_FAILURE_MESSAGE = [
   "Envie /start para recomecar com seguranca.",
 ].join("\n\n");
 
+const TELEGRAM_CONFIRMATION_RECOVERY_MESSAGE = [
+  "Seu Pix ainda esta em recuperacao segura.",
+  "Nao vou criar outra cobranca enquanto termino de reconciliar este pedido.",
+  "Envie confirmar novamente em alguns segundos.",
+].join("\n\n");
+
 const SUPPORTED_SPLIT_ADDRESS_KINDS = new Set([
   "documented-depix",
   "liquid-confidential",
+]);
+const FAIL_CLOSED_RECOVERY_ERROR_CODES = new Set([
+  "telegram_order_awaiting_payment_conflict_terminal",
+  "telegram_order_awaiting_payment_missing",
+  "telegram_order_existing_deposit_invalid",
 ]);
 
 /**
@@ -143,6 +154,19 @@ function createTelegramEulenDepositPayload(order, splitConfig) {
     depixSplitAddress: splitConfig.depixSplitAddress,
     splitFee: splitConfig.splitFee,
   };
+}
+
+/**
+ * Gera a ancora idempotente da intencao financeira do pedido Telegram.
+ *
+ * Retries do mesmo `tenantId + orderId` reutilizam esse nonce no `X-Nonce`
+ * para representar a mesma intencao de cobranca, nao uma nova cobranca.
+ *
+ * @param {{ tenantId: string, orderId: string }} input Identidade canonica.
+ * @returns {string} Nonce estavel e sem dado sensivel.
+ */
+function createTelegramOrderDepositNonce(input) {
+  return `telegram-order:${input.tenantId}:${input.orderId}`;
 }
 
 /**
@@ -380,6 +404,22 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
   }
 
   if (awaitingPaymentWrite.conflict) {
+    const winnerStep = normalizePersistedOrderProgressStep(awaitingPaymentWrite.order?.currentStep);
+
+    if (winnerStep !== ORDER_PROGRESS_STATES.AWAITING_PAYMENT) {
+      throw new TelegramOrderConfirmationError(
+        "telegram_order_awaiting_payment_conflict_terminal",
+        "Telegram order confirmation found a local deposit but the order won a non-payable state before repair.",
+        TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+        {
+          tenantId: input.tenantId,
+          orderId: input.order.orderId,
+          depositEntryId: reusableDeposit.depositEntryId,
+          currentStep: awaitingPaymentWrite.order?.currentStep ?? null,
+        },
+      );
+    }
+
     return {
       order: awaitingPaymentWrite.order ?? input.order,
       deposit: reusableDeposit,
@@ -431,7 +471,10 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
 export async function confirmTelegramOrder(input) {
   const currentStep = normalizePersistedOrderProgressStep(input.order.currentStep);
 
-  if (currentStep !== ORDER_PROGRESS_STATES.CONFIRMATION) {
+  if (
+    currentStep !== ORDER_PROGRESS_STATES.CONFIRMATION
+    && currentStep !== ORDER_PROGRESS_STATES.CREATING_DEPOSIT
+  ) {
     const existingDeposit = await getLatestDepositByOrderId(
       input.db,
       input.tenant.tenantId,
@@ -460,57 +503,69 @@ export async function confirmTelegramOrder(input) {
     );
   }
 
-  const confirmationProgression = advanceOrderProgression({
-    currentStep: input.order.currentStep,
-    context: {
-      tenantId: input.tenant.tenantId,
-      orderId: input.order.orderId,
-      userId: input.order.userId,
-      amountInCents: input.order.amountInCents,
-      walletAddress: input.order.walletAddress,
-    },
-    event: {
-      type: ORDER_PROGRESS_EVENTS.CUSTOMER_CONFIRMED,
-      tenantId: input.tenant.tenantId,
-    },
-  });
-  const confirmationWrite = await updateOrderByIdWithStepGuard(
-    input.db,
-    input.tenant.tenantId,
-    input.order.orderId,
-    input.order.currentStep,
-    confirmationProgression.orderPatch,
-  );
+  let creatingDepositOrder = input.order;
 
-  if (confirmationWrite.notFound) {
-    throw new TelegramOrderConfirmationError(
-      "telegram_order_confirmation_missing",
-      "Telegram order disappeared before confirmation could be persisted.",
-      TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
-      {
+  if (currentStep === ORDER_PROGRESS_STATES.CONFIRMATION) {
+    const confirmationProgression = advanceOrderProgression({
+      currentStep: input.order.currentStep,
+      context: {
         tenantId: input.tenant.tenantId,
         orderId: input.order.orderId,
+        userId: input.order.userId,
+        amountInCents: input.order.amountInCents,
+        walletAddress: input.order.walletAddress,
       },
-    );
-  }
-
-  if (confirmationWrite.conflict) {
-    const existingDeposit = await getLatestDepositByOrderId(
+      event: {
+        type: ORDER_PROGRESS_EVENTS.CUSTOMER_CONFIRMED,
+        tenantId: input.tenant.tenantId,
+      },
+    });
+    const confirmationWrite = await updateOrderByIdWithStepGuard(
       input.db,
       input.tenant.tenantId,
       input.order.orderId,
+      input.order.currentStep,
+      confirmationProgression.orderPatch,
     );
 
-    return {
-      order: confirmationWrite.order ?? input.order,
-      deposit: existingDeposit,
-      accepted: false,
-      conflict: true,
-      parseResult: null,
-    };
+    if (confirmationWrite.notFound) {
+      throw new TelegramOrderConfirmationError(
+        "telegram_order_confirmation_missing",
+        "Telegram order disappeared before confirmation could be persisted.",
+        TELEGRAM_CONFIRMATION_FAILURE_MESSAGE,
+        {
+          tenantId: input.tenant.tenantId,
+          orderId: input.order.orderId,
+        },
+      );
+    }
+
+    if (confirmationWrite.conflict) {
+      const existingDeposit = await getLatestDepositByOrderId(
+        input.db,
+        input.tenant.tenantId,
+        input.order.orderId,
+      );
+
+      return {
+        order: confirmationWrite.order ?? input.order,
+        deposit: existingDeposit,
+        accepted: false,
+        conflict: true,
+        parseResult: null,
+      };
+    }
+
+    creatingDepositOrder = confirmationWrite.order;
   }
 
-  const creatingDepositOrder = confirmationWrite.order;
+  const depositNonce = createTelegramOrderDepositNonce(
+    {
+      tenantId: input.tenant.tenantId,
+      orderId: creatingDepositOrder.orderId,
+    },
+  );
+
   try {
     const [apiToken, rawSplitConfig] = await Promise.all([
       readTenantSecret(input.env, input.tenant, "eulenApiToken"),
@@ -543,6 +598,7 @@ export async function confirmTelegramOrder(input) {
       }, {
         asyncMode: "auto",
         body: createTelegramEulenDepositPayload(creatingDepositOrder, splitConfig),
+        nonce: depositNonce,
         requestId: input.requestContext?.requestId,
       }),
       {
@@ -559,7 +615,7 @@ export async function confirmTelegramOrder(input) {
         depositEntryId: createdDeposit.depositEntryId,
         qrId: null,
         orderId: creatingDepositOrder.orderId,
-        nonce: response.nonce,
+        nonce: depositNonce,
         qrCopyPaste: createdDeposit.qrCopyPaste,
         qrImageUrl: createdDeposit.qrImageUrl,
         externalStatus: "pending",
@@ -576,11 +632,24 @@ export async function confirmTelegramOrder(input) {
           {
             tenantId: input.tenant.tenantId,
             orderId: creatingDepositOrder.orderId,
+            nonce: depositNonce,
           },
           error,
         );
       } else {
-        throw error;
+        throw new TelegramOrderConfirmationError(
+          "telegram_order_deposit_recovery_retryable",
+          "Telegram order confirmation received an Eulen deposit but could not persist it locally yet.",
+          TELEGRAM_CONFIRMATION_RECOVERY_MESSAGE,
+          {
+            tenantId: input.tenant.tenantId,
+            orderId: creatingDepositOrder.orderId,
+            nonce: depositNonce,
+            depositEntryId: createdDeposit.depositEntryId,
+            cause: error instanceof Error ? error.message : String(error),
+          },
+          error,
+        );
       }
     }
 
@@ -595,6 +664,7 @@ export async function confirmTelegramOrder(input) {
           tenantId: input.tenant.tenantId,
           orderId: creatingDepositOrder.orderId,
           depositEntryId: createdDeposit.depositEntryId,
+          nonce: depositNonce,
         },
       );
     }
@@ -607,6 +677,46 @@ export async function confirmTelegramOrder(input) {
       splitConfig,
     });
   } catch (error) {
+    if (
+      error instanceof TelegramOrderConfirmationError
+      && error.code === "telegram_order_deposit_recovery_retryable"
+    ) {
+      error.details = {
+        ...error.details,
+        orderId: creatingDepositOrder.orderId,
+        tenantId: input.tenant.tenantId,
+      };
+      throw error;
+    }
+
+    if (
+      error instanceof TelegramOrderConfirmationError
+      && FAIL_CLOSED_RECOVERY_ERROR_CODES.has(error.code)
+    ) {
+      await markTelegramOrderConfirmationFailure({
+        db: input.db,
+        tenant: input.tenant,
+        order: creatingDepositOrder,
+        reason: error.code,
+      });
+      throw error;
+    }
+
+    if (currentStep === ORDER_PROGRESS_STATES.CREATING_DEPOSIT) {
+      throw new TelegramOrderConfirmationError(
+        "telegram_order_deposit_recovery_retryable",
+        "Telegram order confirmation is still recovering a previously leased deposit creation.",
+        TELEGRAM_CONFIRMATION_RECOVERY_MESSAGE,
+        {
+          orderId: creatingDepositOrder.orderId,
+          tenantId: input.tenant.tenantId,
+          nonce: depositNonce,
+          cause: error instanceof Error ? error.message : String(error),
+        },
+        error,
+      );
+    }
+
     const failedOrder = await markTelegramOrderConfirmationFailure({
       db: input.db,
       tenant: input.tenant,
