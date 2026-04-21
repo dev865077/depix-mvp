@@ -38,6 +38,7 @@ import {
   resolveIssueRefinementDispatchRef,
   resolvePlanningConcurrencyTarget,
   selectPlanningDiscussionCategory,
+  shouldDispatchIssueRefinement,
   isIgnorableReferencedIssueFetchError,
   stripIssueAutomationSection,
   upsertIssueAutomationSection,
@@ -650,6 +651,12 @@ describe("ai issue planning review", () => {
       discussionNumber: 292,
       planningStatus: "request_changes",
     }, "main")).toThrow("Invalid repository");
+  });
+
+  it("wakes automated issue refinement only after Request changes planning conclusions", () => {
+    expect(shouldDispatchIssueRefinement("Request changes")).toBe(true);
+    expect(shouldDispatchIssueRefinement("Blocked")).toBe(false);
+    expect(shouldDispatchIssueRefinement("Approve")).toBe(false);
   });
 
   it("builds a managed planning section directly on the issue body", () => {

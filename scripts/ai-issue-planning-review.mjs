@@ -405,6 +405,21 @@ async function dispatchIssueRefinementWorkflow(repoFullName, input, ref) {
 }
 
 /**
+ * Decide whether a finished planning round should immediately wake the
+ * refinement agent.
+ *
+ * `Request changes` means the issue artifact itself still needs work, so the
+ * next actor is automated refinement. `Blocked` means the artifact is good but
+ * has an explicit dependency, so it must not churn in refinement.
+ *
+ * @param {"Approve" | "Blocked" | "Request changes"} recommendation Final planning recommendation.
+ * @returns {boolean} True when refinement should run now.
+ */
+export function shouldDispatchIssueRefinement(recommendation) {
+  return recommendation === "Request changes";
+}
+
+/**
  * Validate that issue planning has only one automatic issue-to-planning entry.
  *
  * Triage owns issue events and explicitly dispatches this workflow. Planning
@@ -2378,7 +2393,7 @@ async function main() {
     discussionUrl: context.discussion.url,
   });
 
-  if (evaluation.recommendation === "Request changes") {
+  if (shouldDispatchIssueRefinement(evaluation.recommendation)) {
     await dispatchIssueRefinementWorkflow(
       repository,
       {
