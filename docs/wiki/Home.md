@@ -33,6 +33,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - no estado `awaiting_payment`, as respostas de status e entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
 - callback queries suportadas sao tratadas pelo mesmo fluxo de pedido, com fallback por texto preservado
 - `/start` e `/status` reconsultam um pedido `awaiting_payment` contra a Eulen antes de responder quando ha deposito local disponivel, para refletir imediato um pagamento ja conciliado externamente
+- o sistema agora persiste metadados da mensagem canonica do Telegram no pedido para permitir edicao in-place do mesmo payload ao longo do fluxo
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`
@@ -85,7 +86,6 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 ### Produto
 
 - [Visao Geral do Produto](Visao-Geral-do-Produto)
-- [Visao Futura da Plataforma](Visao-Futura-da-Plataforma)
 - [Escopo e Fluxo](Escopo-e-Fluxo)
 - [Roadmap e Backlog](Roadmap-e-Backlog)
 

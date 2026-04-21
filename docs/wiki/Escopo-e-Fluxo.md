@@ -41,6 +41,7 @@
 - em `confirmation`, o fluxo agora pode enviar CTAs inline de `Confirmar` e `Cancelar`
 - no estado `awaiting_payment`, a resposta de status e a entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
 - callback queries desses CTAs sao tratadas pelo mesmo fluxo de pedido, preservando o fallback por texto
+- quando existe uma mensagem canonica persistida no pedido, o fluxo pode editar esse mesmo payload em vez de enviar um novo message para cada etapa relevante
 
 ## Fora de escopo
 
@@ -67,6 +68,7 @@
 - a confirmacao de pedido ainda depende da integracao completa com a Eulen para criar o deposito final
 - o processamento real do fluxo ainda esta incompleto
 - a notificacao assincrona pos-pagamento ja faz parte do estado atual do sistema quando a conciliacao confirma o pagamento
+- quando o pedido ja tiver mensagem canonica persistida, a entrega do QR e a atualizacao de status podem reutilizar a mesma mensagem em vez de abrir um novo thread de mensagens no chat
 
 ## Leitura correta
 

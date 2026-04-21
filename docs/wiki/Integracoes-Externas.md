@@ -43,6 +43,7 @@ Estado atual:
 - respostas de `awaiting_payment` e a entrega do QR agora podem incluir CTAs inline para `Ver status` e `Ajuda`
 - em `confirmation`, a resposta com confirmacao/cancelamento agora pode incluir CTAs inline para `Confirmar` e `Cancelar`
 - callback queries com essas CTAs sao roteadas pelo mesmo fluxo de pedido, sem remover o fallback por texto
+- quando o pedido tem mensagem canonica persistida, o Telegram pode editar a mensagem de QR/status/conclusao no lugar, em vez de emitir uma nova mensagem a cada transicao
 
 ## Eulen
 
@@ -95,8 +96,20 @@ Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: B
 
 O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` cobre um deposito especifico e `deposits` cobre uma janela curta quando callbacks atrasarem ou faltarem.
 
-Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e gravar o `qrId` canonico.
+Na persistencia local, `depositEntryId` e `qrId` nao sao sinonimos. O create-deposit grava primeiro `depositEntryId`; quando o webhook chega antes da correlacao local, o runtime consulta `deposit-status` para descobrir e completar a associacao.
 
-Se a correlacao remota devolver um `qrId` que ja pertence a outro deposito local, o webhook falha explicitamente com conflito em vez de sobrescrever dados ou mascarar ambiguidade.
+## Telegram canonico e edicao in-place
 
-No recheck operacional e nos retries de confirmacao, o nonce deve permanecer um UUID estavel por pedido, reaproveitando o UUID embutido no `orderId` quando ele existir.
+O fluxo Telegram agora trata a mensagem de QR/status/conclusao como uma mensagem canonica por pedido quando possivel.
+
+Campos persistidos no pedido:
+
+- `telegram_canonical_message_id`
+- `telegram_canonical_message_kind`
+
+Contrato observado no codigo atual:
+
+- a primeira entrega canonica pode ser enviada como `text` ou `photo`
+- quando existe `telegram_canonical_message_id`, o runtime tenta editar a mensagem em vez de enviar uma nova
+- se a edicao falhar por um erro benigno de Telegram, o fluxo pode cair para envio novo sem duplicar o contrato de negocio
+- quando o pedido ja possui metadados da mensagem canonica, a notificacao de pagamento confirmado pode editar a mesma mensagem em vez de publicar outra

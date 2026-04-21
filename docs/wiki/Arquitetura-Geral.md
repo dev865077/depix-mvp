@@ -50,6 +50,9 @@ flowchart LR
 - o runtime do Telegram tambem expira conversas abertas antigas antes de consumir novas mensagens ou callbacks, para evitar que pedidos parados continuem aceitando interacoes como se estivessem ativos
 - `/iniciar` foi adicionado como alias de `/start` na borda Telegram
 - o tempo limite de conversas abertas do Telegram agora vem de configuracao de runtime tipada e tem valor padrao quando nao configurado
+- o fluxo Telegram agora persiste a mensagem canonica do pedido para permitir edicao in-place do mesmo payload em etapas posteriores do QR, status e confirmacao final
+- a persistencia dessa mensagem canonica usa os campos `telegramCanonicalMessageId` e `telegramCanonicalMessageKind` no agregado `orders`
+- a notificacao assincrona de pagamento confirmado pode editar a mensagem canonica em vez de publicar uma nova quando o pedido ja tem metadados persistidos
 
 ## Principios arquiteturais
 
