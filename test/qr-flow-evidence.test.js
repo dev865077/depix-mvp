@@ -4,9 +4,11 @@ import {
   buildD1ExecuteArgs,
   buildDeploymentStatusArgs,
   buildHealthUrl,
+  buildLatestDepositEventsQuery,
   buildLatestDepositsQuery,
   buildLatestOrdersQuery,
   buildMigrationsListArgs,
+  buildOpsReadinessReport,
   DEFAULT_OPERATION_TIMEOUT_MS,
   formatEvidenceMarkdown,
   parseD1ExecuteJsonOutput,
@@ -26,6 +28,10 @@ describe("qr flow evidence helpers", () => {
       "2026-04-19T02:00:00Z",
       "--limit",
       "3",
+      "--order-id",
+      "order_123",
+      "--deposit-entry-id",
+      "deposit_123",
       "--issue",
       "90",
     ]);
@@ -34,6 +40,8 @@ describe("qr flow evidence helpers", () => {
       environment: "production",
       tenantId: "beta",
       sinceIso: "2026-04-19T02:00:00Z",
+      orderId: "order_123",
+      depositEntryId: "deposit_123",
       limit: 3,
       issueNumber: 90,
     });
@@ -48,22 +56,101 @@ describe("qr flow evidence helpers", () => {
     const ordersQuery = buildLatestOrdersQuery({
       tenantId: "beta",
       sinceIso: "2026-04-19T02:00:00Z",
+      orderId: "order_123",
+      depositEntryId: "deposit_123",
       limit: 2,
     });
     const depositsQuery = buildLatestDepositsQuery({
       tenantId: "beta",
       sinceIso: "2026-04-19T02:00:00Z",
+      orderId: "order_123",
+      depositEntryId: "deposit_123",
+      limit: 2,
+    });
+    const eventsQuery = buildLatestDepositEventsQuery({
+      tenantId: "beta",
+      sinceIso: "2026-04-19T02:00:00Z",
+      orderId: "order_123",
+      depositEntryId: "deposit_123",
       limit: 2,
     });
 
     expect(ordersQuery).toContain("o.channel = 'telegram'");
     expect(ordersQuery).toContain("o.tenant_id = 'beta'");
+    expect(ordersQuery).toContain("o.order_id = 'order_123'");
+    expect(ordersQuery).toContain("d.deposit_entry_id = 'deposit_123'");
+    expect(ordersQuery).toContain("o.telegram_chat_id");
     expect(ordersQuery).toContain("julianday(o.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(ordersQuery).toContain("LIMIT 2;");
     expect(depositsQuery).toContain("INNER JOIN orders o ON o.order_id = d.order_id");
     expect(depositsQuery).toContain("d.tenant_id = 'beta'");
+    expect(depositsQuery).toContain("d.order_id = 'order_123'");
+    expect(depositsQuery).toContain("d.deposit_entry_id = 'deposit_123'");
     expect(depositsQuery).toContain("julianday(d.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(depositsQuery).toContain("LIMIT 2;");
+    expect(eventsQuery).toContain("FROM deposit_events e");
+    expect(eventsQuery).toContain("INNER JOIN orders o ON o.tenant_id = e.tenant_id AND o.order_id = e.order_id");
+    expect(eventsQuery).toContain("e.tenant_id = 'beta'");
+    expect(eventsQuery).toContain("e.order_id = 'order_123'");
+    expect(eventsQuery).toContain("e.deposit_entry_id = 'deposit_123'");
+    expect(eventsQuery).toContain("julianday(e.received_at) >= julianday('2026-04-19T02:00:00Z')");
+    expect(eventsQuery).not.toContain("raw_payload");
+    expect(eventsQuery).toContain("ORDER BY julianday(e.received_at) DESC, e.id DESC");
+    expect(eventsQuery).toContain("LIMIT 2;");
+  });
+
+  it("keeps broad deposit event evidence correlated to local deposits unless an explicit filter is used", function assertDepositEventCorrelationSafety() {
+    const broadQuery = buildLatestDepositEventsQuery({
+      tenantId: null,
+      sinceIso: null,
+      orderId: null,
+      depositEntryId: null,
+      limit: 5,
+    });
+    const explicitQuery = buildLatestDepositEventsQuery({
+      tenantId: null,
+      sinceIso: null,
+      orderId: null,
+      depositEntryId: "deposit_123",
+      limit: 5,
+    });
+
+    expect(broadQuery).toContain("EXISTS (");
+    expect(broadQuery).toContain("FROM deposits d");
+    expect(explicitQuery).not.toContain("EXISTS (");
+    expect(explicitQuery).toContain("e.deposit_entry_id = 'deposit_123'");
+  });
+
+  it("derives redacted ops readiness from health without preserving extra fields", function assertOpsReadinessRedaction() {
+    const readiness = buildOpsReadinessReport({
+      operations: {
+        depositRecheck: {
+          state: "ready",
+          ready: true,
+          bearerToken: "must-not-render",
+        },
+        depositsFallback: {
+          state: "disabled",
+          ready: false,
+          tenantOverrides: {
+            configured: ["alpha"],
+          },
+        },
+      },
+    });
+
+    expect(readiness).toEqual({
+      depositRecheck: {
+        state: "ready",
+        ready: true,
+      },
+      depositsFallback: {
+        state: "disabled",
+        ready: false,
+      },
+    });
+    expect(JSON.stringify(readiness)).not.toContain("must-not-render");
+    expect(JSON.stringify(readiness)).not.toContain("tenantOverrides");
   });
 
   it("builds the Wrangler command shapes used by the executable script", function assertWranglerCommandShapes() {
@@ -232,6 +319,8 @@ describe("qr flow evidence helpers", () => {
     expect(output.stdout).toContain("## Evidencia controlada - issue #90");
     expect(output.stdout).toContain("commit_cli");
     expect(output.stdout).toContain("\"order_id\": \"order_cli\"");
+    expect(output.stdout).toContain("### Deposit events correlacionados");
+    expect(output.stdout).toContain("### Ops readiness");
     expect(calls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -244,7 +333,7 @@ describe("qr flow evidence helpers", () => {
         }),
       ]),
     );
-    expect(calls.filter((call) => call.file === "wrangler-test" && call.args[1] === "execute")).toHaveLength(2);
+    expect(calls.filter((call) => call.file === "wrangler-test" && call.args[1] === "execute")).toHaveLength(3);
     expect(calls.every((call) => call.options.timeout === DEFAULT_OPERATION_TIMEOUT_MS)).toBe(true);
   });
 
@@ -255,12 +344,24 @@ describe("qr flow evidence helpers", () => {
       generatedAt: "2026-04-19T12:20:00.000Z",
       tenantId: "beta",
       sinceIso: "2026-04-19T02:00:00Z",
+      orderId: "order_1",
+      depositEntryId: "dep_1",
       workerUrl: "https://depix-mvp-production.dev865077.workers.dev",
       gitCommit: "abcdef123456",
       deploymentStatus: "Current Version ID: 123",
       migrationsStatus: "No migrations to apply!",
       health: {
         status: "ok",
+      },
+      opsReadiness: {
+        depositRecheck: {
+          state: "ready",
+          ready: true,
+        },
+        depositsFallback: {
+          state: "disabled",
+          ready: false,
+        },
       },
       orders: [
         {
@@ -272,12 +373,25 @@ describe("qr flow evidence helpers", () => {
           deposit_entry_id: "dep_1",
         },
       ],
+      depositEvents: [
+        {
+          id: 1,
+          deposit_entry_id: "dep_1",
+          external_status: "paid",
+        },
+      ],
     });
 
     expect(markdown).toContain("## Evidencia controlada - issue #90");
     expect(markdown).toContain("`production`");
     expect(markdown).toContain("https://depix-mvp-production.dev865077.workers.dev");
+    expect(markdown).toContain("order: `order_1`");
+    expect(markdown).toContain("depositEntryId: `dep_1`");
+    expect(markdown).toContain("### Ops readiness");
     expect(markdown).toContain("\"order_id\": \"order_1\"");
     expect(markdown).toContain("\"deposit_entry_id\": \"dep_1\"");
+    expect(markdown).toContain("### Deposit events correlacionados");
+    expect(markdown).toContain("\"external_status\": \"paid\"");
+    expect(markdown).not.toContain("raw_payload");
   });
 });
