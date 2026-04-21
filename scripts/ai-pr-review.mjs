@@ -1702,6 +1702,22 @@ async function fetchDiscussionByNumber(owner, name, discussionNumber) {
 }
 
 /**
+ * Prefer the repository-reloaded Discussion object over the raw mutation
+ * payload so later comment queries use the canonical node id.
+ *
+ * @param {{ id?: string, number?: number, url: string }} createdDiscussion Newly created Discussion.
+ * @param {{ id?: string, number?: number, url?: string } | null} recoveredDiscussion Repository-fetched Discussion.
+ * @returns {{ id?: string, number?: number, url: string }} Canonical Discussion target for publication.
+ */
+export function preferRecoveredDiscussionTarget(createdDiscussion, recoveredDiscussion) {
+  if (recoveredDiscussion?.id && recoveredDiscussion?.url) {
+    return recoveredDiscussion;
+  }
+
+  return createdDiscussion;
+}
+
+/**
  * Detect one automation-authored PR Discussion comment body so reruns do not
  * feed stale bot findings back into the next model round.
  *
@@ -2648,7 +2664,7 @@ async function resolvePullRequestContext(repository, event) {
  * @param {string} categoryId Selected category id.
  * @param {string} title Discussion title.
  * @param {string} body Discussion body.
- * @returns {Promise<{ id: string, url: string }>} Created discussion metadata.
+ * @returns {Promise<{ id: string, number: number, url: string }>} Created discussion metadata.
  */
 async function createDiscussion(repositoryId, categoryId, title, body) {
   const mutation = `
@@ -2661,6 +2677,7 @@ async function createDiscussion(repositoryId, categoryId, title, body) {
       }) {
         discussion {
           id
+          number
           url
         }
       }
@@ -2669,7 +2686,7 @@ async function createDiscussion(repositoryId, categoryId, title, body) {
   const data = await githubGraphqlRequest(mutation, { repositoryId, categoryId, title, body });
   const discussion = data?.createDiscussion?.discussion;
 
-  if (!discussion?.url) {
+  if (!discussion?.url || !Number.isInteger(discussion?.number)) {
     throw new Error("GitHub GraphQL response did not include the created discussion URL.");
   }
 
@@ -4429,7 +4446,10 @@ async function publishDiscussionOrFallback(repository, pullRequest, gate, debate
         commentCount: 0,
       });
 
-      discussion = createdDiscussion;
+      discussion = preferRecoveredDiscussionTarget(
+        createdDiscussion,
+        await fetchDiscussionByNumber(owner, name, createdDiscussion.number),
+      );
     }
 
     if (discussion?.number && !discussion.id) {
