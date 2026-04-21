@@ -103,6 +103,13 @@ const DEPOSIT_UPDATE_COLUMNS = {
     expiration: "expiration",
     updatedAt: "updated_at",
 };
+function toRequiredString(value) {
+    return String(value);
+}
+function toNullableTrimmedString(value) {
+    const text = value === null || value === undefined ? "" : String(value).trim();
+    return text.length > 0 ? text : null;
+}
 /**
  * Garante defaults minimos para um deposito novo.
  *
@@ -111,19 +118,15 @@ const DEPOSIT_UPDATE_COLUMNS = {
  */
 function normalizeDepositInput(input) {
     return {
-        tenantId: input.tenantId,
-        depositEntryId: input.depositEntryId,
-        qrId: typeof input.qrId === "string" && input.qrId.trim().length > 0 ? input.qrId.trim() : null,
-        orderId: input.orderId,
-        nonce: input.nonce,
-        qrCopyPaste: input.qrCopyPaste,
-        qrImageUrl: input.qrImageUrl,
-        externalStatus: typeof input.externalStatus === "string" && input.externalStatus.trim().length > 0
-            ? input.externalStatus.trim()
-            : "pending",
-        expiration: typeof input.expiration === "string" && input.expiration.trim().length > 0
-            ? input.expiration.trim()
-            : null,
+        tenantId: toRequiredString(input.tenantId),
+        depositEntryId: toRequiredString(input.depositEntryId),
+        qrId: toNullableTrimmedString(input.qrId),
+        orderId: toRequiredString(input.orderId),
+        nonce: toRequiredString(input.nonce),
+        qrCopyPaste: toRequiredString(input.qrCopyPaste),
+        qrImageUrl: toRequiredString(input.qrImageUrl),
+        externalStatus: toNullableTrimmedString(input.externalStatus) ?? "pending",
+        expiration: toNullableTrimmedString(input.expiration),
     };
 }
 /**

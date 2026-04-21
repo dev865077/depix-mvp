@@ -62,6 +62,12 @@ const ORDER_UPDATE_COLUMNS = {
     splitFee: "split_fee",
     updatedAt: "updated_at",
 };
+function toRequiredString(value) {
+    return String(value);
+}
+function toNullableString(value) {
+    return value === null || value === undefined ? null : String(value);
+}
 /**
  * Aplica defaults operacionais para novos pedidos.
  *
@@ -73,18 +79,18 @@ const ORDER_UPDATE_COLUMNS = {
  */
 function normalizeOrderInput(input) {
     return {
-        tenantId: input.tenantId,
-        orderId: input.orderId,
-        userId: input.userId,
-        channel: input.channel ?? "telegram",
-        productType: input.productType,
-        telegramChatId: input.telegramChatId ?? null,
+        tenantId: toRequiredString(input.tenantId),
+        orderId: toRequiredString(input.orderId),
+        userId: toRequiredString(input.userId),
+        channel: toRequiredString(input.channel ?? "telegram"),
+        productType: toRequiredString(input.productType),
+        telegramChatId: toNullableString(input.telegramChatId),
         amountInCents: input.amountInCents ?? null,
-        walletAddress: input.walletAddress ?? null,
-        currentStep: input.currentStep ?? "draft",
-        status: input.status ?? "draft",
-        splitAddress: input.splitAddress ?? null,
-        splitFee: input.splitFee ?? null,
+        walletAddress: toNullableString(input.walletAddress),
+        currentStep: toRequiredString(input.currentStep ?? "draft"),
+        status: toRequiredString(input.status ?? "draft"),
+        splitAddress: toNullableString(input.splitAddress),
+        splitFee: toNullableString(input.splitFee),
     };
 }
 /**

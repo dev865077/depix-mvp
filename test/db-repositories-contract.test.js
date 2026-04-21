@@ -233,6 +233,59 @@ describe("db repository typed contracts", () => {
     expect(String(caughtError?.message ?? caughtError).toLowerCase()).toContain("unique");
   });
 
+  it("preserves legacy JS coercion before persisting repository inputs", async function assertLegacyJsCoercionContract() {
+    const db = getDatabase(env);
+    await ensureSchema(db);
+
+    const coercedOrder = await createOrder(db, {
+      tenantId: true,
+      orderId: false,
+      userId: 12345,
+      productType: false,
+      telegramChatId: true,
+      amountInCents: 1250,
+      walletAddress: false,
+      splitAddress: true,
+      splitFee: false,
+    });
+
+    const coercedDeposit = await createDeposit(db, {
+      tenantId: true,
+      depositEntryId: true,
+      qrId: false,
+      orderId: false,
+      nonce: true,
+      qrCopyPaste: false,
+      qrImageUrl: true,
+    });
+
+    expect(coercedOrder).toMatchObject({
+      tenantId: "true",
+      orderId: "false",
+      userId: "12345",
+      channel: "telegram",
+      productType: "false",
+      telegramChatId: "true",
+      amountInCents: 1250,
+      walletAddress: "false",
+      currentStep: "draft",
+      status: "draft",
+      splitAddress: "true",
+      splitFee: "false",
+    });
+    expect(coercedDeposit).toMatchObject({
+      tenantId: "true",
+      depositEntryId: "true",
+      qrId: "false",
+      orderId: "false",
+      nonce: "true",
+      qrCopyPaste: "false",
+      qrImageUrl: "true",
+      externalStatus: "pending",
+      expiration: null,
+    });
+  });
+
   it("keeps deposit event field mapping stable", async function assertDepositEventContract() {
     const db = getDatabase(env);
     await ensureSchema(db);

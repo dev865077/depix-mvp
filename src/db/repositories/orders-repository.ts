@@ -21,6 +21,14 @@ type PersistedOrderPatch = OrderPatch & {
   updatedAt?: string;
 };
 
+function toRequiredString(value: unknown): string {
+  return String(value);
+}
+
+function toNullableString(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
 // Select base reaproveitado pelos readers do repositorio.
 // Mantemos aliases em camelCase para devolver objetos prontos para o restante
 // da aplicacao, sem espalhar nomes snake_case fora da borda SQL.
@@ -92,18 +100,18 @@ const ORDER_UPDATE_COLUMNS = {
  */
 function normalizeOrderInput(input: CreateOrderInput) {
   return {
-    tenantId: input.tenantId,
-    orderId: input.orderId,
-    userId: input.userId,
-    channel: input.channel ?? "telegram",
-    productType: input.productType,
-    telegramChatId: input.telegramChatId ?? null,
+    tenantId: toRequiredString(input.tenantId),
+    orderId: toRequiredString(input.orderId),
+    userId: toRequiredString(input.userId),
+    channel: toRequiredString(input.channel ?? "telegram"),
+    productType: toRequiredString(input.productType),
+    telegramChatId: toNullableString(input.telegramChatId),
     amountInCents: input.amountInCents ?? null,
-    walletAddress: input.walletAddress ?? null,
-    currentStep: input.currentStep ?? "draft",
-    status: input.status ?? "draft",
-    splitAddress: input.splitAddress ?? null,
-    splitFee: input.splitFee ?? null,
+    walletAddress: toNullableString(input.walletAddress),
+    currentStep: toRequiredString(input.currentStep ?? "draft"),
+    status: toRequiredString(input.status ?? "draft"),
+    splitAddress: toNullableString(input.splitAddress),
+    splitFee: toNullableString(input.splitFee),
   };
 }
 
