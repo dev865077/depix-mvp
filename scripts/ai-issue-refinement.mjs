@@ -694,9 +694,24 @@ function resolveIssueRefinementState(phase) {
   };
 }
 
+function collectSubIssueLinkFallbacks(createdChildIssues) {
+  if (!Array.isArray(createdChildIssues)) {
+    return [];
+  }
+
+  return createdChildIssues
+    .filter((issue) => issue?.subIssueLink?.linked === false)
+    .map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      reason: String(issue.subIssueLink.reason ?? "native sub-issue link was not created"),
+    }));
+}
+
 export function buildIssueRefinementAutomationSection(input) {
   const state = resolveIssueRefinementState(input.phase);
   const createdChildIssues = Array.isArray(input.createdChildIssues) ? input.createdChildIssues : [];
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(createdChildIssues);
   const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
   const blockingDependencies = normalizeStringArray(input.blockingDependencies);
 
@@ -733,6 +748,11 @@ export function buildIssueRefinementAutomationSection(input) {
       ? createdChildIssues.map((issue) => `- #${issue.number} - ${issue.title}`)
       : ["- None."]),
     "",
+    "## Native sub-issue link fallbacks",
+    ...(subIssueLinkFallbacks.length > 0
+      ? subIssueLinkFallbacks.map((issue) => `- #${issue.number} - ${issue.reason}`)
+      : ["- None."]),
+    "",
     "## Codex handoff",
     state.nextActor === "ai_issue_planning_review"
       ? "Codex must still wait. The issue refinement agent already updated the artifact and requeued planning automatically."
@@ -744,6 +764,7 @@ export function buildIssueRefinementAutomationSection(input) {
 
 export function buildIssueRefinementStatusComment(input) {
   const state = resolveIssueRefinementState(input.phase);
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(input.createdChildIssues);
   const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
   const blockingDependencies = normalizeStringArray(input.blockingDependencies);
 
@@ -765,11 +786,13 @@ export function buildIssueRefinementStatusComment(input) {
     `blocking_roles: \`${blockingRoles.join(",")}\``,
     `blocking_dependencies: \`${blockingDependencies.join(" | ")}\``,
     `refinement_round_count: \`${String(input.roundCount)}\``,
+    `native_sub_issue_link_fallback_count: \`${String(subIssueLinkFallbacks.length)}\``,
   ].join("\n");
 }
 
 export function buildIssueRefinementReplyBody(input) {
   const createdChildIssues = Array.isArray(input.createdChildIssues) ? input.createdChildIssues : [];
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(createdChildIssues);
   const blockingDependencies = normalizeStringArray(input.blockingDependencies);
   const state = resolveIssueRefinementState(input.phase);
 
@@ -786,6 +809,9 @@ export function buildIssueRefinementReplyBody(input) {
     ...(createdChildIssues.length > 0
       ? createdChildIssues.map((issue) => `- created_child_issue: #${issue.number} - ${issue.title}`)
       : ["- created_child_issue: none"]),
+    ...(subIssueLinkFallbacks.length > 0
+      ? subIssueLinkFallbacks.map((issue) => `- native_sub_issue_link_fallback: #${issue.number} - ${issue.reason}`)
+      : []),
     ...(blockingDependencies.length > 0
       ? blockingDependencies.map((dependency) => `- blocking_dependency: ${dependency}`)
       : []),
@@ -1522,6 +1548,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
       blockingRoles,
       blockingDependencies: plan.blockingDependencies,
       roundCount: roundCount + 1,
+      createdChildIssues,
     }),
   );
   await runtime.createDiscussionReply(
@@ -1557,6 +1584,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     discussionNumber: discussion.number,
     phase: nextPhase,
     createdChildIssueCount: createdChildIssues.length,
+    nativeSubIssueLinkFallbackCount: collectSubIssueLinkFallbacks(createdChildIssues).length,
     childTriageDispatchFailureCount: childTriageDispatchFailures.length,
     shouldRerunPlanning: plan.shouldRerunPlanning,
     blockedDependencyCount: plan.blockingDependencies.length,
@@ -1569,6 +1597,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
   return {
     plan,
     createdChildIssues,
+    subIssueLinkFallbacks: collectSubIssueLinkFallbacks(createdChildIssues),
     normalizedTitle,
     nextPhase,
   };

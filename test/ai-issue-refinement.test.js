@@ -283,6 +283,34 @@ describe("ai issue refinement", () => {
         },
       }),
     ]);
+    expect(buildIssueRefinementReplyBody({
+      phase: "rerun_planning",
+      replyBody: "Child issue created; native link fallback surfaced.",
+      createdChildIssues: createdIssues,
+      blockingDependencies: [],
+    })).toContain("native_sub_issue_link_fallback: #301 - GitHub API request failed (403)");
+    expect(buildIssueRefinementStatusComment({
+      phase: "rerun_planning",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/292",
+      planningStatus: "request_changes",
+      blockingRoles: ["risk"],
+      blockingDependencies: [],
+      roundCount: 2,
+      createdChildIssues: createdIssues,
+    })).toContain("native_sub_issue_link_fallback_count: `1`");
+    expect(buildIssueRefinementAutomationSection({
+      phase: "rerun_planning",
+      model: "gpt-test",
+      provider: "openai_responses",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/292",
+      planningStatus: "request_changes",
+      blockingRoles: ["risk"],
+      blockingDependencies: [],
+      roundCount: 2,
+      summary: "Refined the issue.",
+      resolutionSummary: "Created a child issue and surfaced link fallback.",
+      createdChildIssues: createdIssues,
+    })).toContain("## Native sub-issue link fallbacks");
   });
 
   it("builds prompt and canonical issue outputs for refinement", () => {
