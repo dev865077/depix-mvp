@@ -40,6 +40,7 @@ import {
   normalizeOrRepairSpecialistReviewMemo,
   parseGitHubRestResponse,
   parseBlockingRoleContract,
+  preferRecoveredDiscussionTarget,
   redactActionsLogSecrets,
   reconcileFollowUpTestableBlockers,
   sanitizePublishedMarkdown,
@@ -1878,6 +1879,22 @@ describe("ai pr review discussion rendering", () => {
     ], "Architecture");
 
     expect(category.id).toBe("2");
+  });
+
+  it("prefers the repository-reloaded discussion target after creation", () => {
+    const createdDiscussion = {
+      id: "D_stale",
+      number: 535,
+      url: "https://github.com/dev865077/depix-mvp/discussions/535",
+    };
+    const recoveredDiscussion = {
+      id: "D_canonical",
+      number: 535,
+      url: "https://github.com/dev865077/depix-mvp/discussions/535",
+    };
+
+    expect(preferRecoveredDiscussionTarget(createdDiscussion, recoveredDiscussion)).toEqual(recoveredDiscussion);
+    expect(preferRecoveredDiscussionTarget(createdDiscussion, null)).toEqual(createdDiscussion);
   });
 
   it("returns a complete publication set for the discussion lane", () => {
