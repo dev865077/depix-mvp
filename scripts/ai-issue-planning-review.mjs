@@ -927,6 +927,7 @@ export function buildDiscussionHistoryContext(discussion) {
   const latestFinalComment = [...(discussion.comments?.nodes ?? [])]
     .reverse()
     .find((comment) => isAutomatedPlanningFinalComment(comment)) ?? null;
+  const latestReviewerMemos = extractLatestPlanningReviewerMemos(discussion.comments?.nodes ?? []);
 
   for (const comment of discussion.comments?.nodes ?? []) {
     if (!isAutomatedPlanningComment(comment)) {
@@ -935,6 +936,18 @@ export function buildDiscussionHistoryContext(discussion) {
         truncateText(comment.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
       ].join("\n"));
     }
+  }
+
+  if (latestReviewerMemos.length > 0) {
+    entries.push([
+      "## Latest specialist reviewer memos",
+      "Treat these as the concrete prior blockers for the current round. Reconcile them against the latest issue body and the human replies in the conclusion thread before opening any broader blocker.",
+      "",
+      ...latestReviewerMemos.map((memo) => [
+        `### ${memo.role} @ ${memo.createdAt}`,
+        truncateText(memo.body ?? "[empty]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+      ].join("\n")),
+    ].join("\n"));
   }
 
   if (latestFinalComment) {
@@ -1043,6 +1056,52 @@ function isAutomatedPlanningFinalComment(comment) {
   return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
     && typeof comment?.body === "string"
     && comment.body.trimStart().startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+/**
+ * Extract the newest specialist reviewer memo for each planning role.
+ *
+ * Follow-up rounds need the concrete blocker text from the last specialist
+ * pass, not only the final summary. Without these memos, the model tends to
+ * invent broader blockers instead of reconciling the exact questions already
+ * raised in the previous round.
+ *
+ * @param {Array<{ author?: { login?: string | null } | null, body?: string | null, createdAt?: string | null }>} comments Discussion comments.
+ * @returns {Array<{ role: string, createdAt: string, body: string }>} Latest memo per role in canonical order.
+ */
+function extractLatestPlanningReviewerMemos(comments) {
+  const latestByRole = new Map();
+  const roleOrder = ["product", "technical", "scrum", "risk"];
+  const roleLabels = {
+    product: "product",
+    technical: "technical",
+    scrum: "scrum",
+    risk: "risk",
+  };
+
+  for (const comment of comments) {
+    if (!isAutomatedPlanningComment(comment) || isAutomatedPlanningFinalComment(comment)) {
+      continue;
+    }
+
+    const roleMatch = comment.body?.match(/<!--\s*ai-issue-planning-role:(product|technical|scrum|risk)\s*-->/i);
+
+    if (!roleMatch?.[1]) {
+      continue;
+    }
+
+    const roleKey = roleMatch[1].toLowerCase();
+
+    latestByRole.set(roleKey, {
+      role: roleLabels[roleKey] ?? roleKey,
+      createdAt: comment.createdAt ?? "unknown",
+      body: comment.body ?? "",
+    });
+  }
+
+  return roleOrder
+    .filter((role) => latestByRole.has(role))
+    .map((role) => latestByRole.get(role));
 }
 
 /**

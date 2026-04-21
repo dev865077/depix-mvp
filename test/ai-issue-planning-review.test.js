@@ -123,7 +123,7 @@ describe("ai issue planning review", () => {
     })).toBe(false);
   });
 
-  it("drops stale automated planning comments while keeping human replies", () => {
+  it("keeps the latest specialist reviewer memos while dropping stale automated status noise", () => {
     const history = buildDiscussionHistoryContext({
       comments: {
         nodes: [
@@ -145,6 +145,21 @@ describe("ai issue planning review", () => {
                 },
               ],
             },
+          },
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:01Z",
+            body: [
+              "<!-- ai-issue-planning-review:openai -->",
+              "<!-- ai-issue-planning-role:product -->",
+              "## Product and scope review",
+              "## Findings",
+              "- Stop conditions agora existem.",
+              "",
+              "## Recommendation",
+              "Request changes",
+            ].join("\n"),
+            replies: { nodes: [] },
           },
           {
             author: { login: "dev865077" },
@@ -179,12 +194,75 @@ describe("ai issue planning review", () => {
       author: { login: "dev865077" },
       body: "<!-- ai-issue-planning-final:openai --> citado por humano",
     })).toBe(false);
-    expect(history).not.toContain("## Product and scope review");
+    expect(history).toContain("Latest specialist reviewer memos");
+    expect(history).toContain("## Product and scope review");
     expect(history).toContain("Latest planning conclusion thread");
     expect(history).toContain("Final recommendation: `Request changes`");
-    expect(history).not.toContain("stop conditions");
+    expect(history).toContain("Stop conditions");
     expect(history).toContain("citando o marcador");
     expect(history).toContain("PR docs-only");
+  });
+
+  it("keeps only the newest memo for each specialist role in follow-up context", () => {
+    const history = buildDiscussionHistoryContext({
+      comments: {
+        nodes: [
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:01Z",
+            body: [
+              "<!-- ai-issue-planning-review:openai -->",
+              "<!-- ai-issue-planning-role:technical -->",
+              "## Technical and architecture review",
+              "",
+              "## Findings",
+              "- Old blocker.",
+              "",
+              "## Recommendation",
+              "Request changes",
+            ].join("\n"),
+            replies: { nodes: [] },
+          },
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:02Z",
+            body: [
+              "<!-- ai-issue-planning-review:openai -->",
+              "<!-- ai-issue-planning-role:technical -->",
+              "## Technical and architecture review",
+              "",
+              "## Findings",
+              "- New blocker.",
+              "",
+              "## Recommendation",
+              "Request changes",
+            ].join("\n"),
+            replies: { nodes: [] },
+          },
+          {
+            author: { login: "github-actions" },
+            createdAt: "2026-04-19T00:00:03Z",
+            body: [
+              "<!-- ai-issue-planning-final:openai -->",
+              "Final recommendation: `Request changes`",
+            ].join("\n"),
+            replies: {
+              nodes: [
+                {
+                  author: { login: "dev865077" },
+                  createdAt: "2026-04-19T00:00:04Z",
+                  body: "Resposta operacional mais nova.",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(history).toContain("New blocker.");
+    expect(history).not.toContain("Old blocker.");
+    expect(history).toContain("Resposta operacional mais nova.");
   });
 
   it("drops automated issue triage metadata while keeping human issue context", () => {
@@ -515,9 +593,25 @@ describe("ai issue planning review", () => {
           body: "Comentario de issue.",
         },
       ],
-      buildDiscussionHistoryContext({
+          buildDiscussionHistoryContext({
         comments: {
           nodes: [
+            {
+              author: { login: "github-actions" },
+              createdAt: "2026-04-19T00:00:00Z",
+              body: [
+                "<!-- ai-issue-planning-review:openai -->",
+                "<!-- ai-issue-planning-role:technical -->",
+                "## Technical and architecture review",
+                "",
+                "## Findings",
+                "- Nomear o boundary canonico.",
+                "",
+                "## Recommendation",
+                "Request changes",
+              ].join("\n"),
+              replies: { nodes: [] },
+            },
             {
               id: "planning-final-1",
               author: { login: "github-actions" },
@@ -545,6 +639,7 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("#90 - validar production");
     expect(prompt).toContain("Comentario de issue.");
     expect(prompt).toContain("Resposta operacional.");
+    expect(prompt).toContain("Latest specialist reviewer memos");
     expect(prompt).toContain("Latest planning conclusion thread");
     expect(prompt).toContain("Final recommendation: `Request changes`");
   });
