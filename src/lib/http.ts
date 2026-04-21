@@ -6,8 +6,28 @@
  * do projeto.
  */
 import { HTTPException } from "hono/http-exception";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import type { AppContext } from "../types/runtime";
 
-export function jsonError(c, status, code, message, details) {
+export type JsonErrorDetails = Record<string, unknown> | undefined;
+
+export type JsonErrorBody = {
+  error: {
+    code: string;
+    message: string;
+    details?: JsonErrorDetails;
+  };
+  requestId: string;
+  tenantId?: string;
+};
+
+export function jsonError(
+  c: AppContext,
+  status: number,
+  code: string,
+  message: string,
+  details?: JsonErrorDetails,
+): Response {
   return c.json(
     {
       error: {
@@ -18,11 +38,11 @@ export function jsonError(c, status, code, message, details) {
       requestId: c.get("requestId"),
       tenantId: c.get("tenant")?.tenantId,
     },
-    status,
+    status as ContentfulStatusCode,
   );
 }
 
-export function jsonNotImplemented(c, capability, details) {
+export function jsonNotImplemented(c: AppContext, capability: string, details?: JsonErrorDetails): Response {
   return jsonError(
     c,
     501,
@@ -32,7 +52,7 @@ export function jsonNotImplemented(c, capability, details) {
   );
 }
 
-export function normalizeHttpError(error) {
+export function normalizeHttpError(error: unknown): HTTPException {
   if (error instanceof HTTPException) {
     return error;
   }
