@@ -812,6 +812,21 @@ describe("telegram webhook reply flow", () => {
     };
     const repliesByChatId = new Map();
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_status_awaiting_payment") {
+        return new Response(JSON.stringify({
+          qrId: "qr_status_awaiting_payment",
+          status: "pending",
+          expiration: "2026-04-20T03:00:00.000Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
       const payload = JSON.parse(String(init?.body));
       repliesByChatId.set(String(payload.chat_id), payload.text);
 
@@ -903,6 +918,212 @@ describe("telegram webhook reply flow", () => {
     }
 
     expect(repliesByChatId.get("13404")).toContain("0002010102122688pix-status-awaiting-payment");
+  });
+
+  it("rechecks an awaiting payment order before answering /status", async function assertStatusRechecksAwaitingPaymentOrder() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockRecheckAndTelegram(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_status_recheck_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_status_recheck_001",
+          status: "depix_sent",
+          expiration: "2026-04-20T03:00:00.000Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        replies.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: replies.length,
+            date: 1713434423,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_status_recheck_001",
+      userId: "13409",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "13409",
+      amountInCents: 500,
+      currentStep: "awaiting_payment",
+      status: "pending",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_status_recheck_001",
+      qrId: "qr_status_recheck_001",
+      orderId: "order_status_recheck_001",
+      nonce: "nonce_status_recheck_001",
+      qrCopyPaste: "0002010102122688pix-status-recheck",
+      qrImageUrl: "https://example.com/status-recheck.png",
+      externalStatus: "pending",
+      expiration: "2026-04-20T03:00:00.000Z",
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/status",
+          chatId: 13409,
+          fromId: 13409,
+          updateId: 13409,
+        }),
+      },
+      workerEnv,
+    );
+    const savedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_status_recheck_001")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(savedOrder).toEqual({
+      currentStep: "completed",
+      status: "paid",
+    });
+    expect(replies[0]).toContain("Pagamento concluído");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
+  });
+
+  it("rechecks an awaiting payment order before answering /start", async function assertStartRechecksAwaitingPaymentOrder() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const replies = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockRecheckAndTelegram(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_start_recheck_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_start_recheck_001",
+          status: "depix_sent",
+          expiration: "2026-04-20T03:00:00.000Z",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      if (url.includes("/sendMessage")) {
+        const payload = JSON.parse(String(init?.body));
+        replies.push(payload.text);
+
+        return new Response(JSON.stringify({
+          ok: true,
+          result: {
+            message_id: replies.length,
+            date: 1713434424,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_start_recheck_001",
+      userId: "13410",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "13410",
+      amountInCents: 500,
+      currentStep: "awaiting_payment",
+      status: "pending",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_start_recheck_001",
+      qrId: "qr_start_recheck_001",
+      orderId: "order_start_recheck_001",
+      nonce: "nonce_start_recheck_001",
+      qrCopyPaste: "0002010102122688pix-start-recheck",
+      qrImageUrl: "https://example.com/start-recheck.png",
+      externalStatus: "pending",
+      expiration: "2026-04-20T03:00:00.000Z",
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 13410,
+          fromId: 13410,
+          updateId: 13410,
+        }),
+      },
+      workerEnv,
+    );
+    const savedOrder = await getDatabase(env)
+      .prepare("SELECT current_step AS currentStep, status FROM orders WHERE tenant_id = ? AND order_id = ? LIMIT 1")
+      .bind("alpha", "order_start_recheck_001")
+      .first();
+    const orderCount = await getDatabase(env)
+      .prepare("SELECT COUNT(*) AS count FROM orders WHERE tenant_id = ? AND user_id = ?")
+      .bind("alpha", "13410")
+      .first();
+
+    expect(response.status).toBe(200);
+    expect(savedOrder).toEqual({
+      currentStep: "completed",
+      status: "paid",
+    });
+    expect(orderCount?.count).toBe(1);
+    expect(replies[0]).toContain("Pagamento concluído");
+    expect(replies[0]).not.toContain("aguardando pagamento");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
   });
 
   it("routes plain text replies by tenant", async function assertTenantAwareTextReply() {
