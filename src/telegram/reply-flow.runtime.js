@@ -8,7 +8,9 @@
  * - logs suficientes permitem rastrear o caminho inteiro
  */
 import { log } from "../lib/logger.js";
+import { readTenantSecret } from "../config/tenants.js";
 import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
+import { getOrderById } from "../db/repositories/orders-repository.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
 import {
   cancelTelegramOpenOrder,
@@ -23,6 +25,7 @@ import {
   confirmTelegramOrder,
   TelegramOrderConfirmationError,
 } from "../services/telegram-order-confirmation.js";
+import { processDepositRecheck } from "../services/eulen-deposit-recheck.js";
 import { formatBrlAmountInCents } from "./brl-amount.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
@@ -83,7 +86,15 @@ export function installTelegramReplyFlow(bot, input) {
         return;
       }
 
-      await ctx.reply(buildTelegramOrderStepReply(input.tenant, orderSession.order));
+      const deposit = await readLatestDepositForTelegramOrder(input, orderSession.order);
+      const reconciled = await reconcileTelegramAwaitingPaymentOrder(ctx, input, orderSession.order, deposit, "start");
+
+      if (reconciled.order.currentStep !== orderSession.order.currentStep || reconciled.order.status !== orderSession.order.status) {
+        await ctx.reply(buildTelegramStatusReply(input.tenant, reconciled.order, reconciled.deposit));
+        return;
+      }
+
+      await ctx.reply(buildTelegramOrderStepReply(input.tenant, reconciled.order));
     },
   ));
 
@@ -1159,20 +1170,100 @@ async function handleTelegramStatusRequest(ctx, input, source) {
   const deposit = selection.order
     ? await getLatestDepositByOrderId(input.db, input.tenant.tenantId, String(selection.order.orderId))
     : null;
+  const reconciled = await reconcileTelegramAwaitingPaymentOrder(ctx, input, selection.order, deposit, "status");
 
   logTelegramEvent(input, "info", "telegram.status.rendered", {
     handlerName: ctx.state?.telegramHandler,
     source,
     selectionSource: selection.source,
-    hasOrder: Boolean(selection.order),
-    orderId: selection.order?.orderId,
-    currentStep: selection.order?.currentStep,
-    status: selection.order?.status,
-    hasDeposit: Boolean(deposit),
-    depositEntryId: deposit?.depositEntryId,
+    hasOrder: Boolean(reconciled.order),
+    orderId: reconciled.order?.orderId,
+    currentStep: reconciled.order?.currentStep,
+    status: reconciled.order?.status,
+    hasDeposit: Boolean(reconciled.deposit),
+    depositEntryId: reconciled.deposit?.depositEntryId,
+    recheckAttempted: reconciled.attempted,
+    recheckCode: reconciled.result?.code,
   });
 
-  await ctx.reply(buildTelegramStatusReply(input.tenant, selection.order, deposit));
+  await ctx.reply(buildTelegramStatusReply(input.tenant, reconciled.order, reconciled.deposit));
+}
+
+async function readLatestDepositForTelegramOrder(input, order) {
+  if (!input.db || !order?.orderId) {
+    return null;
+  }
+
+  return getLatestDepositByOrderId(input.db, input.tenant.tenantId, String(order.orderId));
+}
+
+function canRecheckTelegramAwaitingPayment(order, deposit) {
+  return order?.currentStep === ORDER_PROGRESS_STATES.AWAITING_PAYMENT
+    && typeof deposit?.depositEntryId === "string"
+    && deposit.depositEntryId.trim().length > 0;
+}
+
+async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit, source) {
+  if (!canRecheckTelegramAwaitingPayment(order, deposit)) {
+    return {
+      order,
+      deposit,
+      attempted: false,
+      result: null,
+    };
+  }
+
+  try {
+    const eulenApiToken = await readTenantSecret(input.env, input.tenant, "eulenApiToken");
+    const result = await processDepositRecheck({
+      db: input.db,
+      runtimeConfig: input.runtimeConfig,
+      tenant: input.tenant,
+      eulenApiToken,
+      rawBody: JSON.stringify({
+        depositEntryId: deposit.depositEntryId,
+      }),
+      requestId: input.requestContext?.requestId,
+    });
+    const [updatedOrder, updatedDeposit] = await Promise.all([
+      getOrderById(input.db, input.tenant.tenantId, String(order.orderId)),
+      readLatestDepositForTelegramOrder(input, order),
+    ]);
+
+    logTelegramEvent(input, "info", "telegram.deposit_recheck.completed", {
+      handlerName: ctx.state?.telegramHandler,
+      source,
+      orderId: order.orderId,
+      depositEntryId: deposit.depositEntryId,
+      code: result.code,
+      externalStatus: result.details.externalStatus,
+      orderCurrentStep: result.details.orderCurrentStep,
+      orderStatus: result.details.orderStatus,
+    });
+
+    return {
+      order: updatedOrder ?? order,
+      deposit: updatedDeposit ?? deposit,
+      attempted: true,
+      result,
+    };
+  } catch (error) {
+    logTelegramEvent(input, "warn", "telegram.deposit_recheck.failed", {
+      handlerName: ctx.state?.telegramHandler,
+      source,
+      orderId: order.orderId,
+      depositEntryId: deposit.depositEntryId,
+      code: typeof error?.code === "string" ? error.code : error?.name ?? "telegram_deposit_recheck_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+
+    return {
+      order,
+      deposit,
+      attempted: true,
+      result: null,
+    };
+  }
 }
 
 /**
