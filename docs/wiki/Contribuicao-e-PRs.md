@@ -38,6 +38,7 @@
 - a automacao le a conclusao mais recente e as replies humanas nessa thread como handoff da rodada seguinte
 - quando uma nova rodada aprova, a automacao responde nessa thread explicando por que agora passou
 - comentarios automatizados antigos dos especialistas nao devem entrar como contexto bruto da nova rodada; o contexto operacional valido e a thread da conclusao e comentarios humanos soltos relevantes
+- quando houver follow-up, a automacao deve incorporar tambem os ultimos memos dos revisores especialistas antes de abrir novos blockers, para evitar regressao de contexto
 - se a Discussion ja existia antes do gate ou se o workflow precisar ser reexecutado sem novo comentario, o mantenedor pode usar `workflow_dispatch` do `AI Issue Planning Review` informando `issue_number` ou `discussion_number`
 - itens antigos nao sao backfilled automaticamente; a operacao deve reenfileirar esses casos explicitamente pelo `workflow_dispatch` com `issue_number`, nunca por edicao ou comentario humano com marker colado
 - se houver falso positivo ou falha operacional na lane de planning review, o mantenedor deve registrar a ocorrencia na propria Discussion, ajustar escopo ou contexto quando necessario e rerodar o workflow antes de seguir
@@ -80,13 +81,7 @@ Explicitar:
 - quando a PR passar numa rodada seguinte, a automacao deve responder na thread da conclusao explicando por que os bloqueios anteriores deixaram de valer
 - quando a PR cair em Discussion, o autor deve ler a sintese, responder pontos materiais na propria Discussion e ajustar a PR quando houver `Request changes`
 - quando um especialista retornar `Request changes`, o memo precisa trazer o `## Blocker contract` canonico; memorandos sem esse contrato sao considerados invalidos pela automacao
+- em follow-up, os memos mais recentes dos especialistas devem ser considerados junto com a conclusao humana antes de consolidar novos bloqueios
 - em `Request changes`, o blocker contract deve ser o unico e mais severo bloqueador daquele papel, usando os mesmos rotulos canonicos definidos na doctrina compartilhada
 - na revisao automatica de PR, falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
 - quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
-- quando a revisao for de follow-up em blocker de acceptance tests, a automacao publica uma secao deterministica de `Follow-up blocker evidence` antes da rodada do modelo, prioriza arquivos de teste explicitamente citados pelo blocker dentro do payload bounded e reconcilia a evidencia com o conteudo do checkout quando o patch do GitHub nao trouxer detalhes suficientes
-- nessa mesma situacao, bloqueios antigos so podem ser descarregados quando a evidencia atual mostrar explicitamente o arquivo solicitado, o cenario protegido e o estado de `CI / Test` esperado
-
-## Regra de convivencia
-
-- se a PR tocar workflow de review, a documentacao desta pagina pode precisar de ajuste junto com o teste correspondente
-- se a PR nao alterar contratos de revisao, esta pagina nao precisa mudar

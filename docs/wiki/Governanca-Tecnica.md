@@ -31,6 +31,7 @@
 - o workflow de planning foi endurecido para nao manter portas paralelas de entrada por `issues` ou `issue_comment`; o contrato canonico agora e a decisao da triagem + `workflow_dispatch`
 - a planning review roda quatro papeis especializados: produto, technical, scrum e risk
 - a automacao da planning review deve ignorar metadados automatizados de triagem e de status anteriores, preservando comentarios humanos como contexto operacional
+- em follow-up, a revisao deve tambem carregar os ultimos memos especialistas antes de formular novos bloqueios, para evitar mover o alvo da discussao
 - a decisao registrada na Discussion vira insumo para a PR pequena e coesa
 - a issue so deve ser tratada como pronta quando a Discussion terminar com aprovacao unanime dos quatro papeis e a propria issue publicar `canonical_state: issue_ready_for_codex`
 - quando a planning review concluir `Blocked`, a issue nao esta rejeitada; ela esta especificada, mas ainda depende de trabalho upstream explicito antes da implementacao
@@ -38,6 +39,7 @@
 - o contrato canonico de blocker usa os mesmos rotulos em product, technical e risk para manter decisao consistente entre roles
 - quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`
 - a reconciliacao de follow-up blockers exige ler a ultima conclusao da Discussion, transformar a resposta final em blockers testaveis canonicos e manter os bloqueios anteriores ativos ate haver alinhamento entre diff atual, evidencia explicita de arquivo de teste e `CI / Test`
+- em follow-up, a revisao deve preferir a reconciliacao estavel do conjunto anterior de bloqueios em vez de reabrir um blocker mais amplo sem contradicao concreta
 - approvações de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
 - a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
 - contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
