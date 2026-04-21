@@ -4,6 +4,7 @@
 
 O rollout fica bloqueado se qualquer um destes pontos nao estiver valido no ambiente alvo:
 
+- gate real Telegram 0.1 com preflight verde e JSON de execucao real controlada
 - autenticação e tenancy
 - persistência D1 operacional
 - webhook da Eulen validado
@@ -24,6 +25,7 @@ Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
 | Area | Ambiente alvo | Evidencia minima | Bloqueia release? |
 | --- | --- | --- | --- |
+| Gate real Telegram 0.1 | `production` | `artifacts/telegram-real-flow/preflight-*.json` verde + `real-run-*.json` com `status=success` | Sim |
 | Pagamento real controlado | `production` | issue #125 ou evidencia equivalente ate `completed` | Sim |
 | Webhook Eulen normal | `test` ou `production` | `deposit_events.source=webhook` com `bank_tx_id` e `blockchain_tx_id` quando enviados | Sim |
 | Recheck por deposito | `test` ou incidente production | `deposit_events.source=recheck_deposit_status` e agregado consistente | Sim, se webhook falhar |
@@ -34,6 +36,9 @@ Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
 ## Regras de aceite
 
+- nao considerar release pronta sem `npm run telegram:preflight` verde no ambiente alvo
+- nao considerar release pronta sem `npm run telegram:real-run -- --confirm-real` gerando JSON `status=success`
+- o teste real precisa observar `callback_query`, confirmacao por botao, QR/Pix gerado e pagamento confirmado quando `--require-payment-confirmed` for usado
 - nao considerar release pronta sem pelo menos um caminho operacional de confirmacao financeira validado
 - em caso de incidente, o caminho aceito precisa ser explicito no runbook
 - toda mudanca que altere ambiente, segredo, fluxo de pagamento ou webhook precisa atualizar esta pagina na mesma PR

@@ -73,6 +73,27 @@ PUBLIC_BASE_URL="$BASE_URL"
 SINCE_ISO="2026-04-19T14:00:00Z"
 ```
 
+Execute o preflight canonico antes de qualquer compra real:
+
+```bash
+OPS_ROUTE_BEARER_TOKEN="<token operacional>" \
+  npm run telegram:preflight -- \
+  --env test \
+  --tenant "$TENANT_ID" \
+  --out "artifacts/telegram-real-flow/preflight-test-$TENANT_ID.json"
+```
+
+O preflight deve ficar verde para:
+
+- `GET /health`
+- secrets e split do tenant
+- URL canonica do webhook Telegram
+- `allowed_updates` contendo `callback_query`
+- comandos publicos `/start`, `/help`, `/status`, `/cancel`
+- menu button do Telegram em modo `commands`
+
+Se qualquer item falhar, pare. Nao execute a compra real ate corrigir o diagnostico do JSON.
+
 Confirme health:
 
 ```bash
@@ -111,6 +132,45 @@ Colete baseline:
 ```bash
 node scripts/collect-qr-flow-evidence.mjs --env test --tenant "$TENANT_ID" --since "$SINCE_ISO"
 ```
+
+## Runner real assistido
+
+O runner real nao conversa por voce nem gasta dinheiro sozinho. Ele inicia o `wrangler tail`, observa logs reais e escreve um unico JSON de evidencia. A conversa e o pagamento continuam sendo acao manual do operador.
+
+Sem a flag `--confirm-real`, o runner aborta e escreve evidencia de bloqueio:
+
+```bash
+npm run telegram:real-run -- \
+  --env production \
+  --tenant alpha \
+  --amount-brl 3 \
+  --wallet "<endereco lq1 ou ex1>" \
+  --out artifacts/telegram-real-flow/real-run-production-alpha.json
+```
+
+Para uma execucao real controlada:
+
+```bash
+npm run telegram:real-run -- \
+  --env production \
+  --tenant alpha \
+  --amount-brl 3 \
+  --wallet "<endereco lq1 ou ex1>" \
+  --confirm-real \
+  --require-payment-confirmed \
+  --out artifacts/telegram-real-flow/real-run-production-alpha.json
+```
+
+Enquanto o runner estiver aberto, faca no Telegram:
+
+1. envie `/start`
+2. envie o valor configurado em `--amount-brl`
+3. envie o endereco configurado em `--wallet`
+4. toque no botao `Confirmar`, sem confirmar por texto
+5. pague o Pix manualmente
+6. aguarde o runner registrar sucesso ou falha
+
+O JSON gerado e o artefato canonico do teste real.
 
 ## Fluxo Telegram em test
 
