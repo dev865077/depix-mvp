@@ -27,7 +27,7 @@ import {
   ORDER_PROGRESS_EVENTS,
   ORDER_PROGRESS_STATES,
   normalizePersistedOrderProgressStep,
-} from "../order-flow/order-progress-machine.ts";
+} from "../order-flow/order-progress-machine.js";
 
 const TELEGRAM_CONFIRMATION_FAILURE_MESSAGE = [
   "Nao consegui criar seu Pix agora.",
