@@ -60,6 +60,9 @@ Endpoints relevantes:
 
 Estado atual:
 
+- o client da Eulen foi migrado para TypeScript, mantendo o runtime JS checado no repositorio
+- as respostas de criacao de deposito agora sao resolvidas por um envelope validado antes de consumidores usarem `response.data`
+- o `deposit-status` tambem passou a usar resolucao validada do payload de resposta, com erro estruturado quando o contrato externo vem invalido
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
@@ -100,4 +103,4 @@ Toda chamada real de `deposit` deve carregar split do tenant. O codigo nao aceit
 
 Antes de chamar a Eulen, o diagnostico valida se o split foi materializado e se nao parece placeholder. Isso evita transformar erro de configuracao local em erro 520 upstream.
 
-O `depixSplitAddress` aceita o endereco de recebimento gerado pela SideSwap. Na pratica, isso inclui enderecos Liquid confidenciais com prefixo `lq1` e enderecos documentados `ex1`. O runtime remove espacos visuais e normaliza o texto antes de montar o payload para a Eulen.
+O `depixSplitAddress` aceita o endereco DePix/Liquid do tenant, e `splitFee` segue o formato percentural esperado pela Eulen.
