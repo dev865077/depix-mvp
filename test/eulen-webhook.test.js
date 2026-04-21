@@ -125,7 +125,7 @@ async function requestEulenWebhook(options = {}) {
         "content-type": "application/json",
         ...(options.authorizationHeader ? { authorization: options.authorizationHeader } : {}),
       },
-      body: JSON.stringify(payload),
+      body: options.rawBody ?? JSON.stringify(payload),
     },
     createWorkerEnv(),
   );
@@ -275,6 +275,46 @@ describe("eulen deposit webhook", () => {
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("invalid_webhook_secret");
     expect(savedEvents).toHaveLength(0);
+  });
+
+  it("fails closed with structured details when the webhook JSON is malformed", async function assertMalformedWebhookPayload() {
+    await seedDepositAggregate();
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      rawBody: "{",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("invalid_webhook_payload");
+    expect(body.error.details).toMatchObject({
+      code: "eulen_invalid_payload",
+      source: "webhook",
+      reason: "webhook_body_invalid_json",
+    });
+  });
+
+  it("fails closed with structured details when the webhook misses a required field", async function assertStructuredWebhookFieldValidation() {
+    await seedDepositAggregate();
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+      payload: {
+        webhookType: "deposit",
+        qrId: "qr_alpha_001",
+      },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("invalid_webhook_payload");
+    expect(body.error.details).toMatchObject({
+      code: "eulen_invalid_payload",
+      source: "webhook",
+      reason: "missing_required_string",
+      field: "status",
+    });
   });
 
   it("ignores repeated delivery without duplicating persistence or Telegram notification", async function assertWebhookIdempotency() {
@@ -490,6 +530,64 @@ describe("eulen deposit webhook", () => {
     expect(body.qrId).toBe("qr_alpha_001");
     expect(hydratedDeposit?.qrId).toBe("qr_alpha_001");
     expect(hydratedDeposit?.externalStatus).toBe("depix_sent");
+  });
+
+  it("fails closed when deposit-status returns an invalid external contract", async function assertInvalidDepositStatusContract() {
+    await resetDatabaseSchema();
+
+    const db = getDatabase(env);
+
+    await createOrder(db, {
+      tenantId: "alpha",
+      orderId: "order_alpha_001",
+      userId: "telegram_alpha_001",
+      channel: "telegram",
+      productType: "depix",
+      amountInCents: 12345,
+      walletAddress: "depix_wallet_alpha",
+      currentStep: "awaiting_payment",
+      status: "pending",
+      splitAddress: "split_wallet_alpha",
+      splitFee: "0.50",
+    });
+
+    await createDeposit(db, {
+      tenantId: "alpha",
+      depositEntryId: "deposit_entry_alpha_001",
+      qrId: null,
+      orderId: "order_alpha_001",
+      nonce: "nonce_alpha_001",
+      qrCopyPaste: "0002010102122688qr-alpha-001",
+      qrImageUrl: "https://example.com/qr/alpha.png",
+      externalStatus: "pending",
+      expiration: "2026-04-18T04:00:00Z",
+    });
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        qrId: 123,
+        status: "pending",
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(body.error.code).toBe("deposit_lookup_unavailable");
+    expect(body.error.details.cause).toMatchObject({
+      code: "eulen_invalid_payload",
+      source: "response",
+      field: "qrId",
+      path: "/deposit-status",
+    });
   });
 
   it("fails explicitly when webhook dependencies are unavailable", async function assertMissingWebhookDependency() {

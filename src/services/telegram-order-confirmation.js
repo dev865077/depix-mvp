@@ -13,7 +13,7 @@
 import {
   createEulenDeposit,
   EulenApiError,
-  resolveEulenAsyncResponse,
+  resolveCreatedEulenDepositResponse,
 } from "../clients/eulen-client.js";
 import { readTenantSecret, readTenantSplitConfig } from "../config/tenants.js";
 import {
@@ -536,17 +536,19 @@ export async function confirmTelegramOrder(input) {
       });
     }
 
-    const response = await resolveEulenAsyncResponse(
+    const response = await resolveCreatedEulenDepositResponse(
       await createEulenDeposit(input.runtimeConfig, {
         apiToken,
         partnerId: input.tenant.eulenPartnerId,
       }, {
         asyncMode: "auto",
         body: createTelegramEulenDepositPayload(creatingDepositOrder, splitConfig),
+        requestId: input.requestContext?.requestId,
       }),
       {
         pollDelayMs: 0,
       },
+      input.requestContext?.requestId,
     );
     const createdDeposit = extractCreatedDeposit(response.data);
     let savedDeposit;

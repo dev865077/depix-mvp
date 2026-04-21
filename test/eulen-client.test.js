@@ -15,7 +15,9 @@ import {
   pingEulen,
   readEulenAsyncResult,
   requestEulenApi,
+  resolveCreatedEulenDepositResponse,
   resolveEulenAsyncResponse,
+  resolveEulenDepositStatusResponse,
 } from "../src/clients/eulen-client.js";
 
 const RUNTIME_CONFIG = {
@@ -29,11 +31,10 @@ const TENANT_CREDENTIALS = {
 };
 
 const VALID_DEPOSIT_BODY = {
-  walletAddress: "bc1qexamplewallet",
-  asset: "BTC",
-  amount: "150.00",
+  amountInCents: 15000,
+  depixAddress: "depix_wallet_alpha",
   depixSplitAddress: "split-address-001",
-  splitFee: "12.50",
+  splitFee: "12.50%",
 };
 
 afterEach(function restoreFetchMock() {
@@ -105,6 +106,7 @@ export async function assertHttpErrorHandling() {
 export function assertDepositSplitContract() {
   expect(assertRequiredDepositSplit(VALID_DEPOSIT_BODY)).toEqual(VALID_DEPOSIT_BODY);
   expect(() => assertRequiredDepositSplit(undefined)).toThrow(EulenApiError);
+  expect(() => assertRequiredDepositSplit({ ...VALID_DEPOSIT_BODY, amountInCents: 0 })).toThrow(EulenApiError);
   expect(() => assertRequiredDepositSplit({ ...VALID_DEPOSIT_BODY, depixSplitAddress: "" })).toThrow(EulenApiError);
   expect(() => assertRequiredDepositSplit({ ...VALID_DEPOSIT_BODY, splitFee: "" })).toThrow(EulenApiError);
 }
@@ -289,6 +291,72 @@ export async function assertAsyncBusinessErrorMapping() {
   });
 }
 
+export function assertStructuredRequestValidationError() {
+  let capturedError;
+
+  try {
+    assertRequiredDepositSplit({
+      ...VALID_DEPOSIT_BODY,
+      amountInCents: "15000",
+    });
+  } catch (error) {
+    capturedError = error;
+  }
+
+  expect(capturedError).toMatchObject({
+    name: "EulenPayloadValidationError",
+    details: {
+      code: "eulen_invalid_payload",
+      source: "request",
+      reason: "missing_required_positive_integer",
+      field: "amountInCents",
+    },
+  });
+}
+
+export async function assertStructuredCreateResponseValidationError() {
+  await expect(resolveCreatedEulenDepositResponse({
+    ok: true,
+    status: 200,
+    nonce: "nonce_invalid_create_response",
+    asyncMode: "false",
+    headers: {},
+    data: {
+      id: "deposit_123",
+      qrCopyPaste: "00020101021226pix",
+    },
+  })).rejects.toMatchObject({
+    name: "EulenPayloadValidationError",
+    details: {
+      code: "eulen_invalid_payload",
+      source: "response",
+      field: "qrImageUrl",
+    },
+  });
+}
+
+export async function assertStructuredDepositStatusValidationError() {
+  await expect(resolveEulenDepositStatusResponse({
+    ok: true,
+    status: 200,
+    nonce: "nonce_invalid_status_response",
+    asyncMode: "false",
+    headers: {},
+    data: {
+      qrId: 123,
+      status: "pending",
+    },
+  })).rejects.toMatchObject({
+    name: "EulenPayloadValidationError",
+    details: {
+      code: "eulen_invalid_payload",
+      source: "response",
+      field: "qrId",
+      path: "/deposit-status",
+    },
+  });
+}
+
 describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
@@ -307,6 +375,7 @@ describe("eulen client", () => {
   it("fails fast before calling Eulen when split config is missing", assertDepositFailsFastWithoutSplit);
   it("sends deposit requests only when the split config is complete", assertDepositRequestShape);
   it("lists deposits by reconciliation window", assertDepositsListRequestShape);
+  it("fails closed with a structured request error when create-deposit input is invalid", assertStructuredRequestValidationError);
   it("detects asynchronous response pointers", function assertAsyncPointerDetection() {
     expect(isEulenAsyncResponsePointer({
       async: true,
@@ -317,4 +386,6 @@ describe("eulen client", () => {
   it("polls asynchronous Eulen result URLs with a bounded retry policy", assertAsyncResultPolling);
   it("normalizes asynchronous Eulen responses into the standard response envelope", assertAsyncResponseResolution);
   it("maps asynchronous Eulen business errors to standardized client errors", assertAsyncBusinessErrorMapping);
+  it("fails closed with a structured response error when create-deposit payload is invalid", assertStructuredCreateResponseValidationError);
+  it("fails closed with a structured response error when deposit-status payload is invalid", assertStructuredDepositStatusValidationError);
 });
