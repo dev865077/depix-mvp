@@ -811,6 +811,7 @@ export async function processEulenDepositWebhook(
       externalStatus: payload.status,
       bankTxId: payload.bankTxId ?? null,
       blockchainTxId: payload.blockchainTxId ?? null,
+      requestId: input.requestId ?? null,
       rawPayload: input.rawBody,
     });
   } catch (error) {

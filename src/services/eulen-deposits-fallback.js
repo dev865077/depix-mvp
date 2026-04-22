@@ -483,6 +483,7 @@ async function reconcileDepositsListRow(input) {
     externalStatus: input.remoteDeposit.status,
     bankTxId: input.remoteDeposit.bankTxId ?? null,
     blockchainTxId: input.remoteDeposit.blockchainTxId ?? null,
+    requestId: input.requestId ?? null,
     rawPayload: eventPayload,
   };
 

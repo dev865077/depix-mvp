@@ -88,6 +88,7 @@ describe("qr flow evidence helpers", () => {
     });
 
     expect(ordersQuery).toContain("o.channel = 'telegram'");
+    expect(ordersQuery).toContain("o.user_id AS telegram_user_id");
     expect(ordersQuery).toContain("o.tenant_id = 'beta'");
     expect(ordersQuery).toContain("o.order_id = 'order_123'");
     expect(ordersQuery).toContain("d.deposit_entry_id = 'deposit_123'");
@@ -97,12 +98,14 @@ describe("qr flow evidence helpers", () => {
     expect(ordersQuery).toContain("julianday(o.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(ordersQuery).toContain("LIMIT 2;");
     expect(depositsQuery).toContain("INNER JOIN orders o ON o.order_id = d.order_id");
+    expect(depositsQuery).toContain("d.created_request_id");
     expect(depositsQuery).toContain("d.tenant_id = 'beta'");
     expect(depositsQuery).toContain("d.order_id = 'order_123'");
     expect(depositsQuery).toContain("d.deposit_entry_id = 'deposit_123'");
     expect(depositsQuery).toContain("julianday(d.updated_at) >= julianday('2026-04-19T02:00:00Z')");
     expect(depositsQuery).toContain("LIMIT 2;");
     expect(eventsQuery).toContain("FROM deposit_events e");
+    expect(eventsQuery).toContain("e.request_id");
     expect(eventsQuery).toContain("INNER JOIN orders o ON o.tenant_id = e.tenant_id AND o.order_id = e.order_id");
     expect(eventsQuery).toContain("e.tenant_id = 'beta'");
     expect(eventsQuery).toContain("e.order_id = 'order_123'");
@@ -200,6 +203,7 @@ describe("qr flow evidence helpers", () => {
       [
         {
           order_id: "order_1",
+          telegram_user_id: "telegram_user_1",
           split_address: "lq1split",
           split_fee: "1.00%",
         },
@@ -232,6 +236,7 @@ describe("qr flow evidence helpers", () => {
       [
         {
           order_id: "order_1",
+          telegram_user_id: "telegram_user_1",
           split_address: "lq1split",
           split_fee: "1.00%",
         },
@@ -651,6 +656,7 @@ describe("qr flow evidence helpers", () => {
       orders: [
         {
           order_id: "order_1",
+          telegram_user_id: "telegram_user_1",
           split_address: "lq1split",
           split_fee: "1.00%",
         },
@@ -658,6 +664,7 @@ describe("qr flow evidence helpers", () => {
       deposits: [
         {
           deposit_entry_id: "dep_1",
+          created_request_id: "request-confirm-1",
         },
       ],
       depositEvents: [
@@ -665,6 +672,7 @@ describe("qr flow evidence helpers", () => {
           id: 1,
           deposit_entry_id: "dep_1",
           external_status: "paid",
+          request_id: "request-webhook-1",
         },
       ],
     });
@@ -678,9 +686,12 @@ describe("qr flow evidence helpers", () => {
     expect(markdown).toContain("### Split proof");
     expect(markdown).toContain("\"status\": \"missing_onchain_tx\"");
     expect(markdown).toContain("\"order_id\": \"order_1\"");
+    expect(markdown).toContain("\"telegram_user_id\": \"telegram_user_1\"");
     expect(markdown).toContain("\"deposit_entry_id\": \"dep_1\"");
+    expect(markdown).toContain("\"created_request_id\": \"request-confirm-1\"");
     expect(markdown).toContain("### Deposit events correlacionados");
     expect(markdown).toContain("\"external_status\": \"paid\"");
+    expect(markdown).toContain("\"request_id\": \"request-webhook-1\"");
     expect(markdown).not.toContain("raw_payload");
   });
 });

@@ -1542,6 +1542,7 @@ async function handleTelegramConfirmRequest(ctx, input, order, source) {
       tenant: input.tenant,
       runtimeConfig: input.runtimeConfig,
       order,
+      requestContext: input.requestContext,
     });
 
     logTelegramConfirmationDecision(ctx, input, "confirm", confirmationSession.order, {

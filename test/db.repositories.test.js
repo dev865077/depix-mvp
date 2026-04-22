@@ -6,6 +6,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import migration0005Sql from "../migrations/0005_deposit_order_uniqueness.sql?raw";
+import migration0008Sql from "../migrations/0008_operational_request_ids.sql?raw";
 
 import { getDatabase } from "../src/db/client.js";
 import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
@@ -127,6 +128,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
     qr_id TEXT,
     order_id TEXT NOT NULL,
     nonce TEXT NOT NULL,
+    created_request_id TEXT,
     qr_copy_paste TEXT NOT NULL,
     qr_image_url TEXT NOT NULL,
     external_status TEXT NOT NULL DEFAULT 'pending',
@@ -143,6 +145,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS deposits_tenant_order_idx ON deposits (tenant_id, order_id)",
   "CREATE UNIQUE INDEX IF NOT EXISTS deposits_tenant_order_unique_idx ON deposits (tenant_id, order_id)",
   "CREATE INDEX IF NOT EXISTS deposits_tenant_qr_idx ON deposits (tenant_id, qr_id)",
+  "CREATE INDEX IF NOT EXISTS deposits_created_request_id_idx ON deposits (created_request_id)",
   `CREATE TABLE IF NOT EXISTS deposit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -153,6 +156,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
     external_status TEXT NOT NULL,
     bank_tx_id TEXT,
     blockchain_tx_id TEXT,
+    request_id TEXT,
     raw_payload TEXT NOT NULL,
     received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE,
@@ -165,6 +169,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_id_idx ON deposit_events (tenant_id)",
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_deposit_entry_idx ON deposit_events (tenant_id, deposit_entry_id)",
   "CREATE INDEX IF NOT EXISTS deposit_events_tenant_qr_idx ON deposit_events (tenant_id, qr_id)",
+  "CREATE INDEX IF NOT EXISTS deposit_events_request_id_idx ON deposit_events (request_id)",
   `CREATE UNIQUE INDEX IF NOT EXISTS deposit_events_idempotency_unique_idx ON deposit_events (
     tenant_id,
     deposit_entry_id,
@@ -355,6 +360,9 @@ function splitMigrationStatements(sql) {
 
 const MIGRATION_0005_STATEMENTS = splitMigrationStatements(
   migration0005Sql,
+);
+const MIGRATION_0008_STATEMENTS = splitMigrationStatements(
+  migration0008Sql,
 );
 
 export function readInitialMigrationSql() {
@@ -591,6 +599,7 @@ async function assertLegacyMigrationBackfill() {
 
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0008_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const migratedDepositByEntryId = await getDepositByDepositEntryId(db, "alpha", "legacy_deposit_001");
@@ -728,6 +737,7 @@ async function assertDepositOrderUniquenessMigrationQuarantinesLegacyDuplicates(
   await env.DB.batch(duplicateFixtureStatements.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0008_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const activeDeposits = await db

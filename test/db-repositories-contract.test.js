@@ -35,6 +35,7 @@ const SCHEMA_STATEMENTS = [
     qr_id TEXT,
     order_id TEXT NOT NULL,
     nonce TEXT NOT NULL,
+    created_request_id TEXT,
     qr_copy_paste TEXT NOT NULL,
     qr_image_url TEXT NOT NULL,
     external_status TEXT NOT NULL DEFAULT 'pending',
@@ -54,6 +55,7 @@ const SCHEMA_STATEMENTS = [
     external_status TEXT NOT NULL,
     bank_tx_id TEXT,
     blockchain_tx_id TEXT,
+    request_id TEXT,
     raw_payload TEXT NOT NULL,
     received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );`,
@@ -259,6 +261,7 @@ describe("db repository typed contracts", () => {
       qrId: false,
       orderId: false,
       nonce: true,
+      createdRequestId: "request-coerced",
       qrCopyPaste: false,
       qrImageUrl: true,
     });
@@ -283,6 +286,7 @@ describe("db repository typed contracts", () => {
       qrId: "false",
       orderId: "false",
       nonce: "true",
+      createdRequestId: "request-coerced",
       qrCopyPaste: "false",
       qrImageUrl: "true",
       externalStatus: "pending",
@@ -310,6 +314,7 @@ describe("db repository typed contracts", () => {
       externalStatus: "paid",
       bankTxId: "bank-contract-003",
       blockchainTxId: null,
+      requestId: "request-webhook-contract",
       rawPayload: "{\"status\":\"paid\"}",
     });
     const secondEvent = await createDepositEvent(db, {
@@ -321,6 +326,7 @@ describe("db repository typed contracts", () => {
       externalStatus: "depix_sent",
       bankTxId: null,
       blockchainTxId: null,
+      requestId: "request-recheck-contract",
       rawPayload: "{\"status\":\"depix_sent\"}",
     });
     const listedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_contract_003");
@@ -334,6 +340,7 @@ describe("db repository typed contracts", () => {
       externalStatus: "paid",
       bankTxId: "bank-contract-003",
       blockchainTxId: null,
+      requestId: "request-webhook-contract",
       rawPayload: "{\"status\":\"paid\"}",
     });
     expect(typeof createdEvent?.id).toBe("number");
@@ -349,6 +356,7 @@ describe("db repository typed contracts", () => {
       externalStatus: "depix_sent",
       bankTxId: null,
       blockchainTxId: null,
+      requestId: "request-recheck-contract",
       rawPayload: "{\"status\":\"depix_sent\"}",
     });
     expect(listedEvents[1]).toMatchObject({
@@ -361,6 +369,7 @@ describe("db repository typed contracts", () => {
       externalStatus: "paid",
       bankTxId: "bank-contract-003",
       blockchainTxId: null,
+      requestId: "request-webhook-contract",
       rawPayload: "{\"status\":\"paid\"}",
     });
   });
