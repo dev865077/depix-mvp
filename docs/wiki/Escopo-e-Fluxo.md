@@ -31,7 +31,7 @@
 - `/start` pode iniciar uma nova conversa ou retomar o pedido aberto mais recente
 - `/iniciar` funciona como alias de `/start`
 - a primeira resposta de `/start` agora explica os comandos disponiveis e mostra apenas um botao inline `Comprar DePix`
-- ao clicar em `Comprar DePix`, o bot pede o valor inteiro em BRL para seguir com a compra
+- ao clicar em `Comprar DePix`, o bot pede o valor em BRL para seguir com a compra
 - se existir um pedido aberto em `amount`, `wallet` ou `confirmation` que ficou inativo por tempo demais, o runtime expira essa conversa antes de processar novas mensagens ou callbacks
 - quando a conversa expira, o usuario recebe uma mensagem indicando que o pedido anterior foi encerrado com seguranca e que a conversa recomeça do inicio
 - `/help` e somente informativo: pode ler o pedido aberto para contextualizar a resposta, mas nao cria pedido novo nem altera o pedido existente

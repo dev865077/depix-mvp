@@ -73,7 +73,5 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
 - o fluxo Telegram agora aceita `/cancel` e comandos equivalentes para cancelar pedidos abertos em `amount`, `wallet` e `confirmation`
 - `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
-- `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
-- replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
-- a migracao TypeScript central foi encerrada com `src/index.ts` como entrypoint canonico
-- o comando canonico de verficacao
+- `recomecar` reinicia com seguranca quando existe contexto aberto e, sem contexto, apenas orienta o usuario a usar `/start`
+- a copy do prompt de valor agora usa "valor em BRL" na orientacao normal, reservando a instrução de valor inteiro apenas para o caso em que centavos nao sao suportados

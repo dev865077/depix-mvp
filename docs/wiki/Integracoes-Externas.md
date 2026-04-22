@@ -24,7 +24,7 @@ Estado atual:
 - o webhook do Telegram agora inclui `callback_query` entre os updates permitidos, para manter a UX inline acessivel
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
 - o `/start` inicial agora mostra uma explicacao curta dos comandos e um unico botao inline `Comprar DePix`
-- ao acionar `Comprar DePix`, o runtime responde pedindo o valor inteiro em BRL para iniciar a compra
+- ao acionar `Comprar DePix`, o runtime responde pedindo o valor em BRL para iniciar a compra
 - ao receber `/help`, o runtime pode ler o pedido aberto para contextualizar a resposta, mas nao cria nem muta pedidos
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
 - o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
@@ -54,6 +54,7 @@ Estado atual:
 - callback queries com essas CTAs sao roteadas pelo mesmo fluxo de pedido, sem remover o fallback por texto
 - quando o pedido tem mensagem canonica persistida, o Telegram pode editar a mensagem de QR/status/conclusao no lugar, em vez de emitir uma nova mensagem a cada transicao
 - as respostas de status, replay e confirmacao de pagamento agora sao enviadas como mensagens novas ou fotos novas, nao como edicoes da mensagem antiga
+- a copy normal de valor agora remove "inteiro" da orientacao principal; a instrução de valor inteiro fica reservada para o caso de centavos nao suportados
 
 ## Eulen
 
@@ -92,12 +93,4 @@ Estado atual:
 - a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
 - a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de criacao do deposito
 - a criacao de deposito persiste `orders` e `deposits` juntos para evitar duplicidade silenciosa
-- em falha da Eulen, o pedido e marcado como `failed` e o usuario recebe instrucoes para recomecar
-- o webhook canonico da Eulen de deposito agora responde a probes em `GET` e `HEAD` na mesma URL, com erro diagnosticavel `webhook_method_not_allowed`
-- `POST` continua sendo o unico metodo que executa o processamento real do webhook
-
-## Regra operacional central
-
-- integrar via contrato e nao por suposicao
-- manter segredos fora da wiki
-- documentar mudancas de superficie publica sempre que a UX ou o contrato externo mudarem
+- em falha da Eulen, o pedido e
