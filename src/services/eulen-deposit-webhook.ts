@@ -19,12 +19,18 @@ import {
 } from "../clients/eulen-client.js";
 import { createDepositEvent, listDepositEventsByDepositEntryId } from "../db/repositories/deposit-events-repository.js";
 import {
+  buildSelectDepositByDepositEntryIdStatement,
+  buildUpdateDepositByDepositEntryIdStatement,
   getDepositByDepositEntryId,
   getDepositByQrId,
   listDepositsNeedingQrIdReconciliation,
   updateDepositByDepositEntryId,
 } from "../db/repositories/deposits-repository.js";
-import { getOrderById, updateOrderById } from "../db/repositories/orders-repository.js";
+import {
+  buildSelectOrderByIdStatement,
+  buildUpdateOrderByIdStatement,
+  getOrderById,
+} from "../db/repositories/orders-repository.js";
 import { log } from "../lib/logger.js";
 
 import type { DepositEventRecord, DepositPatch, DepositRecord, OrderPatch, OrderRecord } from "../types/persistence.js";
@@ -435,19 +441,36 @@ export async function applyWebhookTruthToAggregate(
   order: OrderRecord,
   externalStatus: string,
 ): Promise<{ updatedDeposit: DepositRecord | null; updatedOrder: OrderRecord | null }> {
-  const updatedDeposit = await updateDepositByDepositEntryId(db, tenantId, deposit.depositEntryId, {
+  const depositUpdateStatement = buildUpdateDepositByDepositEntryIdStatement(db, tenantId, deposit.depositEntryId, {
     externalStatus,
   } satisfies DepositPatch);
-  const updatedOrder = await updateOrderById(
+  const orderUpdateStatement = buildUpdateOrderByIdStatement(
     db,
     tenantId,
     deposit.orderId,
     reconcileOrderPatch(order, mapOrderPatchFromExternalStatus(externalStatus)) as OrderPatch,
   );
+  const statements: D1PreparedStatement[] = [];
+
+  if (depositUpdateStatement) {
+    statements.push(depositUpdateStatement);
+  }
+
+  if (orderUpdateStatement) {
+    statements.push(orderUpdateStatement);
+  }
+
+  const depositSelectIndex = statements.push(
+    buildSelectDepositByDepositEntryIdStatement(db, tenantId, deposit.depositEntryId),
+  ) - 1;
+  const orderSelectIndex = statements.push(buildSelectOrderByIdStatement(db, tenantId, deposit.orderId)) - 1;
+  // Boundary transacional: se qualquer statement do agregado falhar, o D1
+  // reverte os writes anteriores do mesmo batch.
+  const results = await db.batch(statements);
 
   return {
-    updatedDeposit,
-    updatedOrder,
+    updatedDeposit: (results[depositSelectIndex]?.results?.[0] as DepositRecord | undefined) ?? null,
+    updatedOrder: (results[orderSelectIndex]?.results?.[0] as OrderRecord | undefined) ?? null,
   };
 }
 
