@@ -2511,7 +2511,8 @@ describe("telegram webhook reply flow", () => {
       .first();
     const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
     const copyPasteReply = telegramCalls.find((entry) => entry.kind === "message" && entry.payload.text?.includes("Pix copia e cola:"));
-    const replayReply = telegramCalls.findLast((entry) => entry.kind === "edit_caption");
+    const photoReplies = telegramCalls.filter((entry) => entry.kind === "photo");
+    const editReplies = telegramCalls.filter((entry) => entry.kind === "edit_caption");
 
     expect(eulenCalls).toHaveLength(1);
     expect(eulenCalls[0]).toEqual({
@@ -2547,9 +2548,10 @@ describe("telegram webhook reply flow", () => {
       ],
     ]);
     expect(copyPasteReply).toBeUndefined();
-    expect(replayReply?.kind).toBe("edit_caption");
-    expect(replayReply.payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
-    expect(replayReply.payload.caption).toContain("0002010102122688pix-alpha-001");
+    expect(editReplies).toHaveLength(0);
+    expect(photoReplies).toHaveLength(2);
+    expect(photoReplies[1].payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
+    expect(photoReplies[1].payload.caption).toContain("0002010102122688pix-alpha-001");
     expect(fetchSpy).toHaveBeenCalled();
   });
 
