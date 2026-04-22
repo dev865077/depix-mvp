@@ -4049,7 +4049,8 @@ describe("telegram webhook reply flow", () => {
       },
     });
     expect(telegramCalls[1].kind).toBe("message");
-    expect(telegramCalls[1].payload.text).toContain("Para comprar DePix, envie o valor inteiro em BRL.");
+    expect(telegramCalls[1].payload.text).toContain("Para comprar DePix, envie o valor em BRL.");
+    expect(telegramCalls[1].payload.text).not.toContain("inteiro");
     expect(telegramCalls[1].payload.text).toContain("Exemplo: 100");
   });
 

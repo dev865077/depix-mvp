@@ -303,7 +303,7 @@ export function buildTelegramHelpReply(tenant, order) {
   const header = `Ajuda do bot ${tenant.displayName} da DePix.`;
   const generalGuidance = [
     "Envie /start para começar uma compra de DePix com Pix.",
-    "Depois informe o valor em BRL inteiro, por exemplo: 100.",
+    "Depois informe o valor em BRL, por exemplo: 100.",
     "Quando o bot pedir, cole seu endereço DePix/Liquid. Aceito endereços começando com lq1 ou ex1.",
     "Use /status para consultar o pedido atual ou o último pedido relevante sem alterar nada.",
     "Para cancelar um pedido aberto, envie /cancel. Para recomeçar, envie recomecar.",
@@ -358,7 +358,7 @@ export function buildTelegramStatusReply(tenant, order, deposit = null) {
         header,
         amountLine,
         statusLine,
-        "Próximo passo: envie o valor em BRL inteiro, por exemplo 100.",
+        "Próximo passo: envie o valor em BRL, por exemplo 100.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.WALLET:
       return [
@@ -638,10 +638,13 @@ export function buildTelegramInvalidAmountReply(parseResult) {
     below_minimum: `O valor mínimo por pedido é ${formatBrlAmountInCents(parseResult.minAmountInCents)}.`,
     above_limit: `O limite inicial por pedido é ${maxAmount}.`,
   };
+  const instructionByCode = {
+    cents_not_supported: "Envie apenas o valor inteiro em BRL.",
+  };
 
   return [
     reasonByCode[parseResult.reason] ?? "Não consegui validar esse valor.",
-    "Envie apenas o valor inteiro em BRL.",
+    instructionByCode[parseResult.reason] ?? "Envie apenas o valor em BRL.",
     [
       "Exemplo: 10 ou R$ 10.",
       "",
@@ -660,10 +663,13 @@ function formatTelegramInvalidAmountReply(parseResult) {
     below_minimum: `O valor mínimo por pedido é ${formatBrlAmountInCents(parseResult.minAmountInCents)}.`,
     above_limit: `O limite inicial por pedido é ${maxAmount}.`,
   };
+  const instructionByCode = {
+    cents_not_supported: "Envie apenas o valor inteiro em BRL.",
+  };
 
   return fmt`${reasonByCode[parseResult.reason] ?? "Não consegui validar esse valor."}
 
-Envie apenas o valor inteiro em BRL.
+${instructionByCode[parseResult.reason] ?? "Envie apenas o valor em BRL."}
 
 ${b}Exemplo:${b} 10 ou R$ 10.
 
@@ -797,7 +803,7 @@ function buildTelegramCurrentStepHelp(order) {
     case ORDER_PROGRESS_STATES.AMOUNT:
       return [
         "Seu pedido aberto está aguardando o valor.",
-        "Envie somente o valor inteiro em BRL, como 10 ou R$ 10.",
+        "Envie somente o valor em BRL, como 10 ou R$ 10.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.WALLET:
       return [
@@ -1169,7 +1175,7 @@ function buildTelegramAmountPrompt(tenant) {
 
 function buildTelegramBuyPrompt() {
   return [
-    "Para comprar DePix, envie o valor inteiro em BRL.",
+    "Para comprar DePix, envie o valor em BRL.",
     "Exemplo: 100",
   ].join("\n\n");
 }
