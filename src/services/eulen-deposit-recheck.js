@@ -601,6 +601,7 @@ export async function processDepositRecheck(input) {
         externalStatus: mutationPlan.appliedExternalStatus,
         bankTxId: remoteStatus.bankTxId ?? null,
         blockchainTxId: remoteStatus.blockchainTxId ?? null,
+        requestId: input.requestId ?? null,
         rawPayload: eventPayload,
       },
       mutationPlan.depositPatch,

@@ -103,6 +103,7 @@ const DEPOSIT_SELECT_SQL = `
     qr_id AS qrId,
     order_id AS orderId,
     nonce AS nonce,
+    created_request_id AS createdRequestId,
     qr_copy_paste AS qrCopyPaste,
     qr_image_url AS qrImageUrl,
     external_status AS externalStatus,
@@ -119,11 +120,12 @@ const INSERT_DEPOSIT_SQL = `
     qr_id,
     order_id,
     nonce,
+    created_request_id,
     qr_copy_paste,
     qr_image_url,
     external_status,
     expiration
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const DEPOSIT_UPDATE_COLUMNS = {
@@ -131,6 +133,7 @@ const DEPOSIT_UPDATE_COLUMNS = {
   qrId: "qr_id",
   orderId: "order_id",
   nonce: "nonce",
+  createdRequestId: "created_request_id",
   qrCopyPaste: "qr_copy_paste",
   qrImageUrl: "qr_image_url",
   externalStatus: "external_status",
@@ -151,6 +154,7 @@ function normalizeDepositInput(input: CreateDepositInput) {
     qrId: toNullableTrimmedString(input.qrId),
     orderId: toRequiredString(input.orderId),
     nonce: toRequiredString(input.nonce),
+    createdRequestId: toNullableTrimmedString(input.createdRequestId),
     qrCopyPaste: toRequiredString(input.qrCopyPaste),
     qrImageUrl: toRequiredString(input.qrImageUrl),
     externalStatus: toNullableTrimmedString(input.externalStatus)
@@ -174,6 +178,7 @@ export async function createDeposit(db: D1Database, input: CreateDepositInput): 
     deposit.qrId,
     deposit.orderId,
     deposit.nonce,
+    deposit.createdRequestId,
     deposit.qrCopyPaste,
     deposit.qrImageUrl,
     deposit.externalStatus,

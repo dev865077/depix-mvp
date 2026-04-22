@@ -22,6 +22,7 @@ const DEPOSIT_EVENT_SELECT_SQL = `
     external_status AS externalStatus,
     bank_tx_id AS bankTxId,
     blockchain_tx_id AS blockchainTxId,
+    request_id AS requestId,
     raw_payload AS rawPayload,
     received_at AS receivedAt
   FROM deposit_events
@@ -37,8 +38,9 @@ const INSERT_DEPOSIT_EVENT_SQL = `
     external_status,
     bank_tx_id,
     blockchain_tx_id,
+    request_id,
     raw_payload
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   RETURNING
     id AS id,
     tenant_id AS tenantId,
@@ -49,6 +51,7 @@ const INSERT_DEPOSIT_EVENT_SQL = `
     external_status AS externalStatus,
     bank_tx_id AS bankTxId,
     blockchain_tx_id AS blockchainTxId,
+    request_id AS requestId,
     raw_payload AS rawPayload,
     received_at AS receivedAt
 `;
@@ -73,6 +76,7 @@ export function buildCreateDepositEventStatement(
     input.externalStatus,
     input.bankTxId ?? null,
     input.blockchainTxId ?? null,
+    input.requestId ?? null,
     input.rawPayload,
   );
 }

@@ -446,7 +446,8 @@ async function persistTelegramAwaitingPaymentFromDeposit(input) {
  *   db: import("@cloudflare/workers-types").D1Database,
  *   tenant: { tenantId: string, eulenPartnerId?: string, splitConfigBindings: { depixSplitAddress: string, splitFee: string }, secretBindings: Record<string, string> },
  *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
- *   order: Record<string, unknown>
+ *   order: Record<string, unknown>,
+ *   requestContext?: { requestId?: string }
  * }} input Dependencias operacionais.
  * @returns {Promise<{
  *   order: Record<string, unknown>,
@@ -604,6 +605,7 @@ export async function confirmTelegramOrder(input) {
         qrId: null,
         orderId: creatingDepositOrder.orderId,
         nonce: depositNonce,
+        createdRequestId: input.requestContext?.requestId,
         qrCopyPaste: createdDeposit.qrCopyPaste,
         qrImageUrl: createdDeposit.qrImageUrl,
         externalStatus: "pending",

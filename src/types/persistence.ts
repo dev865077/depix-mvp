@@ -99,6 +99,7 @@ export interface DepositRecord {
   qrId: DepositQrId | null;
   orderId: OrderId;
   nonce: DepositNonce;
+  createdRequestId: string | null;
   qrCopyPaste: string;
   qrImageUrl: string;
   externalStatus: DepositExternalStatus;
@@ -113,6 +114,7 @@ export interface CreateDepositInput {
   qrId?: DepositQrId | null;
   orderId: OrderId;
   nonce: DepositNonce;
+  createdRequestId?: string | null;
   qrCopyPaste: string;
   qrImageUrl: string;
   externalStatus?: DepositExternalStatus;
@@ -124,6 +126,7 @@ export interface DepositPatch {
   qrId?: DepositQrId | null;
   orderId?: OrderId;
   nonce?: DepositNonce;
+  createdRequestId?: string | null;
   qrCopyPaste?: string;
   qrImageUrl?: string;
   externalStatus?: DepositExternalStatus;
@@ -140,6 +143,7 @@ export interface DepositEventRecord {
   externalStatus: DepositExternalStatus;
   bankTxId: string | null;
   blockchainTxId: string | null;
+  requestId: string | null;
   rawPayload: string;
   receivedAt: PersistenceTimestamp;
 }
@@ -153,5 +157,6 @@ export interface CreateDepositEventInput {
   externalStatus: DepositExternalStatus;
   bankTxId?: string | null;
   blockchainTxId?: string | null;
+  requestId?: string | null;
   rawPayload: string;
 }
