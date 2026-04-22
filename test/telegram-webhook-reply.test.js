@@ -3581,7 +3581,7 @@ describe("telegram webhook reply flow", () => {
     expect(failedOrder?.status).toBe("failed");
     expect(telegramMessages[telegramMessages.length - 1]).toContain("Não consegui criar seu Pix agora.");
     expect(telegramMessages[telegramMessages.length - 1]).toContain("Envie /start para recomecar");
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(3);
   });
 
   it("cancels the order from confirmation when the user sends cancelar", async function assertConfirmationCancellation() {

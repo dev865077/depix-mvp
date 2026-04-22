@@ -103,6 +103,181 @@ export async function assertHttpErrorHandling() {
   ).rejects.toBeInstanceOf(EulenApiError);
 }
 
+export async function assertTransientServerRetry() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify({ errorMessage: "temporarily unavailable" }), { status: 503 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ response: { msg: "Pong!" }, async: false }), { status: 200 }));
+
+  const response = await requestEulenApi(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+    path: "/ping",
+    method: "GET",
+    nonce: "nonce_retry_001",
+    asyncMode: "auto",
+    retry: {
+      initialDelayMs: 0,
+    },
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(response.status).toBe(200);
+  expect(response.nonce).toBe("nonce_retry_001");
+}
+
+export async function assertCreateDepositRetryUsesStableNonce() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(new Response(JSON.stringify({ errorMessage: "temporarily unavailable" }), { status: 503 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "deposit_123", async: false }), { status: 200 }));
+
+  const response = await createEulenDeposit(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+    body: VALID_DEPOSIT_BODY,
+    nonce: "order_nonce_001",
+    asyncMode: "auto",
+  });
+  const nonces = fetchSpy.mock.calls.map(([, init]) => init?.headers.get("X-Nonce"));
+
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(nonces).toEqual(["order_nonce_001", "order_nonce_001"]);
+  expect(response.nonce).toBe("order_nonce_001");
+}
+
+export async function assertTimeoutRetryAndExhaustionLogging() {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const abortError = new DOMException("synthetic timeout", "AbortError");
+
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(abortError);
+
+  await expect(
+    requestEulenApi({
+      ...RUNTIME_CONFIG,
+      appName: "depix-mvp",
+      environment: "test",
+      logLevel: "debug",
+    }, TENANT_CREDENTIALS, {
+      path: "/ping",
+      method: "GET",
+      nonce: "nonce_timeout_retry",
+      asyncMode: "auto",
+      retry: {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+      },
+    }),
+  ).rejects.toMatchObject({
+    name: "EulenApiError",
+    details: {
+      code: "eulen_api_timeout",
+      attempt: 2,
+      maxAttempts: 2,
+    },
+  });
+
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  expect(logSpy.mock.calls
+    .map(([entry]) => JSON.parse(String(entry)).message)
+    .filter((message) => message.startsWith("eulen_api."))).toEqual([
+    "eulen_api.retry_scheduled",
+    "eulen_api.retry_exhausted",
+  ]);
+}
+
+export async function assertRetryLogsDoNotExposeUpstreamPayloads() {
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const sentinel = "secret-like-upstream-body";
+
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => (
+    new Response(JSON.stringify({ errorMessage: sentinel }), { status: 503 })
+  ));
+
+  await expect(
+    requestEulenApi({
+      ...RUNTIME_CONFIG,
+      appName: "depix-mvp",
+      environment: "test",
+      logLevel: "debug",
+    }, TENANT_CREDENTIALS, {
+      path: "/ping",
+      method: "GET",
+      nonce: "nonce_redacted_retry",
+      asyncMode: "auto",
+      retry: {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+      },
+    }),
+  ).rejects.toBeInstanceOf(EulenApiError);
+
+  const serializedLogs = logSpy.mock.calls.map(([entry]) => String(entry)).join("\n");
+  const exhaustedLog = logSpy.mock.calls
+    .map(([entry]) => JSON.parse(String(entry)))
+    .find((entry) => entry.message === "eulen_api.retry_exhausted");
+
+  expect(serializedLogs).not.toContain(sentinel);
+  expect(serializedLogs).not.toContain('"data"');
+  expect(exhaustedLog).toMatchObject({
+    message: "eulen_api.retry_exhausted",
+    details: {
+      nonce: "nonce_redacted_retry",
+      path: "/ping",
+      attempt: 2,
+      maxAttempts: 2,
+      status: 503,
+    },
+  });
+}
+
+export async function assertClientErrorDoesNotRetry() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ errorMessage: "Unauthorized" }), { status: 401 }),
+  );
+
+  await expect(
+    requestEulenApi(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+      path: "/ping",
+      method: "GET",
+      nonce: "nonce_no_retry_401",
+      asyncMode: "auto",
+      retry: {
+        initialDelayMs: 0,
+      },
+    }),
+  ).rejects.toMatchObject({
+    name: "EulenApiError",
+    details: {
+      status: 401,
+    },
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+}
+
+export async function assertMutationWithoutExplicitNonceDoesNotRetry() {
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ errorMessage: "temporary upstream failure" }), { status: 503 }),
+  );
+
+  await expect(
+    requestEulenApi(RUNTIME_CONFIG, TENANT_CREDENTIALS, {
+      path: "/deposit",
+      method: "POST",
+      body: VALID_DEPOSIT_BODY,
+      asyncMode: "auto",
+      retry: {
+        maxAttempts: 3,
+        initialDelayMs: 0,
+      },
+    }),
+  ).rejects.toMatchObject({
+    name: "EulenApiError",
+    details: {
+      status: 503,
+      attempt: 1,
+      maxAttempts: 1,
+    },
+  });
+
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+}
+
 export function assertDepositSplitContract() {
   expect(assertRequiredDepositSplit(VALID_DEPOSIT_BODY)).toEqual(VALID_DEPOSIT_BODY);
   expect(() => assertRequiredDepositSplit(undefined)).toThrow(EulenApiError);
@@ -216,7 +391,7 @@ export async function assertAsyncResultPolling() {
 
   expect(fetchSpy).toHaveBeenCalledTimes(2);
   expect(result.attempt).toBe(2);
-  expect(result.data.id).toBe("deposit_async_001");
+  expect((result.data as { id?: string }).id).toBe("deposit_async_001");
 }
 
 export async function assertAsyncResponseResolution() {
@@ -251,10 +426,16 @@ export async function assertAsyncResponseResolution() {
     pollDelayMs: 0,
   });
 
-  expect(resolved.data.async).toBe(false);
-  expect(resolved.data.resolvedFromAsync).toBe(true);
-  expect(resolved.data.response.id).toBe("deposit_async_002");
-  expect(resolved.data.asyncResult.status).toBe(200);
+  expect(resolved.data).toMatchObject({
+    async: false,
+    resolvedFromAsync: true,
+    response: {
+      id: "deposit_async_002",
+    },
+    asyncResult: {
+      status: 200,
+    },
+  });
 }
 
 export async function assertAsyncBusinessErrorMapping() {
@@ -426,6 +607,12 @@ describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
   it("throws a standardized error on non-2xx responses", assertHttpErrorHandling);
+  it("retries transient Eulen 5xx responses before returning success", assertTransientServerRetry);
+  it("keeps create-deposit retries tied to the same idempotency nonce", assertCreateDepositRetryUsesStableNonce);
+  it("retries Eulen timeouts and logs retry exhaustion with context", assertTimeoutRetryAndExhaustionLogging);
+  it("keeps retry logs free of upstream response payloads", assertRetryLogsDoNotExposeUpstreamPayloads);
+  it("does not retry non-transient Eulen client errors", assertClientErrorDoesNotRetry);
+  it("does not retry mutations without an explicit idempotency nonce", assertMutationWithoutExplicitNonceDoesNotRetry);
   it("accepts only supported async modes", function assertAsyncModes() {
     expect(normalizeAsyncMode(undefined)).toBe("auto");
     expect(normalizeAsyncMode("true")).toBe("true");

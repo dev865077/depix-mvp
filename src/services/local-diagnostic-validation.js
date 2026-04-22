@@ -648,6 +648,7 @@ export async function createEulenDiagnosticDeposit(input) {
     }, {
       asyncMode: input.asyncMode,
       body: createDiagnosticEulenDepositPayload(input.amountInCents, splitConfig),
+      nonce: orderId,
     });
     response = await resolveCreatedEulenDepositResponse(response);
   } catch (error) {

@@ -13,6 +13,9 @@ const REQUIRED_DEPOSIT_SPLIT_FIELDS = [
 ] as const;
 const EULEN_ASYNC_RESULT_DEFAULT_MAX_ATTEMPTS = 6;
 const EULEN_ASYNC_RESULT_DEFAULT_POLL_DELAY_MS = 1_000;
+const EULEN_API_DEFAULT_MAX_ATTEMPTS = 3;
+const EULEN_API_DEFAULT_INITIAL_RETRY_DELAY_MS = 250;
+const EULEN_API_DEFAULT_MAX_RETRY_DELAY_MS = 1_000;
 
 export type EulenAsyncMode = "auto" | "true" | "false";
 export type EulenInvalidPayloadSource = "request" | "response" | "webhook";
@@ -20,6 +23,9 @@ export type EulenInvalidPayloadSource = "request" | "response" | "webhook";
 export interface EulenRuntimeConfig {
   eulenApiBaseUrl: string;
   eulenApiTimeoutMs: number;
+  appName?: string;
+  environment?: string;
+  logLevel?: string;
 }
 
 export interface EulenCredentials {
@@ -107,11 +113,18 @@ type EulenApiRequest = {
   nonce?: string;
   asyncMode?: string;
   telemetry?: EulenRequestTelemetry;
+  retry?: EulenRetryOptions;
 };
 
 type EulenAsyncResultOptions = {
   maxAttempts?: number;
   pollDelayMs?: number;
+};
+
+type EulenRetryOptions = {
+  maxAttempts?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
 };
 
 type EulenRequestHeaderOptions = {
@@ -129,6 +142,12 @@ type InvalidPayloadInput = {
   requestId?: string;
   path?: string;
   status?: number;
+};
+
+type NormalizedEulenRetryOptions = {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
 };
 
 /**
@@ -538,6 +557,90 @@ export function createTimeoutController(timeoutMs: number): { controller: AbortC
   };
 }
 
+function normalizeEulenRetryOptions(options: EulenRetryOptions = {}): NormalizedEulenRetryOptions {
+  const maxAttempts = typeof options.maxAttempts === "number" && Number.isInteger(options.maxAttempts) && options.maxAttempts >= 2
+    ? options.maxAttempts
+    : EULEN_API_DEFAULT_MAX_ATTEMPTS;
+  const initialDelayMs = typeof options.initialDelayMs === "number" && Number.isInteger(options.initialDelayMs) && options.initialDelayMs >= 0
+    ? options.initialDelayMs
+    : EULEN_API_DEFAULT_INITIAL_RETRY_DELAY_MS;
+  const maxDelayMs = typeof options.maxDelayMs === "number" && Number.isInteger(options.maxDelayMs) && options.maxDelayMs >= initialDelayMs
+    ? options.maxDelayMs
+    : EULEN_API_DEFAULT_MAX_RETRY_DELAY_MS;
+
+  return {
+    maxAttempts,
+    initialDelayMs,
+    maxDelayMs,
+  };
+}
+
+function resolveEulenRetryOptions(request: EulenApiRequest): NormalizedEulenRetryOptions {
+  const retryOptions = normalizeEulenRetryOptions(request.retry);
+  const method = (request.method ?? "GET").toUpperCase();
+  const hasExplicitNonce = typeof request.nonce === "string" && request.nonce.trim().length > 0;
+
+  if (method === "GET" || hasExplicitNonce) {
+    return retryOptions;
+  }
+
+  return {
+    ...retryOptions,
+    maxAttempts: 1,
+  };
+}
+
+function calculateEulenRetryDelay(attempt: number, options: NormalizedEulenRetryOptions): number {
+  return Math.min(options.initialDelayMs * (2 ** Math.max(0, attempt - 1)), options.maxDelayMs);
+}
+
+function waitForEulenApiRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function shouldRetryEulenApiError(error: EulenApiError): boolean {
+  return error.details.code === "eulen_api_timeout"
+    || (typeof error.details.status === "number" && error.details.status >= 500 && error.details.status < 600);
+}
+
+function logEulenRetryEvent(
+  runtimeConfig: EulenRuntimeConfig,
+  input: {
+    level: "warn" | "error";
+    message: string;
+    nonce: string;
+    path: string;
+    attempt: number;
+    maxAttempts: number;
+    delayMs?: number;
+    error: EulenApiError;
+  },
+): void {
+  const { code, status, timeoutMs } = input.error.details;
+
+  log(runtimeConfig, {
+    level: input.level,
+    message: input.message,
+    details: {
+      nonce: input.nonce,
+      path: input.path,
+      attempt: input.attempt,
+      maxAttempts: input.maxAttempts,
+      ...(typeof input.delayMs === "number" ? { delayMs: input.delayMs } : {}),
+      error: input.error.message,
+      ...(typeof code === "string" ? { code } : {}),
+      ...(typeof status === "number" ? { status } : {}),
+      ...(typeof timeoutMs === "number" ? { timeoutMs } : {}),
+    },
+  });
+}
+
+function sanitizeEulenApiErrorDetailsForLog(error: EulenApiError): Record<string, unknown> {
+  const { data: _data, ...safeDetails } = error.details;
+
+  return safeDetails;
+}
+
 /**
  * Faz o parsing do corpo da resposta sem assumir JSON valido em todos os casos.
  *
@@ -796,8 +899,9 @@ export async function requestEulenApi(
   });
   const url = buildEulenUrl(runtimeConfig.eulenApiBaseUrl, request.path, request.query);
   const timeoutMs = runtimeConfig.eulenApiTimeoutMs;
-  const { controller, cleanup } = createTimeoutController(timeoutMs);
   const telemetry = request.telemetry;
+  const retryOptions = resolveEulenRetryOptions(request);
+  let lastTransientError: EulenApiError | undefined;
 
   log(runtimeConfig, {
     level: "info",
@@ -816,128 +920,157 @@ export async function requestEulenApi(
     },
   });
 
-  try {
-    const response = await fetch(url, {
-      method: request.method ?? "GET",
-      headers,
-      body: request.body ? JSON.stringify(request.body) : undefined,
-      signal: controller.signal,
-    });
-    const data = await parseEulenResponseBody(response);
+  for (let attempt = 1; attempt <= retryOptions.maxAttempts; attempt += 1) {
+    const { controller, cleanup } = createTimeoutController(timeoutMs);
 
-    if (!response.ok) {
-      throw new EulenApiError("Eulen API request failed.", {
+    try {
+      const response = await fetch(url, {
+        method: request.method ?? "GET",
+        headers,
+        body: request.body ? JSON.stringify(request.body) : undefined,
+        signal: controller.signal,
+      });
+      const data = await parseEulenResponseBody(response);
+
+      if (!response.ok) {
+        throw new EulenApiError("Eulen API request failed.", {
+          status: response.status,
+          nonce,
+          path: request.path,
+          attempt,
+          maxAttempts: retryOptions.maxAttempts,
+          data,
+        });
+      }
+
+      log(runtimeConfig, {
+        level: "info",
+        message: "eulen.request.succeeded",
+        tenantId: telemetry?.tenantId,
+        requestId: telemetry?.requestId,
+        correlationId: telemetry?.correlationId,
+        details: {
+          operation: telemetry?.operation ?? null,
+          orderId: telemetry?.orderId ?? null,
+          depositEntryId: telemetry?.depositEntryId ?? null,
+          method: request.method ?? "GET",
+          path: request.path,
+          nonce,
+          asyncMode,
+          status: response.status,
+          attempt,
+          maxAttempts: retryOptions.maxAttempts,
+        },
+      });
+
+      return {
+        ok: response.ok,
         status: response.status,
         nonce,
-        path: request.path,
+        asyncMode,
+        headers: Object.fromEntries(response.headers.entries()),
         data,
-      });
-    }
+      };
+    } catch (error) {
+      const apiError = error instanceof EulenApiError
+        ? error
+        : error instanceof Error && error.name === "AbortError"
+          ? new EulenApiError("Eulen API request timed out.", {
+            code: "eulen_api_timeout",
+            nonce,
+            path: request.path,
+            timeoutMs,
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+          })
+          : new EulenApiError("Unexpected Eulen API error.", {
+            nonce,
+            path: request.path,
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+            cause: error instanceof Error ? error.message : String(error),
+          });
 
-    log(runtimeConfig, {
-      level: "info",
-      message: "eulen.request.succeeded",
-      tenantId: telemetry?.tenantId,
-      requestId: telemetry?.requestId,
-      correlationId: telemetry?.correlationId,
-      details: {
-        operation: telemetry?.operation ?? null,
-        orderId: telemetry?.orderId ?? null,
-        depositEntryId: telemetry?.depositEntryId ?? null,
-        method: request.method ?? "GET",
-        path: request.path,
-        nonce,
-        asyncMode,
-        status: response.status,
-      },
-    });
+      if (!shouldRetryEulenApiError(apiError)) {
+        log(runtimeConfig, {
+          level: "error",
+          message: "eulen.request.failed",
+          tenantId: telemetry?.tenantId,
+          requestId: telemetry?.requestId,
+          correlationId: telemetry?.correlationId,
+          details: {
+            operation: telemetry?.operation ?? null,
+            orderId: telemetry?.orderId ?? null,
+            depositEntryId: telemetry?.depositEntryId ?? null,
+            method: request.method ?? "GET",
+            path: request.path,
+            nonce,
+            asyncMode,
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+            cause: sanitizeEulenApiErrorDetailsForLog(apiError),
+          },
+        });
+        throw apiError;
+      }
 
-    return {
-      ok: response.ok,
-      status: response.status,
-      nonce,
-      asyncMode,
-      headers: Object.fromEntries(response.headers.entries()),
-      data,
-    };
-  } catch (error) {
-    if (error instanceof EulenApiError) {
-      log(runtimeConfig, {
-        level: "error",
-        message: "eulen.request.failed",
-        tenantId: telemetry?.tenantId,
-        requestId: telemetry?.requestId,
-        correlationId: telemetry?.correlationId,
-        details: {
-          operation: telemetry?.operation ?? null,
-          orderId: telemetry?.orderId ?? null,
-          depositEntryId: telemetry?.depositEntryId ?? null,
-          method: request.method ?? "GET",
-          path: request.path,
+      lastTransientError = apiError;
+
+      if (attempt === retryOptions.maxAttempts) {
+        logEulenRetryEvent(runtimeConfig, {
+          level: "error",
+          message: "eulen_api.retry_exhausted",
           nonce,
-          asyncMode,
-          cause: error.details,
-        },
-      });
-      throw error;
-    }
-
-    if (error instanceof Error && error.name === "AbortError") {
-      const timeoutError = new EulenApiError("Eulen API request timed out.", {
-        nonce,
-        path: request.path,
-        timeoutMs,
-      });
-
-      log(runtimeConfig, {
-        level: "error",
-        message: "eulen.request.failed",
-        tenantId: telemetry?.tenantId,
-        requestId: telemetry?.requestId,
-        correlationId: telemetry?.correlationId,
-        details: {
-          operation: telemetry?.operation ?? null,
-          orderId: telemetry?.orderId ?? null,
-          depositEntryId: telemetry?.depositEntryId ?? null,
-          method: request.method ?? "GET",
           path: request.path,
-          nonce,
-          asyncMode,
-          cause: timeoutError.details,
-        },
-      });
+          attempt,
+          maxAttempts: retryOptions.maxAttempts,
+          error: apiError,
+        });
+        log(runtimeConfig, {
+          level: "error",
+          message: "eulen.request.failed",
+          tenantId: telemetry?.tenantId,
+          requestId: telemetry?.requestId,
+          correlationId: telemetry?.correlationId,
+          details: {
+            operation: telemetry?.operation ?? null,
+            orderId: telemetry?.orderId ?? null,
+            depositEntryId: telemetry?.depositEntryId ?? null,
+            method: request.method ?? "GET",
+            path: request.path,
+            nonce,
+            asyncMode,
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+            cause: sanitizeEulenApiErrorDetailsForLog(apiError),
+          },
+        });
+        throw apiError;
+      }
 
-      throw timeoutError;
-    }
+      const delayMs = calculateEulenRetryDelay(attempt, retryOptions);
 
-    const unexpectedError = new EulenApiError("Unexpected Eulen API error.", {
-      nonce,
-      path: request.path,
-      cause: error instanceof Error ? error.message : String(error),
-    });
-
-    log(runtimeConfig, {
-      level: "error",
-      message: "eulen.request.failed",
-      tenantId: telemetry?.tenantId,
-      requestId: telemetry?.requestId,
-      correlationId: telemetry?.correlationId,
-      details: {
-        operation: telemetry?.operation ?? null,
-        orderId: telemetry?.orderId ?? null,
-        depositEntryId: telemetry?.depositEntryId ?? null,
-        method: request.method ?? "GET",
-        path: request.path,
+      logEulenRetryEvent(runtimeConfig, {
+        level: "warn",
+        message: "eulen_api.retry_scheduled",
         nonce,
-        asyncMode,
-        cause: unexpectedError.details,
-      },
-    });
-
-    throw unexpectedError;
-  } finally {
-    cleanup();
+        path: request.path,
+        attempt,
+        maxAttempts: retryOptions.maxAttempts,
+        delayMs,
+        error: apiError,
+      });
+      await waitForEulenApiRetry(delayMs);
+    } finally {
+      cleanup();
+    }
   }
+
+  throw lastTransientError ?? new EulenApiError("Unexpected Eulen API retry exhaustion.", {
+    nonce,
+    path: request.path,
+    maxAttempts: retryOptions.maxAttempts,
+  });
 }
 
 /**
