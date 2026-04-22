@@ -119,6 +119,7 @@ export interface TelegramDepositLike
 
 export interface TelegramInvalidAmountParseResult {
   reason: string;
+  minAmountInCents: number;
   maxAmountInCents: number;
 }
 
