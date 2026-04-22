@@ -123,7 +123,7 @@ export function installTelegramReplyFlow(bot, input) {
     },
   ));
 
-  bot.callbackQuery(/^depix:(confirm|cancel|status|help)$/u, createLoggedTelegramHandler(
+  bot.callbackQuery(/^depix:(buy|confirm|cancel|status|help)$/u, createLoggedTelegramHandler(
     input,
     "inline_action_reply",
     async function replyToInlineAction(ctx) {
@@ -449,6 +449,17 @@ function buildTelegramConfirmationReplyMarkup() {
   ]);
 }
 
+function buildTelegramAmountReplyMarkup() {
+  return buildTelegramInlineKeyboard([
+    [
+      {
+        text: "Comprar DePix",
+        callback_data: "depix:buy",
+      },
+    ],
+  ]);
+}
+
 function buildTelegramAwaitingPaymentReplyMarkup() {
   return buildTelegramInlineKeyboard([
     [
@@ -481,6 +492,8 @@ function buildTelegramAwaitingPaymentStartReplyMarkup() {
 
 function buildTelegramReplyMarkupForOrder(order) {
   switch (order?.currentStep) {
+    case ORDER_PROGRESS_STATES.AMOUNT:
+      return buildTelegramAmountReplyMarkup();
     case ORDER_PROGRESS_STATES.CONFIRMATION:
     case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
       return buildTelegramConfirmationReplyMarkup();
@@ -1144,11 +1157,20 @@ function isTelegramRestartDecision(normalizedText) {
  */
 function buildTelegramAmountPrompt(tenant) {
   return [
-    `Olá! Este é o bot ${tenant.displayName} da DePix.`,
-    "Envie o valor inteiro em BRL que você quer comprar.",
-    "Exemplo: 100",
+    `Olá! Este é o bot ${tenant.displayName} e te ajudarei a comprar DePix.`,
+    "Esses são meus comandos:",
+    "/start - iniciar uma compra",
+    "/status - consultar seu pedido",
+    "/cancel - cancelar um pedido aberto",
+    "/help - ver ajuda",
     "Se precisar de ajuda, envie /help.",
-    "Para recomeçar um pedido aberto, envie recomecar.",
+  ].join("\n\n");
+}
+
+function buildTelegramBuyPrompt() {
+  return [
+    "Para comprar DePix, envie o valor inteiro em BRL.",
+    "Exemplo: 100",
   ].join("\n\n");
 }
 
@@ -1774,6 +1796,19 @@ async function handleTelegramInlineAction(ctx, input) {
   const timeoutReset = await readTimedOutTelegramConversationReset(ctx, input);
 
   switch (action) {
+    case "buy":
+      if (timeoutReset.timedOut) {
+        await ctx.answerCallbackQuery({
+          text: "Pedido expirado.",
+        });
+        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        return;
+      }
+      await ctx.answerCallbackQuery({
+        text: "Envie o valor da compra.",
+      });
+      await ctx.reply(buildTelegramBuyPrompt());
+      return;
     case "help":
       if (timeoutReset.timedOut) {
         await ctx.answerCallbackQuery({

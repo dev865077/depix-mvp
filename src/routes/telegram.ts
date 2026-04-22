@@ -83,12 +83,12 @@ export async function handleTelegramWebhook(c: AppContext): Promise<Response> {
           telegramBotToken,
           telegramWebhookSecret,
         }).then((result) => {
-          if (!result.repaired && !result.reason) {
+          if (!result.repaired && !result.reason && result.publicSurfaceRefresh?.ok !== false) {
             return;
           }
 
           log(runtimeConfig, {
-            level: result.repaired ? "warn" : "info",
+            level: result.repaired || result.publicSurfaceRefresh?.ok === false ? "warn" : "info",
             message: "telegram.public_surface.ensure_completed",
             tenantId: tenant.tenantId,
             requestId: c.get("requestId"),

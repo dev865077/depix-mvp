@@ -33,6 +33,14 @@ export const TELEGRAM_ALLOWED_UPDATES = Object.freeze([
   "callback_query",
 ]);
 
+export const TELEGRAM_PUBLIC_SHORT_DESCRIPTION = "Compre DePix com Pix pelo chat.";
+
+export const TELEGRAM_PUBLIC_DESCRIPTION = [
+  "Compre DePix com Pix pelo chat.",
+  "Toque em Start/Iniciar e depois em Comprar DePix para começar.",
+  "O bot guia valor, endereço, confirmação e status do pedido.",
+].join("\n");
+
 export const TELEGRAM_PUBLIC_COMMANDS = Object.freeze<TelegramPublicCommandDefinition[]>([
   {
     command: "start",
@@ -81,8 +89,24 @@ export function buildTelegramPublicMenuButtonPayload() {
   };
 }
 
+export function buildTelegramPublicDescriptionPayload() {
+  return {
+    description: TELEGRAM_PUBLIC_DESCRIPTION,
+  };
+}
+
+export function buildTelegramPublicShortDescriptionPayload() {
+  return {
+    short_description: TELEGRAM_PUBLIC_SHORT_DESCRIPTION,
+  };
+}
+
 export function buildTelegramPublicSurfaceInventory() {
   return {
+    profile: {
+      description: TELEGRAM_PUBLIC_DESCRIPTION,
+      shortDescription: TELEGRAM_PUBLIC_SHORT_DESCRIPTION,
+    },
     maintained: TELEGRAM_PUBLIC_COMMANDS.map(function toMaintainedItem(command) {
       return {
         command: `/${command.command}`,
