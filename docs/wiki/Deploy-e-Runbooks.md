@@ -42,6 +42,8 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /telegram/:tenantId/webhook` ja faz despacho real para `grammY`
 - `GET /webhooks/eulen/:tenantId/deposit` e `HEAD /webhooks/eulen/:tenantId/deposit` agora respondem como probe diagnostico do webhook canonico da Eulen, sem entrar no processamento real
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
+- `POST /webhooks/eulen/:tenantId/deposit` agora grava `deposit_events` antes do batch atomico que atualiza `deposits` + `orders`, para nao perder evidencia se o agregado falhar no meio da escrita
+- `POST /webhooks/eulen/:tenantId/deposit` agora atualiza `deposits` + `orders` em um unico `db.batch()`, reduzindo o risco de estado parcial entre as duas tabelas
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; `test` e `production` rodam a cada 15 minutos com janela maxima de 2 horas e limite de 5 depositos por tenant/rodada
@@ -85,20 +87,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se o agregado local ja estiver concluido e `deposit-status` voltar com estado inferior nao terminal, responde `409 deposit_status_regression`
 - se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
 - se a consulta remota falhar, responde `502 deposit_status_unavailable`
-- recheck repetido com a mesma verdade remota e idempotente: nao duplica `deposit_events` e pode apenas reparar o agregado se um estado historico tiver ficado incompleto
-
-## Reconciliação agendada de depositos pendentes
-
-- pre-condicao: `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`
-- roda via Cron Trigger em `test` e `production`
-- usa janela maxima de 2 horas por tenant, com limite de 5 depositos por rodada
-- pode acionar notificacao Telegram quando a conciliacao muda o estado visivel do pedido
-- nao depende de `OPS_ROUTE_BEARER_TOKEN`, porque nao passa por HTTP
-- se o workflow da Eulen nao devolver dados suficientes, a rodada fica sem efeito visivel e o problema precisa ser rastreado por observabilidade/operacao
-
-## Fluxo de evidencia
-
-- para evidenciar o caminho pos-QR da release 0.1, capture o relatorio com o coletor de evidencia e preserve a saida gerada em artifacts
-- quando o deposito tiver `created_request_id`, o coletor inclui esse id no bloco de `deposits`
-- quando o evento de deposito tiver `request_id`, o coletor inclui esse id no bloco de `deposit_events`
-- quando houver contexto Telegram disponivel, o coletor tambem expõe o `telegram_user_id` consultado nas ordens
+- recheck repetido com a mesma verdade remota e idempotente

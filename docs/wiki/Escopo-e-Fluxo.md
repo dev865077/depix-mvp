@@ -68,8 +68,8 @@
 - o clique em `Comprar DePix` leva diretamente ao prompt de valor em BRL
 - `/start` reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, quando o pedido ja possui deposito local, para refletir imediatamente um pagamento que tenha sido finalizado fora do webhook local
 - `/status` tambem reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, usando a mesma reconciliacao existente, quando ha deposito local disponivel
-- a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
-- a etapa de `wallet` agora valida endereco DePix/Liquid enviado no Telegram, persiste `walletAddress` e avanca o pedido para `confirmation`
+- a etapa `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
+- a etapa `wallet` agora valida endereco DePix/Liquid enviado no Telegram, persiste `walletAddress` e avanca o pedido para `confirmation`
 - o fluxo Telegram agora responde a controles de cancelamento e reinicio sem abrir pedido novo indevidamente quando nao existe contexto
 - `/help` responde com orientacao contextual sem mutar o pedido aberto
 - mensagens invalidas mantem o pedido no passo atual e orientam o usuario a reenviar a informacao correta
@@ -83,6 +83,4 @@
 
 ## Leitura correta
 
-Esta pagina descreve o fluxo alvo do MVP, nao a lista de handlers ja implementados em producao.
-
-Para o desenho atual da maquina de pedidos, veja [XState e Fluxo de Pedidos](XState-e-Fluxo-de-Pedidos).
+Esta pagina descreve o fluxo alvo do MVP, nao a lista de handlers ja implementados. Quando houver diferenca entre escopo e estado do `main`, prevalece o que o codigo e a pagina de estado atual documentam.

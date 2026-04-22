@@ -91,8 +91,9 @@ Estado atual:
 - a hidratacao de `qrId` agora e fail-closed: quando o webhook encontra um `qrId` desconhecido, o runtime so hidrata um deposito pendente se `deposit-status.qrId` bater exatamente com o `qrId` do webhook
 - se o `qrId` remoto nao for exatamente o mesmo `qrId` do webhook, o deposito, a ordem e os eventos permanecem inalterados
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
-- o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
-- a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
-- a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de confirmacao
-- a confirmacao de pagamento agora gera um recibo textual curto, sem QR, e com link para a transacao Liquid quando houver `blockchainTxId`
-- o fluxo de notificacao pos-pagamento precisa preservar entidades de formatação quando a mensagem for enviada como texto, reply canonica ou caption de foto
+- o fallback por janela via `deposits` tambem ja existe para linhas compactas por `qrId`
+- o webhook principal da Eulen agora registra `deposit_events` antes de escrever o agregado `deposits` + `orders`, para preservar evidencia de auditoria mesmo se a escrita do agregado falhar
+- a atualizacao do agregado `deposits` + `orders` agora acontece em um unico `db.batch()`; se qualquer write do lote falhar, o D1 reverte os writes anteriores do mesmo batch
+- a escrita atomica do agregado evita estado parcial entre deposito e pedido quando uma etapa do webhook falha no meio do caminho
+- o webhook continua idempotente e nao publica efeitos duplicados quando a verdade externa ja foi aplicada
+- as rotas de consulta e operacao continuam separadas do caminho principal do webhook
