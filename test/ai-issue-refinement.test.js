@@ -36,6 +36,7 @@ describe("ai issue refinement", () => {
     expect(issueRefinementWorkflowText).toContain("discussions: write");
     expect(issueRefinementWorkflowText).toContain("issues: write");
     expect(issueRefinementWorkflowText).toContain("AI_ISSUE_REFINEMENT_PROVIDER");
+    expect(issueRefinementWorkflowText).toContain("AI_ISSUE_REFINEMENT_MAX_ROUNDS: ${{ vars.AI_ISSUE_REFINEMENT_MAX_ROUNDS || '4' }}");
   });
 
   it("parses the workflow_dispatch payload for issue refinement", () => {
@@ -326,6 +327,7 @@ describe("ai issue refinement", () => {
       blockingRoles: ["product", "technical"],
       blockedByDependencies: false,
       roundCount: 2,
+      maxRounds: 4,
       humanIssueBody: "## Outcome\nTight body.",
       currentManagedSection: "canonical_state: `issue_planning_request_changes`",
       childIssues: [
@@ -385,6 +387,11 @@ describe("ai issue refinement", () => {
     });
 
     expect(prompt).toContain("Root issue: #291 - track: release 0.1 readiness");
+    expect(prompt).toContain("## Planning round context");
+    expect(prompt).toContain("current_round: 2");
+    expect(prompt).toContain("max_rounds: 4");
+    expect(prompt).toContain("rounds_remaining: 2");
+    expect(prompt).toContain("is_last_common_round_before_moderator: false");
     expect(prompt).toContain("Latest specialist reviewer memos");
     expect(prompt).toContain("Vou quebrar isso em child issues.");
     expect(status).toContain("next_actor: `ai_issue_planning_review`");
@@ -392,6 +399,38 @@ describe("ai issue refinement", () => {
     expect(section).toContain("canonical_state: `issue_planning_blocked`");
     expect(section).toContain("next_actor: `dependency_owner`");
     expect(reply).toContain("created_child_issue: #301 - sub-issue: validate callback proof");
+  });
+
+  it("marks refinement round 4 as the final common round before moderator escalation", () => {
+    const prompt = buildIssueRefinementUserPrompt({
+      repository: "dev865077/depix-mvp",
+      issue: {
+        number: 609,
+        title: "Propagar contexto",
+        html_url: "https://github.com/dev865077/depix-mvp/issues/609",
+      },
+      discussion: { url: "https://github.com/dev865077/depix-mvp/discussions/610" },
+      planningStatus: "request_changes",
+      blockingRoles: ["scrum"],
+      blockedByDependencies: false,
+      roundCount: 4,
+      maxRounds: 4,
+      humanIssueBody: "## Outcome\nTight body.",
+      currentManagedSection: "canonical_state: `issue_planning_request_changes`",
+      childIssues: [],
+      reviewerMemos: [],
+      latestConclusionBody: "Final recommendation: `Request changes`",
+      humanReplies: [],
+      automatedReplies: [],
+      discussionContext: "Latest planning conclusion thread",
+      blockingDependencies: [],
+    });
+
+    expect(prompt).toContain("current_round: 4");
+    expect(prompt).toContain("max_rounds: 4");
+    expect(prompt).toContain("rounds_remaining: 0");
+    expect(prompt).toContain("is_last_common_round_before_moderator: true");
+    expect(prompt).toContain("final common refinement round before moderator escalation");
   });
 
   it("builds the exact workflow dispatch request used to rerun planning", () => {

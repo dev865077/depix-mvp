@@ -12,6 +12,7 @@ import {
   buildIssuePlanningAutomationSection,
   buildIssuePlanningDiscussionBody,
   buildIssuePlanningCompletionComment,
+  buildIssuePlanningRoundContext,
   buildIssuePlanningStatusComment,
   buildIssuePlanningReviewComments,
   buildIssuePlanningUserPrompt,
@@ -779,9 +780,20 @@ describe("ai issue planning review", () => {
           ],
         },
       }),
+      {
+        currentRound: 1,
+        maxRounds: 4,
+        roundsRemaining: 3,
+        isLastCommonRound: false,
+      },
     );
 
     expect(prompt).toContain("Root issue: #91 - epic");
+    expect(prompt).toContain("## Planning round context");
+    expect(prompt).toContain("current_round: 1");
+    expect(prompt).toContain("max_rounds: 4");
+    expect(prompt).toContain("rounds_remaining: 3");
+    expect(prompt).toContain("is_last_common_round_before_moderator: false");
     expect(prompt).toContain("Artifact kind hint: issue");
     expect(prompt).toContain("Referenced child issue count: 1");
     expect(prompt).toContain("Epic title valid: true");
@@ -793,6 +805,84 @@ describe("ai issue planning review", () => {
     expect(prompt).toContain("Final recommendation: `Request changes`");
     expect(prompt).toContain("Raiz");
     expect(prompt).not.toContain("<!-- ai-issue-automation:start -->");
+  });
+
+  it("marks the fourth issue planning round as the final common round before moderation", () => {
+    const discussion = {
+      comments: {
+        nodes: [
+          ...Array.from({ length: 3 }, () => ({
+            author: { login: "github-actions" },
+            body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+            replies: { nodes: [] },
+          })),
+        ],
+      },
+    };
+    const roundContext = buildIssuePlanningRoundContext(discussion);
+    const prompt = buildIssuePlanningUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 609,
+        title: "Propagar contexto",
+        state: "open",
+        body: "Body.",
+      },
+      [],
+      [],
+      "",
+      roundContext,
+    );
+
+    expect(roundContext).toEqual({
+      currentRound: 4,
+      maxRounds: 4,
+      roundsRemaining: 0,
+      isLastCommonRound: true,
+    });
+    expect(prompt).toContain("current_round: 4");
+    expect(prompt).toContain("rounds_remaining: 0");
+    expect(prompt).toContain("is_last_common_round_before_moderator: true");
+    expect(prompt).toContain("final common specialist round before moderator escalation");
+  });
+
+  it("counts only completed planning-round conclusions, not final replies inside one conclusion thread", () => {
+    const completedRound = {
+      author: { login: "github-actions" },
+      body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+    };
+    const discussion = {
+      comments: {
+        nodes: [
+          {
+            ...completedRound,
+            replies: {
+              nodes: [
+                {
+                  author: { login: "github-actions" },
+                  body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Approve`",
+                },
+                {
+                  author: { login: "github-actions" },
+                  body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+                },
+              ],
+            },
+          },
+          {
+            ...completedRound,
+            replies: { nodes: [] },
+          },
+        ],
+      },
+    };
+
+    expect(buildIssuePlanningRoundContext(discussion)).toEqual({
+      currentRound: 3,
+      maxRounds: 4,
+      roundsRemaining: 1,
+      isLastCommonRound: false,
+    });
   });
 
   it("marks epic titles without child issues as invalid planning artifacts in the prompt", () => {

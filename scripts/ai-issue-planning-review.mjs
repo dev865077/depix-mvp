@@ -39,6 +39,7 @@ const MAX_DISCUSSION_CONTEXT_COMMENT_CHARS = 1600;
 const MAX_ISSUE_COMMENT_CHARS = 2000;
 const MAX_CHILD_ISSUE_BODY_CHARS = 1600;
 const MAX_CHILD_ISSUES = 24;
+const MAX_ISSUE_PLANNING_ROUNDS = 4;
 const MAX_OUTPUT_TOKENS = 2200;
 const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const REASONING_EFFORT = "low";
@@ -1181,6 +1182,20 @@ export function buildDiscussionHistoryContext(discussion) {
   return truncateText(entries.slice(-MAX_DISCUSSION_CONTEXT_COMMENTS).join("\n\n"), MAX_DISCUSSION_CONTEXT_CHARS);
 }
 
+export function buildIssuePlanningRoundContext(discussion, maxRounds = MAX_ISSUE_PLANNING_ROUNDS) {
+  const finalCommentCount = (discussion.comments?.nodes ?? [])
+    .filter((comment) => isAutomatedPlanningFinalComment(comment))
+    .length;
+  const currentRound = Math.min(finalCommentCount + 1, maxRounds);
+
+  return {
+    currentRound,
+    maxRounds,
+    roundsRemaining: Math.max(0, maxRounds - currentRound),
+    isLastCommonRound: currentRound >= maxRounds,
+  };
+}
+
 /**
  * Detecta comentarios automatizados do proprio planning review.
  *
@@ -1552,13 +1567,20 @@ export function buildIssuePlanningAutomationSection(input) {
  * @param {any[]} childIssues Referenced issue payloads.
  * @param {any[]} issueComments Issue comments.
  * @param {string} discussionContext Prior Discussion context.
+ * @param {{ currentRound?: number, maxRounds?: number, roundsRemaining?: number, isLastCommonRound?: boolean }} roundContext Planning round metadata.
  * @returns {string} Final user payload.
  */
-export function buildIssuePlanningUserPrompt(repository, issue, childIssues, issueComments, discussionContext) {
+export function buildIssuePlanningUserPrompt(repository, issue, childIssues, issueComments, discussionContext, roundContext = {}) {
   const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
   const referencedChildIssueCount = Array.isArray(childIssues) ? childIssues.length : 0;
   const epicTitle = /^\s*epic\s*:/i.test(issue.title ?? "");
   const epicTitleValid = !epicTitle || referencedChildIssueCount > 0;
+  const currentRound = Number.isInteger(roundContext.currentRound) ? roundContext.currentRound : 1;
+  const maxRounds = Number.isInteger(roundContext.maxRounds) ? roundContext.maxRounds : MAX_ISSUE_PLANNING_ROUNDS;
+  const roundsRemaining = Number.isInteger(roundContext.roundsRemaining)
+    ? roundContext.roundsRemaining
+    : Math.max(0, maxRounds - currentRound);
+  const isLastCommonRound = Boolean(roundContext.isLastCommonRound ?? currentRound >= maxRounds);
   const childIssueSections = childIssues.length > 0
     ? childIssues.map((childIssue) => [
       `### #${childIssue.number} - ${childIssue.title}`,
@@ -1577,6 +1599,15 @@ export function buildIssuePlanningUserPrompt(repository, issue, childIssues, iss
     `Artifact kind hint: ${epicTitle ? "epic" : "issue"}`,
     `Referenced child issue count: ${referencedChildIssueCount}`,
     `Epic title valid: ${epicTitleValid}`,
+    "",
+    "## Planning round context",
+    `current_round: ${currentRound}`,
+    `max_rounds: ${maxRounds}`,
+    `rounds_remaining: ${roundsRemaining}`,
+    `is_last_common_round_before_moderator: ${String(isLastCommonRound)}`,
+    isLastCommonRound
+      ? "This is the final common specialist round before moderator escalation; converge on the smallest practical decision instead of opening broad new blockers."
+      : "This is not the final common specialist round; keep blockers concrete and avoid expanding scope.",
     "",
     "## Root issue body",
     truncateText(humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no description provided]",
@@ -2325,11 +2356,12 @@ async function main() {
   );
   const childIssues = await fetchReferencedChildIssues(repository, referencedIssueNumbers);
   const discussionContext = buildDiscussionHistoryContext(context.discussion);
+  const roundContext = buildIssuePlanningRoundContext(context.discussion);
 
   // Package root issue, referenced issues, issue comments, and Discussion
   // history together so each role can judge both scope design and the debate
   // that already happened around that scope.
-  const userPrompt = buildIssuePlanningUserPrompt(repository, context.issue, childIssues, issueComments, discussionContext);
+  const userPrompt = buildIssuePlanningUserPrompt(repository, context.issue, childIssues, issueComments, discussionContext, roundContext);
   const debate = await runIssuePlanningDebate({
     model,
     doctrine,

@@ -13,6 +13,7 @@ Execution rules:
 - Prefer the simplest complete product slice; do not demand speculative features.
 - Keep requested changes surgical and tied to the issue outcome.
 - Prefer verifiable acceptance over broad product commentary.
+- Use the planning round context. On the final common round before moderator escalation, converge on the smallest product decision that is safe and avoid introducing new broad scope.
 
 Use `Request changes` when:
 - the backlog would still leave the user journey incomplete

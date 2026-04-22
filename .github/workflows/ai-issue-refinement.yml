@@ -57,5 +57,5 @@ jobs:
           AI_ISSUE_REFINEMENT_PROVIDER: ${{ vars.AI_ISSUE_REFINEMENT_PROVIDER || 'openai_chat_completions' }}
           AI_ISSUE_REFINEMENT_ENDPOINT: ${{ vars.AI_ISSUE_REFINEMENT_ENDPOINT }}
           AI_ISSUE_REFINEMENT_BEARER_TOKEN: ${{ secrets.AI_ISSUE_REFINEMENT_BEARER_TOKEN }}
-          AI_ISSUE_REFINEMENT_MAX_ROUNDS: ${{ vars.AI_ISSUE_REFINEMENT_MAX_ROUNDS || '3' }}
+          AI_ISSUE_REFINEMENT_MAX_ROUNDS: ${{ vars.AI_ISSUE_REFINEMENT_MAX_ROUNDS || '4' }}
         run: node scripts/ai-issue-refinement.mjs

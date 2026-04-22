@@ -29,6 +29,7 @@ const OPENAI_REQUEST_TIMEOUT_MS = 120000;
 const MAX_OUTPUT_TOKENS = 2400;
 const MAX_CHILD_ISSUES_PER_REFINEMENT = 4;
 const MAX_TOTAL_CHILD_ISSUES_PER_ROOT = 12;
+const DEFAULT_ISSUE_REFINEMENT_MAX_ROUNDS = 4;
 const MAX_ISSUE_BODY_CHARS = 9000;
 const MAX_DISCUSSION_CONTEXT_CHARS = 18000;
 const REASONING_EFFORT = "low";
@@ -435,6 +436,10 @@ function formatChildIssues(childIssues) {
 export function buildIssueRefinementUserPrompt(input) {
   const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
   const blockingDependencies = Array.isArray(input.blockingDependencies) ? input.blockingDependencies : [];
+  const currentRound = Number.isInteger(input.roundCount) ? input.roundCount : 1;
+  const maxRounds = Number.isInteger(input.maxRounds) ? input.maxRounds : DEFAULT_ISSUE_REFINEMENT_MAX_ROUNDS;
+  const roundsRemaining = Math.max(0, maxRounds - currentRound);
+  const isLastCommonRound = currentRound >= maxRounds;
 
   return [
     `Repository: ${input.repository}`,
@@ -445,6 +450,15 @@ export function buildIssueRefinementUserPrompt(input) {
     `Blocking roles: ${blockingRoles.join(",") || "(none)"}`,
     `Blocked by dependencies input: ${String(input.blockedByDependencies)}`,
     `Current refinement round count: ${input.roundCount}`,
+    "",
+    "## Planning round context",
+    `current_round: ${currentRound}`,
+    `max_rounds: ${maxRounds}`,
+    `rounds_remaining: ${roundsRemaining}`,
+    `is_last_common_round_before_moderator: ${String(isLastCommonRound)}`,
+    isLastCommonRound
+      ? "This is the final common refinement round before moderator escalation; converge on the smallest practical issue artifact and avoid creating broad new scope."
+      : "This is not the final common refinement round; resolve concrete blockers and avoid expanding the backlog.",
     "",
     "## Human issue body",
     truncateText(input.humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no human issue body]",
@@ -1468,6 +1482,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     blockingRoles,
     blockedByDependencies,
     roundCount: roundCount + 1,
+    maxRounds,
     humanIssueBody,
     currentManagedSection,
     childIssues,
@@ -1493,6 +1508,10 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
       planning_status: planningStatus,
       blocking_roles: blockingRoles,
       blocked_by_dependencies: blockedByDependencies,
+      current_round: roundCount + 1,
+      max_rounds: maxRounds,
+      rounds_remaining: Math.max(0, maxRounds - (roundCount + 1)),
+      is_last_common_round_before_moderator: roundCount + 1 >= maxRounds,
       system_prompt: systemPrompt,
       user_prompt: userPrompt,
     });
@@ -1616,7 +1635,7 @@ async function main() {
     || process.env.GITHUB_REF?.replace(/^refs\/heads\//, "")
     || event?.repository?.default_branch
     || "main";
-  const maxRounds = Number.parseInt(process.env.AI_ISSUE_REFINEMENT_MAX_ROUNDS ?? "3", 10);
+  const maxRounds = Number.parseInt(process.env.AI_ISSUE_REFINEMENT_MAX_ROUNDS ?? String(DEFAULT_ISSUE_REFINEMENT_MAX_ROUNDS), 10);
 
   if (!owner || !name) {
     throw new Error(`Invalid GITHUB_REPOSITORY value: ${repository}`);

@@ -13,6 +13,7 @@ Execution rules:
 - Prefer the simplest complete delivery slice; do not split work into tiny fragments.
 - Keep requested changes surgical and tied to execution readiness.
 - Prefer verifiable done-ness, evidence, and dependency state over broad planning commentary.
+- Use the planning round context. On the final common round before moderator escalation, converge on executable sequencing and avoid splitting into tiny extra tasks.
 
 Use `Request changes` when:
 - the order of execution is unclear

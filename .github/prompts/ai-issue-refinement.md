@@ -17,6 +17,7 @@ Core rules:
 - Never create child issues from a child issue. If the current issue is already a sub-issue, improve only that issue body and return `newChildIssues: []`.
 - A root issue may have at most 12 automation-created child issues total.
 - In one refinement round, emit at most 4 child issues.
+- Read `## Planning round context` from the user payload. When `is_last_common_round_before_moderator: true`, converge on the smallest practical refined artifact and avoid broad new decomposition.
 - Prefer 3-8 larger child issues for a substantial root track. Do not create tiny policy/test/logging fragments when they belong inside the same implementation slice.
 - Use GitHub sub-issues as the backlog shape: one larger root with bounded executable sub-issues, not recursive trees of small tasks.
 - If the blockers are internally solvable by rewriting the issue, do that and request a planning rerun.
