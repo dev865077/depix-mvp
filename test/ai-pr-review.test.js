@@ -34,6 +34,7 @@ import {
   extractReviewRecommendation,
   getCiTestCheckState,
   getReviewGateFailure,
+  isDiscussionNotFoundGraphqlError,
   isCiTestCheckGreen,
   isCompletedCiWorkflowRunEvent,
   normalizeSpecialistReviewMemo,
@@ -1895,6 +1896,13 @@ describe("ai pr review discussion rendering", () => {
 
     expect(preferRecoveredDiscussionTarget(createdDiscussion, recoveredDiscussion)).toEqual(recoveredDiscussion);
     expect(preferRecoveredDiscussionTarget(createdDiscussion, null)).toEqual(createdDiscussion);
+  });
+
+  it("detects a recoverable GitHub Discussion not found GraphQL error", () => {
+    const error = new Error('GitHub GraphQL request failed: [{"type":"NOT_FOUND","path":["repository","discussion"],"message":"Could not resolve to a Discussion with the number of 566."}]');
+
+    expect(isDiscussionNotFoundGraphqlError(error)).toBe(true);
+    expect(isDiscussionNotFoundGraphqlError(new Error("GitHub GraphQL request failed: []"))).toBe(false);
   });
 
   it("returns a complete publication set for the discussion lane", () => {

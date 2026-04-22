@@ -1691,14 +1691,38 @@ async function fetchDiscussionByNumber(owner, name, discussionNumber) {
       }
     }
   `;
-  const data = await githubGraphqlRequest(query, {
-    owner,
-    name,
-    number: discussionNumber,
-    limit: MAX_DISCUSSION_CONTEXT_COMMENTS,
-  });
+  let data;
+
+  try {
+    data = await githubGraphqlRequest(query, {
+      owner,
+      name,
+      number: discussionNumber,
+      limit: MAX_DISCUSSION_CONTEXT_COMMENTS,
+    });
+  } catch (error) {
+    if (isDiscussionNotFoundGraphqlError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
 
   return data?.repository?.discussion ?? null;
+}
+
+/**
+ * Detect the GitHub GraphQL shape returned when a repository Discussion cannot
+ * be resolved immediately after creation or after it was deleted.
+ *
+ * @param {unknown} error Error thrown by the GraphQL client.
+ * @returns {boolean} True when the failure is a recoverable Discussion miss.
+ */
+export function isDiscussionNotFoundGraphqlError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return message.includes('"type":"NOT_FOUND"')
+    && message.includes('"path":["repository","discussion"]');
 }
 
 /**
