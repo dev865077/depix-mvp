@@ -41,6 +41,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - callback queries suportadas sao tratadas pelo mesmo fluxo de pedido, com fallback por texto preservado
 - `/start` e `/status` reconsultam um pedido `awaiting_payment` contra a Eulen antes de responder quando ha deposito local disponivel, para refletir imediato um pagamento ja conciliado externamente
 - o sistema agora persiste metadados da mensagem canonica do Telegram no pedido para permitir edicao in-place do mesmo payload ao longo do fluxo
+- o sistema agora persiste `created_request_id` em `deposits` e `request_id` em `deposit_events` para ligar a trilha operacional usada no coletor de evidencia da release 0.1
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`
@@ -73,5 +74,4 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
 - o fluxo Telegram agora aceita `/cancel` e comandos equivalentes para cancelar pedidos abertos em `amount`, `wallet` e `confirmation`
 - `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
-- `recomecar` reinicia com seguranca quando existe contexto aberto e, sem contexto, apenas orienta o usuario a usar `/start`
-- a copy do prompt de valor agora usa "valor em BRL" na orientacao normal, reservando a instrução de valor inteiro apenas para o caso em que centavos nao sao suportados
+- `reco
