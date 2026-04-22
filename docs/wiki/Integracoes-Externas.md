@@ -88,12 +88,16 @@ Estado atual:
 - o webhook principal de deposito ja existe no `main`
 - a validacao do header `Authorization` e a idempotencia base ja estao implementadas
 - o runtime correlaciona `qrId` do webhook com `depositEntryId` local quando a cobranca ainda nao tinha `qrId` persistido
-- a hidratacao de `qrId` agora e fail-closed: quando o webhook encontra um `qrId` desconhecido, o runtime so hidrata um deposito pendente se `deposit-status.qrId` bater exatamente com o `qrId` do webhook
-- se o `qrId` remoto nao for exatamente o mesmo `qrId` do webhook, o deposito, a ordem e os eventos permanecem inalterados
-- o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
-- o fallback por janela via `deposits` tambem ja existe para linhas compactas por `qrId`
-- o webhook principal da Eulen agora registra `deposit_events` antes de escrever o agregado `deposits` + `orders`, para preservar evidencia de auditoria mesmo se a escrita do agregado falhar
-- a atualizacao do agregado `deposits` + `orders` agora acontece em um unico `db.batch()`; se qualquer write do lote falhar, o D1 reverte os writes anteriores do mesmo batch
-- a escrita atomica do agregado evita estado parcial entre deposito e pedido quando uma etapa do webhook falha no meio do caminho
-- o webhook continua idempotente e nao publica efeitos duplicados quando a verdade externa ja foi aplicada
-- as rotas de consulta e operacao continuam separadas do caminho principal do webhook
+- a hidratacao de `qrId` agora e fail-close
+- o recheck de deposito e o webhook principal agora propagam o `correlationId` canonico do pedido para logs e telemetria
+- o client Eulen agora emite logs estruturados de inicio, sucesso e falha da request com `correlationId`, `requestId`, `tenantId`, `orderId` e `depositEntryId` quando disponiveis
+- o client Eulen agora aceita um bloco de telemetria opcional por request, sem alterar o contrato funcional da chamada
+- o fallback por janela de recheck de deposito tambem propaga o `correlationId` do pedido ao consultar a verdade remota
+- o webhook da Eulen tambem registra o `correlationId` canonico ao processar depositos e ao reparar duplicidades
+- a conciliacao de pagamento pode disparar notificacao assincrona no Telegram quando o estado visivel do pedido muda para confirmacao
+- a confirmacao assincrona e idempotente por transicao visivel e nao deve ser repetida por webhook, recheck ou fallback
+- o fluxo ainda depende da integracao do tenant com `partnerId`, `depixSplitAddress` e `splitFee` para criar deposito valido
+
+## Leitura correta
+
+Estas integracoes existem para suportar o fluxo do MVP; a documentacao nao deve presumir features externas nao implementadas.

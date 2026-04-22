@@ -42,6 +42,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `/start` e `/status` reconsultam um pedido `awaiting_payment` contra a Eulen antes de responder quando ha deposito local disponivel, para refletir imediato um pagamento ja conciliado externamente
 - o sistema agora persiste metadados da mensagem canonica do Telegram no pedido para permitir edicao in-place do mesmo payload ao longo do fluxo
 - o sistema agora persiste `created_request_id` em `deposits` e `request_id` em `deposit_events` para ligar a trilha operacional usada no coletor de evidencia da release 0.1
+- o sistema agora persiste `correlation_id` canonico em `orders`, com backfill de linhas legadas via migracao
+- o `correlation_id` e propagado nos logs de Telegram, no webhook da Eulen, no recheck de deposito e na telemetria do client Eulen
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`
@@ -72,14 +74,8 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
 - a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza espacos visuais e avanca o pedido para `confirmation`
 - em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
-- o fluxo Telegram agora aceita `/cancel` e controles equivalentes para encerrar ou reiniciar conversas abertas sem criar pedido novo indevidamente
-- as respostas de confirmacao de pagamento agora sao mais curtas, em texto puro, sem QR, e incluem um link para a transacao Liquid quando disponivel
-- as respostas formatadas do Telegram preservam entidades de bold e outras anotacoes suportadas ao atravessar replies diretas, mensagens canonicas e captions de foto
+- o fluxo Telegram agora aceita `/cancel` e comandos de reinicio sem criar duplicata quando o contexto aberto nao existe
 
-## Como navegar
+## Leitura correta
 
-- [Leitura Inicial](Leitura-Inicial)
-- [Visao Geral do Produto](Visao-Geral-do-Produto)
-- [Escopo e Fluxo](Escopo-e-Fluxo)
-- [Arquitetura Geral](Arquitetura-Geral)
-- [Integracoes Externas](Integracoes-Externas)
+O projeto ja tem uma arquitetura-alvo bem definida e uma fundacao concreta no `main`. O gap atual nao e falta de direcao; e falta de implementar as ultimas fatias funcionais do fluxo.
