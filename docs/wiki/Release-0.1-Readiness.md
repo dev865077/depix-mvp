@@ -1,47 +1,33 @@
 # Release 0.1 Readiness
 
-## Critérios de bloqueio
+## Objetivo
 
-O rollout fica bloqueado se qualquer um destes pontos nao estiver valido no ambiente alvo:
+Esta pagina registra o que ainda precisa estar pronto para a release `0.1` ser considerada segura para corte.
 
-- gate real Telegram 0.1 com preflight verde e JSON de execucao real controlada
-- autenticação e tenancy
-- persistência D1 operacional
-- webhook da Eulen validado
-- fluxo Telegram validado
-- tipo e build validos
-- estrategia de rollback definida
+## Critérios de corte
 
-## Itens que podem ficar para depois
+- o fluxo principal precisa estar validado no ambiente alvo
+- os webhooks operacionais precisam estar documentados e funcionais
+- os segredos e bindings de ambiente precisam estar definidos
+- os runbooks de operacao precisam existir e refletir o comportamento atual
+- qualquer dependência externa critica precisa ter procedimento de validacao e rollback
+
+## Itens que podem bloquear o corte
+
+- divergencia entre documento e codigo
+- ausencia de runbook operacional para um fluxo novo
+- falta de evidencia de teste humano ou prova operacional
+- dependencia externa sem instrucao de validacao ou recuperacao
+- mudancas em ambiente, segredo, fluxo de pagamento ou webhook sem atualizacao documental na mesma PR
+
+## Itens que podem ficar para 0.2
 
 Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
-- dashboard administrativo
-- reprocessamento em massa
-- multi-produto fora de DePix
-- automacao de suporte para todos os casos externos da Eulen
-
-## Evidencia minima por area
-
-| Area | Ambiente alvo | Evidencia minima | Bloqueia release? |
-| --- | --- | --- | --- |
-| Gate real Telegram 0.1 | `production` | `artifacts/telegram-real-flow/preflight-*.json` verde + `real-run-*.json` com `status=success` | Sim |
-| Pagamento real controlado | `production` | issue #125 ou evidencia equivalente ate `completed` | Sim |
-| Webhook Eulen normal | `test` ou `production` | `deposit_events.source=webhook` com `bank_tx_id` e `blockchain_tx_id` quando enviados | Sim |
-| Recheck por deposito | `test` ou incidente production | `deposit_events.source=recheck_deposit_status` e agregado consistente | Sim, se webhook falhar |
-| Reconciliação agendada | `production` | `/health.operations.scheduledDepositReconciliation.ready=true` e cron `*/15 * * * *` publicado | Sim |
-| Fallback por lista | `test` ou incidente production | `deposit_events.source=recheck_deposits_list` e janela curta documentada | Sim, se recheck nao bastar |
-| QR expirado | `test` | `deposits.external_status=expired` e pedido terminal seguro | Sim |
-| Notificacao Telegram | `test` e evidencia real | log `telegram.payment_notification.sent` ou skip/failed explicado | Sim |
-
-## Regras de aceite
-
-- nao considerar release pronta sem `npm run telegram:preflight` verde no ambiente alvo
-- nao considerar release pronta sem `npm run telegram:real-run -- --confirm-real` gerando JSON `status=success`
-- o teste real precisa observar `callback_query`, confirmacao por botao, QR/Pix gerado e pagamento confirmado quando `--require-payment-confirmed` for usado
-- nao considerar release pronta sem pelo menos um caminho operacional de confirmacao financeira validado
-- em caso de incidente, o caminho aceito precisa ser explicito no runbook
-- toda mudanca que altere ambiente, segredo, fluxo de pagamento ou webhook precisa atualizar esta pagina na mesma PR
+- melhorias de ergonomia nao criticas
+- refinamentos de copy que nao alterem o fluxo
+- expandir observabilidade alem do minimo necessario para operar
+- automatizacoes que nao sejam criticas para a liberacao da release
 
 ## Runbook operacional
 
@@ -52,3 +38,9 @@ Estado atual do runbook: `validacao limitada`. Ele ja define pre-requisitos, pas
 ## Leitura correta
 
 Esta pagina nao substitui o runbook nem a documentacao de integracao. Ela so define o que ainda bloqueia o corte de release.
+
+## Regra de manutencao
+
+- toda mudanca que altere ambiente, segredo, fluxo de pagamento ou webhook precisa atualizar esta pagina na mesma PR
+- se o runbook mudar, esta pagina precisa apontar para a versao canonica atual
+- se a validacao operacional avancar, o estado da validacao precisa ser reescrito aqui
