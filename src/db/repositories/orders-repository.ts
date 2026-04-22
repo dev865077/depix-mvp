@@ -35,6 +35,7 @@ function toNullableString(value: unknown): string | null {
 const ORDER_COLUMNS_SQL = `
     tenant_id AS tenantId,
     order_id AS orderId,
+    correlation_id AS correlationId,
     user_id AS userId,
     channel AS channel,
     product_type AS productType,
@@ -63,6 +64,7 @@ const INSERT_ORDER_SQL = `
   INSERT INTO orders (
     tenant_id,
     order_id,
+    correlation_id,
     user_id,
     channel,
     product_type,
@@ -75,11 +77,12 @@ const INSERT_ORDER_SQL = `
     status,
     split_address,
     split_fee
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const ORDER_UPDATE_COLUMNS = {
   tenantId: "tenant_id",
+  correlationId: "correlation_id",
   userId: "user_id",
   channel: "channel",
   productType: "product_type",
@@ -108,6 +111,7 @@ function normalizeOrderInput(input: CreateOrderInput) {
   return {
     tenantId: toRequiredString(input.tenantId),
     orderId: toRequiredString(input.orderId),
+    correlationId: toRequiredString(input.correlationId ?? input.orderId),
     userId: toRequiredString(input.userId),
     channel: toRequiredString(input.channel ?? "telegram"),
     productType: toRequiredString(input.productType),
@@ -138,6 +142,7 @@ export async function createOrder(db: D1Database, input: CreateOrderInput): Prom
   const insertStatement = db.prepare(INSERT_ORDER_SQL).bind(
     order.tenantId,
     order.orderId,
+    order.correlationId,
     order.userId,
     order.channel,
     order.productType,

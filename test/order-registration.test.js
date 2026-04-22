@@ -14,8 +14,9 @@ import {
 } from "../src/services/order-registration.js";
 
 const ORDER_SCHEMA_STATEMENTS = [
-  "CREATE TABLE IF NOT EXISTS orders (tenant_id TEXT NOT NULL, order_id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'telegram', product_type TEXT NOT NULL, telegram_chat_id TEXT, telegram_canonical_message_id INTEGER, telegram_canonical_message_kind TEXT, amount_in_cents INTEGER, wallet_address TEXT, current_step TEXT NOT NULL DEFAULT 'draft', status TEXT NOT NULL DEFAULT 'draft', split_address TEXT, split_fee TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+  "CREATE TABLE IF NOT EXISTS orders (tenant_id TEXT NOT NULL, order_id TEXT PRIMARY KEY NOT NULL, correlation_id TEXT NOT NULL, user_id TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'telegram', product_type TEXT NOT NULL, telegram_chat_id TEXT, telegram_canonical_message_id INTEGER, telegram_canonical_message_kind TEXT, amount_in_cents INTEGER, wallet_address TEXT, current_step TEXT NOT NULL DEFAULT 'draft', status TEXT NOT NULL DEFAULT 'draft', split_address TEXT, split_fee TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS orders_correlation_id_idx ON orders (correlation_id)",
   "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
 ];
@@ -163,6 +164,24 @@ describe("telegram order registration controls", () => {
     });
 
     expect(stringSession.order.telegramChatId).toBe(largeStringChatId);
+  });
+
+  it("creates a canonical correlation id once when opening a fresh Telegram order", async function assertCorrelationIdCreation() {
+    const db = getDatabase(env);
+    await ensureOrderSchema(db);
+
+    const session = await startTelegramOrderConversation({
+      db,
+      tenant: {
+        tenantId: "alpha",
+      },
+      telegramUserId: "correlation-user-001",
+      telegramChatId: "chat-correlation-001",
+    });
+
+    expect(session.created).toBe(true);
+    expect(session.order.correlationId).toMatch(/^corr_/u);
+    expect(session.order.correlationId).not.toBe(session.order.orderId);
   });
 
   it("returns a clear recovery shape when restart cancels the old order but the new one cannot be created", async function assertRestartFailureRecoveryShape() {

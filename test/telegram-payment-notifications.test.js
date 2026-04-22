@@ -30,6 +30,7 @@ async function seedTelegramNotificationOrder() {
   await createOrder(db, {
     tenantId: "alpha",
     orderId: "order_alpha_notification_001",
+    correlationId: "corr_alpha_notification_001",
     userId: "telegram_alpha_notification_001",
     channel: "telegram",
     productType: "depix",
@@ -288,6 +289,53 @@ describe("telegram payment notifications", () => {
     expect(telegramCalls[0].payload.entities?.some((entity) => entity.type === "bold")).toBe(true);
     expect(telegramCalls[0].payload).not.toHaveProperty("photo");
     expect(telegramCalls[0].payload).not.toHaveProperty("caption");
+  });
+
+  it("logs the canonical correlation id on payment notification delivery", async function assertNotificationCorrelationLogging() {
+    const db = await seedTelegramNotificationOrder();
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      result: {
+        message_id: 45,
+      },
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+      },
+    }));
+
+    await notifyTelegramOrderTransitionSafely({
+      env: TELEGRAM_NOTIFICATION_ENV,
+      db,
+      runtimeConfig: {
+        environment: "test",
+        appName: "depix-mvp",
+        logLevel: "info",
+      },
+      tenant: TELEGRAM_NOTIFICATION_TENANT,
+      requestContext: {
+        requestId: "test-request-id",
+        method: "POST",
+        path: "/ops/alpha/reconcile/deposits",
+      },
+      orderId: "order_alpha_notification_001",
+      depositEntryId: "deposit_alpha_notification_001",
+      externalStatus: "depix_sent",
+      orderStatus: "paid",
+      orderCurrentStep: "completed",
+      previousExternalStatus: "pending",
+      previousOrderStatus: "pending",
+      previousOrderCurrentStep: "awaiting_payment",
+    });
+
+    const sentLog = consoleLogSpy.mock.calls
+      .map(([record]) => JSON.parse(String(record)))
+      .find((record) => record.message === "telegram.payment_notification.sent");
+
+    expect(sentLog?.details?.correlationId).toBe("corr_alpha_notification_001");
   });
 
   it("does not edit old Telegram messages for duplicate payment confirmations", async function assertCanonicalDuplicateSend() {

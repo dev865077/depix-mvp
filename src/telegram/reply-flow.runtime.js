@@ -1389,6 +1389,7 @@ async function startTelegramConversationOrder(ctx, input) {
 
   logTelegramEvent(input, "info", orderSession.created ? "telegram.order.created" : "telegram.order.resumed", {
     handlerName: ctx.state.telegramHandler,
+    correlationId: orderSession.order.correlationId,
     orderId: orderSession.order.orderId,
     userId: orderSession.order.userId,
     currentStep: orderSession.order.currentStep,
@@ -1398,6 +1399,7 @@ async function startTelegramConversationOrder(ctx, input) {
   if (orderSession.started) {
     logTelegramEvent(input, "info", "telegram.order.started", {
       handlerName: ctx.state.telegramHandler,
+      correlationId: orderSession.order.correlationId,
       orderId: orderSession.order.orderId,
       userId: orderSession.order.userId,
       currentStep: orderSession.order.currentStep,
@@ -1408,6 +1410,7 @@ async function startTelegramConversationOrder(ctx, input) {
   if (orderSession.conflict) {
     logTelegramEvent(input, "warn", "telegram.order.start_conflict", {
       handlerName: ctx.state.telegramHandler,
+      correlationId: orderSession.order.correlationId,
       orderId: orderSession.order.orderId,
       userId: orderSession.order.userId,
       currentStep: orderSession.order.currentStep,
@@ -1495,6 +1498,7 @@ async function handleTelegramHelpRequest(ctx, input, source) {
   logTelegramEvent(input, "info", "telegram.help.rendered", {
     handlerName: ctx.state?.telegramHandler,
     source,
+    correlationId: openOrder?.correlationId,
     hasOpenOrder: Boolean(openOrder),
     orderId: openOrder?.orderId,
     currentStep: openOrder?.currentStep,
@@ -1517,6 +1521,7 @@ async function handleTelegramStartRequest(ctx, input, source) {
     logTelegramEvent(input, "info", "telegram.order.timeout_reply_rendered", {
       handlerName: ctx.state?.telegramHandler,
       source,
+      correlationId: orderSession.order?.correlationId,
       previousOrderId: orderSession.timedOutOrder?.orderId,
       nextOrderId: orderSession.order?.orderId,
     });
@@ -1604,6 +1609,7 @@ async function handleTelegramStatusRequest(ctx, input, source) {
   logTelegramEvent(input, "info", "telegram.status.rendered", {
     handlerName: ctx.state?.telegramHandler,
     source,
+    correlationId: reconciled.order?.correlationId,
     selectionSource: selection.source,
     hasOrder: Boolean(reconciled.order),
     orderId: reconciled.order?.orderId,
@@ -1697,6 +1703,7 @@ async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit,
     logTelegramEvent(input, "info", "telegram.deposit_recheck.completed", {
       handlerName: ctx.state?.telegramHandler,
       source,
+      correlationId: order.correlationId,
       orderId: order.orderId,
       depositEntryId: deposit.depositEntryId,
       code: result.code,
@@ -1715,6 +1722,7 @@ async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit,
     logTelegramEvent(input, "warn", "telegram.deposit_recheck.failed", {
       handlerName: ctx.state?.telegramHandler,
       source,
+      correlationId: order.correlationId,
       orderId: order.orderId,
       depositEntryId: deposit.depositEntryId,
       code: typeof error?.code === "string" ? error.code : error?.name ?? "telegram_deposit_recheck_failed",
@@ -1860,6 +1868,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   logTelegramEvent(input, "info", "telegram.order.restart_handled", {
     handlerName: ctx.state?.telegramHandler,
     source,
+    correlationId: restartedSession.order?.correlationId ?? restartedSession.previousOrder.correlationId,
     accepted: restartedSession.restarted,
     previousOrderId: restartedSession.previousOrder.orderId,
     nextOrderId: restartedSession.order?.orderId,
@@ -1999,6 +2008,7 @@ async function expireTimedOutTelegramConversationOrder(ctx, input, telegramUserI
   if (timeoutReset.timedOut) {
     logTelegramEvent(input, "info", "telegram.order.timed_out", {
       handlerName: ctx.state?.telegramHandler,
+      correlationId: timeoutReset.openOrder?.correlationId,
       orderId: timeoutReset.openOrder?.orderId,
       userId: timeoutReset.openOrder?.userId,
       currentStep: timeoutReset.openOrder?.currentStep,
@@ -2058,26 +2068,22 @@ function logTelegramAmountResult(ctx, input, amountSession) {
   }
 
   if (!amountSession.parseResult.ok) {
-    logTelegramEvent(input, "info", "telegram.order.amount_rejected", {
+    logTelegramEvent(input, "info", "telegram.order.amount_rejected", withTelegramOrderLogDetails(amountSession.order, {
       handlerName: ctx.state.telegramHandler,
-      orderId: amountSession.order.orderId,
-      userId: amountSession.order.userId,
       reason: amountSession.parseResult.reason,
       currentStep: amountSession.order.currentStep,
-    });
+    }));
     return;
   }
 
   logTelegramEvent(input, amountSession.conflict ? "warn" : "info", amountSession.accepted
     ? "telegram.order.amount_received"
-    : "telegram.order.amount_conflict", {
+    : "telegram.order.amount_conflict", withTelegramOrderLogDetails(amountSession.order, {
     handlerName: ctx.state.telegramHandler,
-    orderId: amountSession.order.orderId,
-    userId: amountSession.order.userId,
     amountInCents: amountSession.parseResult.amountInCents,
     currentStep: amountSession.order.currentStep,
     status: amountSession.order.status,
-  });
+  }));
 }
 
 /**
@@ -2106,26 +2112,22 @@ function logTelegramWalletResult(ctx, input, walletSession) {
   }
 
   if (!walletSession.parseResult.ok) {
-    logTelegramEvent(input, "info", "telegram.order.wallet_rejected", {
+    logTelegramEvent(input, "info", "telegram.order.wallet_rejected", withTelegramOrderLogDetails(walletSession.order, {
       handlerName: ctx.state.telegramHandler,
-      orderId: walletSession.order.orderId,
-      userId: walletSession.order.userId,
       reason: walletSession.parseResult.reason,
       currentStep: walletSession.order.currentStep,
-    });
+    }));
     return;
   }
 
   logTelegramEvent(input, walletSession.conflict ? "warn" : "info", walletSession.accepted
     ? "telegram.order.wallet_received"
-    : "telegram.order.wallet_conflict", {
+    : "telegram.order.wallet_conflict", withTelegramOrderLogDetails(walletSession.order, {
     handlerName: ctx.state.telegramHandler,
-    orderId: walletSession.order.orderId,
-    userId: walletSession.order.userId,
     walletAddressPrefix: walletSession.parseResult.walletAddress?.slice(0, 3),
     currentStep: walletSession.order.currentStep,
     status: walletSession.order.status,
-  });
+  }));
 }
 
 /**
@@ -2146,14 +2148,12 @@ function logTelegramWalletResult(ctx, input, walletSession) {
  * @param {Record<string, unknown>} details Metadados adicionais.
  */
 function logTelegramConfirmationDecision(ctx, input, decision, order, details) {
-  logTelegramEvent(input, "info", `telegram.order.${decision}_handled`, {
+  logTelegramEvent(input, "info", `telegram.order.${decision}_handled`, withTelegramOrderLogDetails(order, {
     handlerName: ctx.state.telegramHandler,
-    orderId: order.orderId,
-    userId: order.userId,
     currentStep: order.currentStep,
     status: order.status,
     ...details,
-  });
+  }));
 }
 
 /**
@@ -2173,14 +2173,12 @@ function logTelegramConfirmationDecision(ctx, input, decision, order, details) {
  * @param {{ code: string, details?: Record<string, unknown> }} error Erro controlado do service.
  */
 function logTelegramConfirmationFailure(ctx, input, order, error) {
-  logTelegramEvent(input, "warn", "telegram.order.confirmation_failed", {
+  logTelegramEvent(input, "warn", "telegram.order.confirmation_failed", withTelegramOrderLogDetails(order, {
     handlerName: ctx.state.telegramHandler,
-    orderId: order.orderId,
-    userId: order.userId,
     currentStep: order.currentStep,
     errorCode: error.code,
     ...error.details,
-  });
+  }));
 }
 
 /**
@@ -2216,6 +2214,7 @@ function logTelegramChatBindingResult(ctx, input, orderSession) {
     : "telegram.order.chat_hydration_conflict";
 
   logTelegramEvent(input, "warn", message, {
+    correlationId: orderSession.order.correlationId,
     handlerName: ctx.state.telegramHandler,
     orderId: orderSession.order.orderId,
     userId: orderSession.order.userId,
@@ -2447,13 +2446,26 @@ function resolveTelegramActorId(ctx) {
  * @param {Record<string, unknown> | undefined} details Detalhes estruturados.
  */
 function logTelegramEvent(input, level, message, details) {
+  const correlationId = typeof details?.correlationId === "string" && details.correlationId.length > 0
+    ? details.correlationId
+    : input.requestContext?.correlationId;
   log(input.runtimeConfig, {
     level,
     message,
     tenantId: input.tenant.tenantId,
     requestId: input.requestContext?.requestId,
+    correlationId,
     method: input.requestContext?.method,
     path: input.requestContext?.path,
     details,
   });
+}
+
+function withTelegramOrderLogDetails(order, details = {}) {
+  return {
+    correlationId: order?.correlationId,
+    orderId: order?.orderId,
+    userId: order?.userId,
+    ...details,
+  };
 }

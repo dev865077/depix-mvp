@@ -433,6 +433,7 @@ export async function notifyTelegramOrderTransition(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestContext?.requestId,
       details: {
+        correlationId: aggregate.order?.correlationId ?? null,
         orderId: input.orderId,
         depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
         externalStatus: input.externalStatus ?? null,
@@ -462,6 +463,7 @@ export async function notifyTelegramOrderTransition(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestContext?.requestId,
       details: {
+        correlationId: aggregate.order?.correlationId ?? null,
         orderId: input.orderId,
         depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
         reason: "telegram_bot_token_unavailable",
@@ -522,6 +524,7 @@ export async function notifyTelegramOrderTransition(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestContext?.requestId,
       details: {
+        correlationId: aggregate.order.correlationId,
         orderId: input.orderId,
         depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
         externalStatus: input.externalStatus ?? null,
@@ -548,6 +551,7 @@ export async function notifyTelegramOrderTransition(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestContext?.requestId,
       details: {
+        correlationId: aggregate.order.correlationId,
         orderId: input.orderId,
         depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
         externalStatus: input.externalStatus ?? null,
@@ -593,6 +597,7 @@ export async function notifyTelegramOrderTransitionSafely(input) {
       tenantId: input.tenant.tenantId,
       requestId: input.requestContext?.requestId,
       details: {
+        correlationId: null,
         orderId: typeof input.orderId === "string" ? input.orderId : null,
         depositEntryId: typeof input.depositEntryId === "string" ? input.depositEntryId : null,
         externalStatus: input.externalStatus ?? null,

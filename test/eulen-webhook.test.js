@@ -82,6 +82,7 @@ async function seedDepositAggregate(input = {}) {
   await createOrder(db, {
     tenantId: "alpha",
     orderId: "order_alpha_001",
+    correlationId: "corr_alpha_001",
     userId: "telegram_alpha_001",
     channel: "telegram",
     productType: "depix",
@@ -218,6 +219,38 @@ describe("eulen deposit webhook", () => {
       chat_id: "telegram_chat_alpha_001",
     });
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).text).toContain("Pagamento confirmado");
+  });
+
+  it("logs the stored order correlation id when processing the webhook", async function assertWebhookCorrelationLogging() {
+    await seedDepositAggregate();
+    const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 501,
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+
+    expect(response.status).toBe(200);
+
+    const processedLog = consoleLogSpy.mock.calls
+      .map(([record]) => JSON.parse(String(record)))
+      .find((record) => record.message === "webhook.eulen.processed");
+
+    expect(processedLog?.correlationId).toBe("corr_alpha_001");
+    expect(processedLog?.details?.orderId).toBe("order_alpha_001");
   });
 
   it("rolls back deposit and order updates together while preserving the webhook audit event", async function assertWebhookAggregateAtomicity() {

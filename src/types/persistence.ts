@@ -10,6 +10,7 @@ export type DepositEventId = number;
 export interface OrderRecord {
   tenantId: TenantId;
   orderId: OrderId;
+  correlationId: string;
   userId: string;
   channel: Platform;
   productType: string;
@@ -29,6 +30,7 @@ export interface OrderRecord {
 export interface CreateOrderInput {
   tenantId: TenantId;
   orderId: OrderId;
+  correlationId?: string;
   userId: string;
   channel?: Platform;
   productType: string;
@@ -45,6 +47,7 @@ export interface CreateOrderInput {
 
 export interface OrderPatch {
   tenantId?: TenantId;
+  correlationId?: string;
   userId?: string;
   channel?: Platform;
   productType?: string;

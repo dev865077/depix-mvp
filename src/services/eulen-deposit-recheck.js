@@ -446,7 +446,10 @@ async function persistAggregateRepairAtomically(db, tenantId, depositEntryId, or
  *   runtimeConfig: { eulenApiBaseUrl: string, eulenApiTimeoutMs: number },
  *   tenant: { tenantId: string, eulenPartnerId?: string },
  *   eulenApiToken: string,
- *   depositEntryId: string
+ *   depositEntryId: string,
+ *   correlationId?: string,
+ *   orderId?: string,
+ *   requestId?: string
  * }} input Dependencias remotas.
  * @returns {Promise<{ bankTxId?: string, blockchainTxId?: string, qrId?: string, status?: string, expiration?: string }>} Status remoto reduzido.
  */
@@ -457,6 +460,14 @@ async function readRemoteDepositStatus(input) {
   }, {
     id: input.depositEntryId,
     asyncMode: "false",
+    telemetry: {
+      tenantId: input.tenant.tenantId,
+      requestId: input.requestId,
+      correlationId: input.correlationId,
+      operation: "deposit_recheck",
+      orderId: input.orderId,
+      depositEntryId: input.depositEntryId,
+    },
   });
   const resolvedResponse = await resolveEulenAsyncResponse(response);
   const remoteStatus = normalizeEulenDepositStatusPayload(resolvedResponse.data);
@@ -531,6 +542,9 @@ export async function processDepositRecheck(input) {
       tenant: input.tenant,
       eulenApiToken: input.eulenApiToken,
       depositEntryId,
+      correlationId: order.correlationId,
+      orderId: order.orderId,
+      requestId: input.requestId,
     });
   } catch (error) {
     if (error instanceof DepositRecheckError) {

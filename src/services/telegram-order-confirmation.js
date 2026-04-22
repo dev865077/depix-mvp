@@ -589,6 +589,12 @@ export async function confirmTelegramOrder(input) {
         body: createTelegramEulenDepositPayload(creatingDepositOrder, splitConfig),
         nonce: depositNonce,
         requestId: input.requestContext?.requestId,
+        telemetry: {
+          tenantId: input.tenant.tenantId,
+          requestId: input.requestContext?.requestId,
+          correlationId: creatingDepositOrder.correlationId,
+          orderId: creatingDepositOrder.orderId,
+        },
       }),
       {
         pollDelayMs: 0,

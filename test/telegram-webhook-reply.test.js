@@ -286,6 +286,7 @@ async function clearTelegramPersistence() {
     `CREATE TABLE IF NOT EXISTS orders (
       tenant_id TEXT NOT NULL,
       order_id TEXT PRIMARY KEY NOT NULL,
+      correlation_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       channel TEXT NOT NULL DEFAULT 'telegram',
       product_type TEXT NOT NULL,
@@ -304,6 +305,7 @@ async function clearTelegramPersistence() {
     "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
     "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
     "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+    "CREATE INDEX IF NOT EXISTS orders_correlation_id_idx ON orders (correlation_id)",
     "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
     `CREATE TABLE IF NOT EXISTS deposits (
       tenant_id TEXT NOT NULL,

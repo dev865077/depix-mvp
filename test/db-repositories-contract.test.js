@@ -14,6 +14,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     order_id TEXT PRIMARY KEY NOT NULL,
+    correlation_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     channel TEXT NOT NULL DEFAULT 'telegram',
     product_type TEXT NOT NULL,
@@ -82,6 +83,7 @@ describe("db repository typed contracts", () => {
     expect(createdOrder).toMatchObject({
       tenantId: "alpha",
       orderId: "order_contract_001",
+      correlationId: "order_contract_001",
       userId: "user_contract_001",
       channel: "telegram",
       productType: "depix",
@@ -269,6 +271,7 @@ describe("db repository typed contracts", () => {
     expect(coercedOrder).toMatchObject({
       tenantId: "true",
       orderId: "false",
+      correlationId: "false",
       userId: "12345",
       channel: "telegram",
       productType: "false",

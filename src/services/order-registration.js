@@ -332,6 +332,10 @@ function buildInternalOrderId() {
   return `order_${crypto.randomUUID()}`;
 }
 
+function buildOrderCorrelationId() {
+  return `corr_${crypto.randomUUID()}`;
+}
+
 /**
  * Garante que exista um pedido reutilizavel para o usuario atual.
  *
@@ -391,6 +395,7 @@ export async function ensureTelegramOrderRegistration(input) {
   const createdOrder = await createOrder(input.db, {
     tenantId: input.tenant.tenantId,
     orderId: initialProgression.context.orderId,
+    correlationId: buildOrderCorrelationId(),
     userId,
     channel,
     productType,
