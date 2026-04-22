@@ -17,11 +17,14 @@ Estado atual:
 - o update inbound invalido falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot ja tem um fluxo inicial de resposta para `/start`, `/help` e mensagens de texto
 - a superficie publica canonica do bot registra apenas `/start`, `/help`, `/status` e `/cancel`
+- o perfil publico do bot tambem recebe uma descricao curta e uma descricao completa com orientacao para o fluxo inicial
 - o alias legado `/iniciar` continua aceito no runtime, mas nao aparece na listagem publica canonica
 - o menu button do Telegram espelha a mesma superficie publica canonica de comandos
 - o webhook do Telegram registra a lista publica de comandos e o menu button durante o setup da webhook
 - o webhook do Telegram agora inclui `callback_query` entre os updates permitidos, para manter a UX inline acessivel
 - ao receber `/start` ou texto comum, o runtime persiste ou retoma o pedido ativo do usuario em `orders`
+- o `/start` inicial agora mostra uma explicacao curta dos comandos e um unico botao inline `Comprar DePix`
+- ao acionar `Comprar DePix`, o runtime responde pedindo o valor inteiro em BRL para iniciar a compra
 - ao receber `/help`, o runtime pode ler o pedido aberto para contextualizar a resposta, mas nao cria nem muta pedidos
 - o primeiro passo persistido do pedido iniciado pelo bot agora e `amount`
 - o valor informado pelo usuario na etapa `amount` e interpretado de forma conservadora como BRL antes de avancar para `wallet`
@@ -95,4 +98,6 @@ Estado atual:
 
 ## Regra operacional central
 
-Integracoes externas nao devem ser documentadas como contratos concluidos quando o codigo ainda as trata como caminho parcial ou experimental.
+- integrar via contrato e nao por suposicao
+- manter segredos fora da wiki
+- documentar mudancas de superficie publica sempre que a UX ou o contrato externo mudarem

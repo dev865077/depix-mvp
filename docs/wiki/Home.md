@@ -30,8 +30,11 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - payload inbound invalido no Telegram falha fechado com erro estruturado `invalid_webhook_payload`
 - o bot Telegram ja tem fluxo inicial para `/start`, `/help`, texto comum e updates nao suportados
 - a superficie publica canonica do Telegram agora e registrada no webhook com os comandos visiveis `/start`, `/help`, `/status` e `/cancel`
+- o perfil publico do bot agora tambem recebe descricao curta e descricao completa informando o fluxo basico antes do usuario pressionar Start
 - o alias legado `/iniciar` segue aceito em runtime, mas fica fora da listagem publica canonica
 - o menu button do Telegram espelha a mesma superficie publica canonica de comandos
+- o `/start` inicial agora orienta o usuario com a lista de comandos e mostra um unico CTA inline `Comprar DePix`
+- o callback `Comprar DePix` leva o usuario para o prompt de informar o valor em BRL
 - o webhook do Telegram agora inclui `callback_query` entre os `allowed_updates`, para manter a UX inline alcancavel
 - em `confirmation`, o fluxo agora oferece CTAs inline de `Confirmar` e `Cancelar`
 - no estado `awaiting_payment`, as respostas de status e entrega do QR agora podem incluir CTAs inline de `Ver status` e `Ajuda`
@@ -73,8 +76,4 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - a migracao TypeScript central foi encerrada com `src/index.ts` como entrypoint canonico
-- o comando canonico de verficacao continua sendo `npm run typecheck`
-
-## Leitura correta
-
-Esta pagina da visao geral resume o que o produto e e o que ja existe no `main`, nao substitui as paginas especializadas de fluxo, arquitetura e operacao.
+- o comando canonico de verficacao

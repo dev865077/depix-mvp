@@ -30,6 +30,8 @@
 - o fluxo Telegram tambem aceita `/cancel`, `cancelar`, `recomecar` e `/help` como controles de conversa para pedidos abertos em `amount`, `wallet` e `confirmation`
 - `/start` pode iniciar uma nova conversa ou retomar o pedido aberto mais recente
 - `/iniciar` funciona como alias de `/start`
+- a primeira resposta de `/start` agora explica os comandos disponiveis e mostra apenas um botao inline `Comprar DePix`
+- ao clicar em `Comprar DePix`, o bot pede o valor inteiro em BRL para seguir com a compra
 - se existir um pedido aberto em `amount`, `wallet` ou `confirmation` que ficou inativo por tempo demais, o runtime expira essa conversa antes de processar novas mensagens ou callbacks
 - quando a conversa expira, o usuario recebe uma mensagem indicando que o pedido anterior foi encerrado com seguranca e que a conversa recomeça do inicio
 - `/help` e somente informativo: pode ler o pedido aberto para contextualizar a resposta, mas nao cria pedido novo nem altera o pedido existente
@@ -60,6 +62,8 @@
 - a maquina XState da progressao inicial ja materializa e persiste o pedido inicial em `draft`
 - o runtime do Telegram ja retoma o pedido aberto mais recente do usuario quando recebe `/start` ou texto comum
 - `/start` agora inicia o pedido persistido em `amount` e reusa o pedido aberto mais recente sem criar duplicata
+- a primeira resposta de `/start` agora apresenta os comandos e o CTA `Comprar DePix` antes de pedir o valor
+- o clique em `Comprar DePix` leva diretamente ao prompt de valor em BRL
 - `/start` reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, quando o pedido ja possui deposito local, para refletir imediatamente um pagamento que tenha sido finalizado fora do webhook local
 - `/status` tambem reconsulta um pedido `awaiting_payment` contra a Eulen antes de responder, usando a mesma reconciliacao existente, quando ha deposito local disponivel
 - a etapa de `amount` agora valida valor BRL enviado no Telegram, persiste `amountInCents` e avanca o pedido para `wallet` quando a mensagem e valida
