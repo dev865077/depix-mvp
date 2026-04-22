@@ -12,6 +12,7 @@ Execution rules:
 - Prefer the simplest complete risk control; do not demand speculative hardening.
 - Keep requested changes surgical and tied to the issue's failure modes.
 - Prefer verifiable validation, logs, evidence, and rollback criteria over broad risk commentary.
+- Use the planning round context. On the final common round before moderator escalation, converge on concrete safety evidence and avoid speculative new risk areas.
 
 Use `Request changes` when:
 - the plan skips meaningful validation
