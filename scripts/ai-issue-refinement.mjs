@@ -22,6 +22,7 @@ const ISSUE_PLANNING_STATUS_MARKER = "<!-- ai-issue-planning-status:openai -->";
 const ISSUE_AUTOMATION_START_MARKER = "<!-- ai-issue-automation:start -->";
 const ISSUE_AUTOMATION_END_MARKER = "<!-- ai-issue-automation:end -->";
 const ISSUE_REFINEMENT_COMMENT_MARKER = "<!-- ai-issue-refinement:openai -->";
+const ISSUE_PLANNING_MODERATOR_COMMENT_MARKER = "<!-- ai-issue-planning-moderator:openai -->";
 const CHILD_ISSUE_MARKER_PREFIX = "<!-- ai-issue-refinement-child:";
 const ISSUE_PLANNING_WORKFLOW_FILE = "ai-issue-planning-review.yml";
 const ISSUE_TRIAGE_WORKFLOW_FILE = "ai-issue-triage.yml";
@@ -63,6 +64,59 @@ const ISSUE_REFINEMENT_JSON_SCHEMA = {
       },
       shouldRerunPlanning: { type: "boolean" },
       isNoOp: { type: "boolean" },
+      failureReason: { type: ["string", "null"] },
+      blockingDependencies: {
+        type: "array",
+        items: { type: "string" },
+      },
+      newChildIssues: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "body"],
+          properties: {
+            title: { type: "string" },
+            body: { type: "string" },
+          },
+        },
+      },
+    },
+  },
+  strict: true,
+};
+
+const ISSUE_PLANNING_MODERATOR_JSON_SCHEMA = {
+  name: "issue_planning_moderator_decision",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "summary",
+      "updatedTitle",
+      "updatedBodyHumanSection",
+      "resolutionSummary",
+      "replyBody",
+      "decision",
+      "failureReason",
+      "blockingDependencies",
+      "newChildIssues",
+    ],
+    properties: {
+      summary: { type: "string" },
+      updatedTitle: { type: "string" },
+      updatedBodyHumanSection: { type: "string" },
+      resolutionSummary: { type: "string" },
+      replyBody: { type: "string" },
+      decision: {
+        type: "string",
+        enum: [
+          "issue_ready_for_codex",
+          "issue_blocked_external_dependency",
+          "issue_split_required",
+          "issue_rejected_or_duplicate",
+        ],
+      },
       failureReason: { type: ["string", "null"] },
       blockingDependencies: {
         type: "array",
@@ -496,6 +550,53 @@ export function buildIssueRefinementUserPrompt(input) {
   ].join("\n");
 }
 
+export function buildIssuePlanningModeratorUserPrompt(input) {
+  const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
+  const blockingDependencies = Array.isArray(input.blockingDependencies) ? input.blockingDependencies : [];
+
+  return [
+    `Repository: ${input.repository}`,
+    `Root issue: #${input.issue.number} - ${input.issue.title}`,
+    `Issue URL: ${input.issue.html_url ?? input.issue.url ?? "[unknown]"}`,
+    `Planning discussion: ${input.discussion.url ?? "[unknown]"}`,
+    `Planning status in: ${input.planningStatus}`,
+    `Blocking roles: ${blockingRoles.join(",") || "(none)"}`,
+    `Round limit reached: true`,
+    `Completed refinement rounds: ${input.roundCount}`,
+    `Max rounds: ${input.maxRounds}`,
+    "",
+    "## Human issue body",
+    truncateText(input.humanIssueBody, MAX_ISSUE_BODY_CHARS) || "[no human issue body]",
+    "",
+    "## Current managed automation section",
+    truncateText(input.currentManagedSection, 5000) || "[none]",
+    "",
+    "## Referenced child issues",
+    formatChildIssues(input.childIssues),
+    "",
+    "## Latest specialist reviewer memos",
+    formatReviewerMemos(input.reviewerMemos),
+    "",
+    "## Latest automated planning conclusion",
+    truncateText(input.latestConclusionBody, 2500) || "[none]",
+    "",
+    "## Human replies in the latest conclusion thread",
+    formatDiscussionReplies(input.humanReplies),
+    "",
+    "## Prior automated refinement replies in the latest conclusion thread",
+    formatDiscussionReplies(input.automatedReplies),
+    "",
+    "## Full bounded discussion context",
+    truncateText(input.discussionContext, MAX_DISCUSSION_CONTEXT_CHARS) || "[none]",
+    "",
+    "## Existing blocking dependencies",
+    ...(blockingDependencies.length > 0 ? blockingDependencies.map((dependency) => `- ${dependency}`) : ["- None."]),
+    "",
+    "## Moderator goal",
+    "The common planning/refinement rounds are exhausted. Publish one final canonical decision: ready for Codex, blocked on explicit external dependency, split into a small set of executable child issues, or rejected/duplicate. Do not reopen the normal loop.",
+  ].join("\n");
+}
+
 function extractJsonObject(rawValue) {
   if (typeof rawValue !== "string") {
     return rawValue;
@@ -565,6 +666,10 @@ export function normalizeChildIssueDrafts(childIssues) {
     }))
     .filter((childIssue) => childIssue.title && childIssue.body)
     .slice(0, MAX_CHILD_ISSUES_PER_REFINEMENT);
+}
+
+export function normalizeModeratorChildIssueDrafts(childIssues) {
+  return normalizeChildIssueDrafts(childIssues).slice(0, 3);
 }
 
 export function extractRefinementChildParentNumber(issue) {
@@ -672,6 +777,64 @@ export function assertValidIssueRefinementPlan(rawPlan) {
   return normalizedPlan;
 }
 
+export function assertValidIssuePlanningModeratorDecision(rawDecision) {
+  const decision = parseIssueRefinementResponse(rawDecision);
+  const finalDecision = String(decision?.decision ?? "").trim();
+  const blockingDependencies = normalizeStringArray(decision?.blockingDependencies);
+  const newChildIssues = normalizeModeratorChildIssueDrafts(decision?.newChildIssues);
+
+  if (![
+    "issue_ready_for_codex",
+    "issue_blocked_external_dependency",
+    "issue_split_required",
+    "issue_rejected_or_duplicate",
+  ].includes(finalDecision)) {
+    throw new Error(`Issue planning moderator must return a valid decision. Received: ${String(decision?.decision)}`);
+  }
+
+  const normalizedDecision = {
+    summary: String(decision?.summary ?? "").trim(),
+    updatedTitle: String(decision?.updatedTitle ?? "").trim(),
+    updatedBodyHumanSection: String(decision?.updatedBodyHumanSection ?? "").trim(),
+    resolutionSummary: String(decision?.resolutionSummary ?? "").trim(),
+    replyBody: String(decision?.replyBody ?? "").trim(),
+    decision: finalDecision,
+    failureReason: decision?.failureReason == null ? null : String(decision.failureReason).trim(),
+    blockingDependencies,
+    newChildIssues,
+  };
+
+  if (!normalizedDecision.summary) {
+    throw new Error("Issue planning moderator must return a non-empty summary.");
+  }
+
+  if (!normalizedDecision.updatedTitle) {
+    throw new Error("Issue planning moderator must return a non-empty updatedTitle.");
+  }
+
+  if (!normalizedDecision.updatedBodyHumanSection) {
+    throw new Error("Issue planning moderator must return a non-empty updatedBodyHumanSection.");
+  }
+
+  if (!normalizedDecision.resolutionSummary) {
+    throw new Error("Issue planning moderator must return a non-empty resolutionSummary.");
+  }
+
+  if (!normalizedDecision.replyBody) {
+    throw new Error("Issue planning moderator must return a non-empty replyBody.");
+  }
+
+  if (normalizedDecision.decision === "issue_blocked_external_dependency" && blockingDependencies.length === 0) {
+    throw new Error("Issue planning moderator must list blockingDependencies for issue_blocked_external_dependency.");
+  }
+
+  if (normalizedDecision.decision === "issue_split_required" && newChildIssues.length === 0) {
+    throw new Error("Issue planning moderator must create or reuse at least one child issue for issue_split_required.");
+  }
+
+  return normalizedDecision;
+}
+
 function resolveIssueRefinementState(phase) {
   if (phase === "active") {
     return {
@@ -706,6 +869,78 @@ function resolveIssueRefinementState(phase) {
     nextAction: "manual_recovery_required",
     blockedByDependencies: false,
   };
+}
+
+function resolveIssuePlanningModeratorState(decision) {
+  if (decision === "issue_ready_for_codex") {
+    return {
+      canonicalState: "issue_ready_for_codex",
+      nextActor: "codex",
+      nextAction: "open_branch_and_pr",
+      blockedByDependencies: false,
+      readyForCodex: true,
+      readyForBranch: true,
+      readyForPr: true,
+    };
+  }
+
+  if (decision === "issue_blocked_external_dependency") {
+    return {
+      canonicalState: "issue_blocked_external_dependency",
+      nextActor: "dependency_owner",
+      nextAction: "wait_for_dependencies",
+      blockedByDependencies: true,
+      readyForCodex: false,
+      readyForBranch: false,
+      readyForPr: false,
+    };
+  }
+
+  if (decision === "issue_split_required") {
+    return {
+      canonicalState: "issue_split_required",
+      nextActor: "ai_issue_triage",
+      nextAction: "triage_child_issues_only",
+      blockedByDependencies: false,
+      readyForCodex: false,
+      readyForBranch: false,
+      readyForPr: false,
+    };
+  }
+
+  return {
+    canonicalState: "issue_rejected_or_duplicate",
+    nextActor: "none",
+    nextAction: "no_further_action",
+    blockedByDependencies: false,
+    readyForCodex: false,
+    readyForBranch: false,
+    readyForPr: false,
+  };
+}
+
+function extractStoredModeratorDecision(section) {
+  const canonicalState = extractAutomationField(section, "canonical_state");
+  const moderatorDecision = extractAutomationField(section, "moderator_decision");
+
+  if (!moderatorDecision) {
+    return null;
+  }
+
+  if (![
+    "issue_ready_for_codex",
+    "issue_blocked_external_dependency",
+    "issue_split_required",
+    "issue_rejected_or_duplicate",
+  ].includes(moderatorDecision)) {
+    return null;
+  }
+
+  if (canonicalState && canonicalState !== moderatorDecision) {
+    return null;
+  }
+
+  return moderatorDecision;
 }
 
 function collectSubIssueLinkFallbacks(createdChildIssues) {
@@ -776,6 +1011,64 @@ export function buildIssueRefinementAutomationSection(input) {
   ].join("\n");
 }
 
+export function buildIssuePlanningModeratorAutomationSection(input) {
+  const state = resolveIssuePlanningModeratorState(input.decision);
+  const createdChildIssues = Array.isArray(input.createdChildIssues) ? input.createdChildIssues : [];
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(createdChildIssues);
+  const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
+  const blockingDependencies = normalizeStringArray(input.blockingDependencies);
+
+  return [
+    "## Canonical automation handoff",
+    "",
+    "This section is maintained by the GitHub automation lane. Update the human issue text above it; the workflow rewrites only this managed section.",
+    "",
+    `model: \`${input.model}\``,
+    `provider: \`${input.provider}\``,
+    `planning_discussion: ${input.discussionUrl}`,
+    `planning_status_in: \`${input.planningStatus}\``,
+    `canonical_state: \`${state.canonicalState}\``,
+    `moderator_decision: \`${input.decision}\``,
+    `next_actor: \`${state.nextActor}\``,
+    `next_action: \`${state.nextAction}\``,
+    `ready_for_codex: \`${String(state.readyForCodex)}\``,
+    `ready_for_branch: \`${String(state.readyForBranch)}\``,
+    `ready_for_pr: \`${String(state.readyForPr)}\``,
+    `blocked_by_dependencies: \`${String(state.blockedByDependencies)}\``,
+    `blocking_roles: \`${blockingRoles.join(",")}\``,
+    `blocking_dependencies: \`${blockingDependencies.join(" | ")}\``,
+    `refinement_round_count: \`${String(input.roundCount)}\``,
+    `round_limit_reached: \`true\``,
+    "",
+    "## Moderator synthesis",
+    "",
+    input.summary,
+    "",
+    "## Resolution summary",
+    "",
+    input.resolutionSummary,
+    "",
+    "## Created child issues",
+    ...(createdChildIssues.length > 0
+      ? createdChildIssues.map((issue) => `- #${issue.number} - ${issue.title}`)
+      : ["- None."]),
+    "",
+    "## Native sub-issue link fallbacks",
+    ...(subIssueLinkFallbacks.length > 0
+      ? subIssueLinkFallbacks.map((issue) => `- #${issue.number} - ${issue.reason}`)
+      : ["- None."]),
+    "",
+    "## Codex handoff",
+    state.nextActor === "codex"
+      ? "Codex may proceed according to the final moderator decision."
+      : state.nextActor === "ai_issue_triage"
+        ? "Codex must not implement the root issue. The moderator finalized the artifact as a split and only the child issues should continue through automation."
+        : state.nextActor === "dependency_owner"
+          ? "Codex must still wait. The moderator finalized the artifact as blocked on explicit external dependencies."
+          : "Codex must not proceed. The moderator finalized this artifact as rejected or duplicate.",
+  ].join("\n");
+}
+
 export function buildIssueRefinementStatusComment(input) {
   const state = resolveIssueRefinementState(input.phase);
   const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(input.createdChildIssues);
@@ -804,6 +1097,36 @@ export function buildIssueRefinementStatusComment(input) {
   ].join("\n");
 }
 
+export function buildIssuePlanningModeratorStatusComment(input) {
+  const state = resolveIssuePlanningModeratorState(input.decision);
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(input.createdChildIssues);
+  const blockingRoles = Array.isArray(input.blockingRoles) ? input.blockingRoles : [];
+  const blockingDependencies = normalizeStringArray(input.blockingDependencies);
+
+  return [
+    ISSUE_PLANNING_STATUS_MARKER,
+    "## AI Issue Planning Status",
+    "",
+    `Planning Discussion: ${input.discussionUrl}`,
+    `Planning status in: \`${input.planningStatus}\``,
+    `Final moderator decision: \`${input.decision}\``,
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${state.canonicalState}\``,
+    `next_actor: \`${state.nextActor}\``,
+    `next_action: \`${state.nextAction}\``,
+    `ready_for_codex: \`${String(state.readyForCodex)}\``,
+    `ready_for_branch: \`${String(state.readyForBranch)}\``,
+    `ready_for_pr: \`${String(state.readyForPr)}\``,
+    `blocked_by_dependencies: \`${String(state.blockedByDependencies)}\``,
+    `blocking_roles: \`${blockingRoles.join(",")}\``,
+    `blocking_dependencies: \`${blockingDependencies.join(" | ")}\``,
+    `refinement_round_count: \`${String(input.roundCount)}\``,
+    "round_limit_reached: `true`",
+    `native_sub_issue_link_fallback_count: \`${String(subIssueLinkFallbacks.length)}\``,
+  ].join("\n");
+}
+
 export function buildIssueRefinementReplyBody(input) {
   const createdChildIssues = Array.isArray(input.createdChildIssues) ? input.createdChildIssues : [];
   const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(createdChildIssues);
@@ -820,6 +1143,35 @@ export function buildIssueRefinementReplyBody(input) {
     `- next_actor: \`${state.nextActor}\``,
     `- next_action: \`${state.nextAction}\``,
     `- should_rerun_planning: \`${String(input.phase === "rerun_planning")}\``,
+    ...(createdChildIssues.length > 0
+      ? createdChildIssues.map((issue) => `- created_child_issue: #${issue.number} - ${issue.title}`)
+      : ["- created_child_issue: none"]),
+    ...(subIssueLinkFallbacks.length > 0
+      ? subIssueLinkFallbacks.map((issue) => `- native_sub_issue_link_fallback: #${issue.number} - ${issue.reason}`)
+      : []),
+    ...(blockingDependencies.length > 0
+      ? blockingDependencies.map((dependency) => `- blocking_dependency: ${dependency}`)
+      : []),
+  ].join("\n");
+}
+
+export function buildIssuePlanningModeratorReplyBody(input) {
+  const state = resolveIssuePlanningModeratorState(input.decision);
+  const createdChildIssues = Array.isArray(input.createdChildIssues) ? input.createdChildIssues : [];
+  const subIssueLinkFallbacks = collectSubIssueLinkFallbacks(createdChildIssues);
+  const blockingDependencies = normalizeStringArray(input.blockingDependencies);
+
+  return [
+    ISSUE_PLANNING_MODERATOR_COMMENT_MARKER,
+    "## Final planning moderator decision",
+    "",
+    input.replyBody,
+    "",
+    "## Automation result",
+    `- final_decision: \`${input.decision}\``,
+    `- next_actor: \`${state.nextActor}\``,
+    `- next_action: \`${state.nextAction}\``,
+    "- should_rerun_planning: `false`",
     ...(createdChildIssues.length > 0
       ? createdChildIssues.map((issue) => `- created_child_issue: #${issue.number} - ${issue.title}`)
       : ["- created_child_issue: none"]),
@@ -1276,6 +1628,55 @@ async function generateIssueRefinementWithOpenAI(systemPrompt, userPrompt, model
   return responseText;
 }
 
+async function generateIssuePlanningModeratorWithOpenAI(systemPrompt, userPrompt, model) {
+  const apiKey = readRequiredEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
+      reasoning: {
+        effort: REASONING_EFFORT,
+      },
+      text: {
+        format: {
+          type: "json_schema",
+          ...ISSUE_PLANNING_MODERATOR_JSON_SCHEMA,
+        },
+      },
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: systemPrompt }],
+        },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: userPrompt }],
+        },
+      ],
+    }),
+    signal: AbortSignal.timeout(OPENAI_REQUEST_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI issue planning moderator request failed for model ${model} (${response.status}): ${body}`);
+  }
+
+  const responseJson = await response.json();
+  const responseText = readOpenAIText(responseJson);
+
+  if (!responseText) {
+    throw new Error(`OpenAI returned an empty issue planning moderator payload. Response summary: ${summarizeOpenAIResponse(responseJson)}`);
+  }
+
+  return responseText;
+}
+
 async function generateIssueRefinementWithChatCompletions(systemPrompt, userPrompt, model) {
   const apiKey = readRequiredEnv("OPENAI_API_KEY");
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -1314,6 +1715,49 @@ async function generateIssueRefinementWithChatCompletions(systemPrompt, userProm
 
   if (!content) {
     throw new Error(`OpenAI chat-completions returned empty issue refinement content: ${JSON.stringify(responseJson)}`);
+  }
+
+  return content;
+}
+
+async function generateIssuePlanningModeratorWithChatCompletions(systemPrompt, userPrompt, model) {
+  const apiKey = readRequiredEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      response_format: {
+        type: "json_schema",
+        json_schema: ISSUE_PLANNING_MODERATOR_JSON_SCHEMA,
+      },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+    signal: AbortSignal.timeout(OPENAI_REQUEST_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI chat-completions issue planning moderator request failed for model ${model} (${response.status}): ${body}`);
+  }
+
+  const responseJson = await response.json();
+  const message = responseJson?.choices?.[0]?.message;
+  const refusal = typeof message?.refusal === "string" ? message.refusal.trim() : "";
+  const content = typeof message?.content === "string" ? message.content.trim() : "";
+
+  if (refusal) {
+    throw new Error(`OpenAI chat-completions issue planning moderator refused the request: ${refusal}`);
+  }
+
+  if (!content) {
+    throw new Error(`OpenAI chat-completions returned empty issue planning moderator content: ${JSON.stringify(responseJson)}`);
   }
 
   return content;
@@ -1359,6 +1803,8 @@ async function generateIssueRefinementWithEndpoint(endpoint, payload) {
  * @property {(repoFullName: string, discussionNumber: number, ref: string) => Promise<void>} dispatchPlanningRerun
  * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateWithOpenAI
  * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateWithChatCompletions
+ * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateModeratorWithOpenAI
+ * @property {(systemPrompt: string, userPrompt: string, model: string) => Promise<any>} generateModeratorWithChatCompletions
  * @property {(endpoint: string, payload: Record<string, unknown>) => Promise<any>} generateWithEndpoint
  */
 
@@ -1375,8 +1821,160 @@ const ISSUE_REFINEMENT_RUNTIME = {
   dispatchPlanningRerun,
   generateWithOpenAI: generateIssueRefinementWithOpenAI,
   generateWithChatCompletions: generateIssueRefinementWithChatCompletions,
+  generateModeratorWithOpenAI: generateIssuePlanningModeratorWithOpenAI,
+  generateModeratorWithChatCompletions: generateIssuePlanningModeratorWithChatCompletions,
   generateWithEndpoint: generateIssueRefinementWithEndpoint,
 };
+
+async function runIssuePlanningModerator({
+  runtime,
+  repository,
+  workflowRef,
+  provider,
+  model,
+  moderatorPromptPath,
+  maxRounds,
+  issue,
+  discussion,
+  planningStatus,
+  blockingRoles,
+  blockedByDependencies,
+  roundCount,
+  currentManagedSection,
+  humanIssueBody,
+  childIssues,
+  finalComment,
+  humanReplies,
+  automatedReplies,
+  blockingDependencies,
+}) {
+  const userPrompt = buildIssuePlanningModeratorUserPrompt({
+    repository,
+    issue,
+    discussion,
+    planningStatus,
+    blockingRoles,
+    blockedByDependencies,
+    roundCount,
+    maxRounds,
+    humanIssueBody,
+    currentManagedSection,
+    childIssues,
+    reviewerMemos: extractLatestPlanningReviewerMemos(discussion),
+    latestConclusionBody: finalComment.body ?? "",
+    humanReplies,
+    automatedReplies,
+    discussionContext: buildDiscussionHistoryContext(discussion),
+    blockingDependencies,
+  });
+  const systemPrompt = await runtime.readPrompt(moderatorPromptPath);
+  let rawDecision;
+
+  if (provider === "endpoint") {
+    const endpoint = readRequiredEnv("AI_ISSUE_REFINEMENT_ENDPOINT");
+
+    rawDecision = await runtime.generateWithEndpoint(endpoint, {
+      mode: "planning_moderator",
+      repository,
+      issue_number: issue.number,
+      discussion_number: discussion.number,
+      workflow_ref: workflowRef,
+      planning_status: planningStatus,
+      blocking_roles: blockingRoles,
+      blocked_by_dependencies: blockedByDependencies,
+      current_round: roundCount,
+      max_rounds: maxRounds,
+      rounds_remaining: 0,
+      round_limit_reached: true,
+      system_prompt: systemPrompt,
+      user_prompt: userPrompt,
+    });
+  } else if (provider === "openai_responses") {
+    if (!model) {
+      throw new Error("OPENAI_ISSUE_REFINEMENT_MODEL is required when provider=openai_responses.");
+    }
+
+    rawDecision = await runtime.generateModeratorWithOpenAI(systemPrompt, userPrompt, model);
+  } else if (provider === "openai_chat_completions") {
+    if (!model) {
+      throw new Error("OPENAI_ISSUE_REFINEMENT_MODEL is required when provider=openai_chat_completions.");
+    }
+
+    rawDecision = await runtime.generateModeratorWithChatCompletions(systemPrompt, userPrompt, model);
+  } else {
+    throw new Error(`Unsupported AI_ISSUE_REFINEMENT_PROVIDER: ${provider}`);
+  }
+
+  const decision = assertValidIssuePlanningModeratorDecision(rawDecision);
+  const createdChildIssues = decision.decision === "issue_split_required"
+    ? await runtime.createOrReuseChildIssues(repository, issue, decision.newChildIssues)
+    : [];
+  const finalHumanBody = appendCreatedChildIssueReferences(decision.updatedBodyHumanSection, createdChildIssues);
+  const totalChildIssueCount = parseReferencedIssueNumbers(finalHumanBody, issue.number).length;
+  const normalizedTitle = normalizeIssueArtifactTitle(decision.updatedTitle, totalChildIssueCount);
+
+  await runtime.updateIssue(
+    repository,
+    issue.number,
+    normalizedTitle,
+    upsertIssueAutomationSection(finalHumanBody, buildIssuePlanningModeratorAutomationSection({
+      model: model || "external-endpoint",
+      provider,
+      discussionUrl: discussion.url,
+      planningStatus,
+      blockingRoles,
+      blockingDependencies: decision.blockingDependencies,
+      roundCount,
+      decision: decision.decision,
+      summary: decision.summary,
+      resolutionSummary: decision.resolutionSummary,
+      createdChildIssues,
+    })),
+  );
+  await runtime.upsertIssuePlanningStatusComment(
+    repository,
+    issue.number,
+    buildIssuePlanningModeratorStatusComment({
+      discussionUrl: discussion.url,
+      planningStatus,
+      blockingRoles,
+      blockingDependencies: decision.blockingDependencies,
+      roundCount,
+      decision: decision.decision,
+      createdChildIssues,
+    }),
+  );
+  await runtime.createDiscussionReply(
+    discussion.id,
+    finalComment.id,
+    buildIssuePlanningModeratorReplyBody({
+      decision: decision.decision,
+      replyBody: decision.replyBody,
+      createdChildIssues,
+      blockingDependencies: decision.blockingDependencies,
+    }),
+  );
+
+  const childTriageDispatchFailures = decision.decision === "issue_split_required"
+    ? await dispatchChildIssueTriages(runtime, repository, issue.number, createdChildIssues, workflowRef)
+    : [];
+
+  logOperationalEvent("ai_issue_refinement.moderator.completed", {
+    issueNumber: issue.number,
+    discussionNumber: discussion.number,
+    decision: decision.decision,
+    createdChildIssueCount: createdChildIssues.length,
+    childTriageDispatchFailureCount: childTriageDispatchFailures.length,
+    blockedDependencyCount: decision.blockingDependencies.length,
+  });
+
+  return {
+    decision,
+    createdChildIssues,
+    normalizedTitle,
+    nextPhase: "moderated",
+  };
+}
 
 export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEMENT_RUNTIME) {
   const {
@@ -1385,6 +1983,7 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     name,
     workflowRef,
     promptPath,
+    moderatorPromptPath,
     provider,
     model,
     maxRounds,
@@ -1409,54 +2008,8 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
   }
 
   const roundCount = countIssueRefinementRounds(discussion);
-
-  if (roundCount >= maxRounds) {
-    const statusBody = buildIssueRefinementStatusComment({
-      phase: "failed",
-      discussionUrl: discussion.url,
-      planningStatus,
-      blockingRoles,
-      blockingDependencies: [],
-      roundCount,
-    });
-    const managedSection = buildIssueRefinementAutomationSection({
-      phase: "failed",
-      model: model || "n/a",
-      provider,
-      discussionUrl: discussion.url,
-      planningStatus,
-      blockingRoles,
-      blockingDependencies: [],
-      roundCount,
-      summary: "Automated issue refinement hit the configured round limit.",
-      resolutionSummary: "The workflow stopped rerunning itself to avoid an infinite silent loop. Manual recovery is required.",
-      createdChildIssues: [],
-    });
-
-    await runtime.updateIssue(
-      repository,
-      issue.number,
-      issue.title,
-      upsertIssueAutomationSection(issue.body ?? "", managedSection),
-    );
-    await runtime.upsertIssuePlanningStatusComment(repository, issue.number, statusBody);
-    throw new Error(`Issue refinement reached max rounds (${maxRounds}) for issue #${issue.number}.`);
-  }
-
-  await runtime.upsertIssuePlanningStatusComment(
-    repository,
-    issue.number,
-    buildIssueRefinementStatusComment({
-      phase: "active",
-      discussionUrl: discussion.url,
-      planningStatus,
-      blockingRoles,
-      blockingDependencies: [],
-      roundCount: roundCount + 1,
-    }),
-  );
-
   const currentManagedSection = extractIssueAutomationSection(issue.body ?? "");
+  const storedModeratorDecision = extractStoredModeratorDecision(currentManagedSection);
   const humanIssueBody = stripIssueAutomationSection(issue.body ?? "");
   const referencedIssueNumbers = parseReferencedIssueNumbers(humanIssueBody, issue.number);
   const childIssues = await fetchReferencedChildIssues(repository, referencedIssueNumbers);
@@ -1474,6 +2027,73 @@ export async function runIssueRefinementWorkflow(input, runtime = ISSUE_REFINEME
     .split("|")
     .map((value) => value.trim())
     .filter(Boolean);
+
+  if (storedModeratorDecision) {
+    await runtime.upsertIssuePlanningStatusComment(
+      repository,
+      issue.number,
+      buildIssuePlanningModeratorStatusComment({
+        discussionUrl: discussion.url,
+        planningStatus,
+        blockingRoles,
+        blockingDependencies,
+        roundCount,
+        decision: storedModeratorDecision,
+        createdChildIssues: [],
+      }),
+    );
+    logOperationalEvent("ai_issue_refinement.moderator.reused", {
+      issueNumber: issue.number,
+      discussionNumber: discussion.number,
+      decision: storedModeratorDecision,
+    });
+
+    return {
+      decision: { decision: storedModeratorDecision },
+      createdChildIssues: [],
+      normalizedTitle: issue.title,
+      nextPhase: "moderated_reused",
+    };
+  }
+
+  if (roundCount >= maxRounds) {
+    return runIssuePlanningModerator({
+      runtime,
+      repository,
+      workflowRef,
+      provider,
+      model,
+      moderatorPromptPath,
+      maxRounds,
+      issue,
+      discussion,
+      planningStatus,
+      blockingRoles,
+      blockedByDependencies,
+      roundCount,
+      currentManagedSection,
+      humanIssueBody,
+      childIssues,
+      finalComment,
+      humanReplies,
+      automatedReplies,
+      blockingDependencies,
+    });
+  }
+
+  await runtime.upsertIssuePlanningStatusComment(
+    repository,
+    issue.number,
+    buildIssueRefinementStatusComment({
+      phase: "active",
+      discussionUrl: discussion.url,
+      planningStatus,
+      blockingRoles,
+      blockingDependencies: [],
+      roundCount: roundCount + 1,
+    }),
+  );
+
   const userPrompt = buildIssueRefinementUserPrompt({
     repository,
     issue,
@@ -1629,6 +2249,7 @@ async function main() {
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const dispatchInput = parseIssueRefinementDispatchInput(event);
   const promptPath = process.env.AI_ISSUE_REFINEMENT_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-refinement.md";
+  const moderatorPromptPath = process.env.AI_ISSUE_PLANNING_MODERATOR_PROMPT_PATH?.trim() || ".github/prompts/ai-issue-planning-moderator.md";
   const provider = process.env.AI_ISSUE_REFINEMENT_PROVIDER?.trim() || "openai_chat_completions";
   const model = process.env.OPENAI_ISSUE_REFINEMENT_MODEL?.trim() || "";
   const workflowRef = process.env.GITHUB_REF_NAME?.trim()
@@ -1651,6 +2272,7 @@ async function main() {
     name,
     workflowRef,
     promptPath,
+    moderatorPromptPath,
     provider,
     model,
     maxRounds,
