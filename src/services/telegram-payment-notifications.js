@@ -11,19 +11,44 @@
  * mudou para um estado relevante para a jornada humana.
  */
 import { GrammyError, HttpError } from "grammy";
+import { b, fmt } from "@grammyjs/parse-mode";
 
 import { readTenantSecret } from "../config/tenants.js";
+import { listDepositEventsByDepositEntryId } from "../db/repositories/deposit-events-repository.js";
 import { getDepositByDepositEntryId } from "../db/repositories/deposits-repository.js";
 import { getOrderById } from "../db/repositories/orders-repository.js";
 import { log } from "../lib/logger.js";
 import { syncTelegramCanonicalMessage } from "./telegram-canonical-message.js";
 import { formatBrlAmountInCents } from "../telegram/brl-amount.js";
-import { buildTelegramCompletedCanonicalReply } from "../telegram/reply-flow.runtime.js";
 import { getTelegramRuntime } from "../telegram/runtime.js";
 
 const NOTIFIABLE_EXTERNAL_STATUSES = new Set([
   "depix_sent",
 ]);
+const LIQUID_TRANSACTION_EXPLORER_BASE_URL = "https://blockstream.info/liquid/tx";
+
+function joinTelegramFormattedBlocks(blocks, separator = "\n\n") {
+  return blocks.reduce((accumulator, block, index) => {
+    const text = typeof block?.text === "string" ? block.text : String(block ?? "");
+    const entities = Array.isArray(block?.entities) ? block.entities : [];
+    const separatorText = index === 0 ? "" : separator;
+    const offset = accumulator.text.length + separatorText.length;
+
+    return {
+      text: `${accumulator.text}${separatorText}${text}`,
+      entities: [
+        ...accumulator.entities,
+        ...entities.map((entity) => ({
+          ...entity,
+          offset: entity.offset + offset,
+        })),
+      ],
+    };
+  }, {
+    text: "",
+    entities: [],
+  });
+}
 
 /**
  * Reduz o estado reconciliado a uma chave canonica de notificacao.
@@ -141,6 +166,107 @@ export function classifyTelegramOrderNotification(input) {
 }
 
 /**
+ * Formata o valor da compra em DePix, mantendo o mesmo arredondamento inteiro
+ * do fluxo Telegram atual.
+ *
+ * @param {unknown} amountInCents Valor em centavos.
+ * @returns {string | null} Valor legivel em DePix.
+ */
+function formatDepixAmountInCents(amountInCents) {
+  if (!Number.isSafeInteger(amountInCents)) {
+    return null;
+  }
+
+  return `${formatBrlAmountInCents(amountInCents).replace(/^R\$\s*/u, "")} DePix`;
+}
+
+/**
+ * Formata o timestamp do evento financeiro para o operador brasileiro.
+ *
+ * @param {unknown} receivedAt Timestamp persistido do evento.
+ * @returns {string | null} Data e hora legiveis.
+ */
+function formatPersistedEventDateTime(receivedAt) {
+  if (typeof receivedAt !== "string" || receivedAt.trim().length === 0) {
+    return null;
+  }
+
+  const normalizedTimestamp = receivedAt.includes("T")
+    ? receivedAt
+    : `${receivedAt.replace(" ", "T")}Z`;
+  const date = new Date(normalizedTimestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date).replace(",", "");
+}
+
+/**
+ * Tenta ler a data operacional que veio no payload bruto da Eulen.
+ *
+ * @param {unknown} rawPayload Payload bruto persistido.
+ * @returns {string | null} Data/hora original, quando presente.
+ */
+function readRawPaymentDateTime(rawPayload) {
+  if (typeof rawPayload !== "string" || rawPayload.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const parsedPayload = JSON.parse(rawPayload);
+    const candidate = parsedPayload && typeof parsedPayload === "object" && "response" in parsedPayload
+      ? parsedPayload.response
+      : parsedPayload;
+
+    if (!candidate || typeof candidate !== "object") {
+      return null;
+    }
+
+    for (const field of ["date", "createdAt", "paidAt", "timestamp"]) {
+      if (typeof candidate[field] === "string" && candidate[field].trim().length > 0) {
+        return candidate[field].trim();
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a melhor data/hora para o comprovante.
+ *
+ * @param {{ rawPayload?: unknown, receivedAt?: unknown } | null | undefined} paymentEvent Evento de pagamento.
+ * @returns {string | null} Data/hora para o usuario.
+ */
+function resolvePaymentDateTime(paymentEvent) {
+  return readRawPaymentDateTime(paymentEvent?.rawPayload)
+    ?? formatPersistedEventDateTime(paymentEvent?.receivedAt);
+}
+
+/**
+ * Resolve o evento que melhor representa a liquidacao final.
+ *
+ * @param {Array<{ externalStatus?: unknown, blockchainTxId?: unknown }>} events Eventos persistidos.
+ * @returns {{ externalStatus?: unknown, blockchainTxId?: unknown, receivedAt?: unknown, rawPayload?: unknown } | null} Evento final.
+ */
+function resolvePaymentConfirmedEvent(events) {
+  return events.find((event) => event.externalStatus === "depix_sent" && typeof event.blockchainTxId === "string" && event.blockchainTxId.length > 0)
+    ?? events.find((event) => event.externalStatus === "depix_sent")
+    ?? null;
+}
+
+/**
  * Monta a mensagem final ao usuario.
  *
  * Esta PR envia apenas confirmacao de pagamento. Mantemos um fallback generico
@@ -149,27 +275,46 @@ export function classifyTelegramOrderNotification(input) {
  * @param {{
  *   tenant: { displayName: string },
  *   order: { amountInCents?: unknown },
- *   kind: string
+ *   kind: string,
+ *   paymentEvent?: { receivedAt?: unknown, rawPayload?: unknown, blockchainTxId?: unknown } | null
  * }} input Dados da mensagem.
  * @returns {string} Texto final.
  */
 export function buildTelegramOrderNotificationMessage(input) {
-  const amountLine = Number.isSafeInteger(input.order.amountInCents)
-    ? `Valor: ${formatBrlAmountInCents(input.order.amountInCents)}.`
-    : null;
+  return formatTelegramOrderNotificationMessage(input).text;
+}
+
+function formatTelegramOrderNotificationMessage(input) {
+  const amountText = formatDepixAmountInCents(input.order.amountInCents);
+  const dateTime = resolvePaymentDateTime(input.paymentEvent);
+  const blockchainTxId = typeof input.paymentEvent?.blockchainTxId === "string"
+    ? input.paymentEvent.blockchainTxId.trim()
+    : "";
 
   if (input.kind === "payment_confirmed") {
-    return [
-      `Pagamento confirmado em ${input.tenant.displayName}.`,
+    const amountLine = amountText
+      ? fmt`${b}Valor:${b} ${amountText}`
+      : null;
+    const dateTimeLine = dateTime
+      ? fmt`${b}Data e hora:${b} ${dateTime}`
+      : null;
+    const transactionLine = blockchainTxId.length > 0
+      ? fmt`${b}Transação:${b} ${LIQUID_TRANSACTION_EXPLORER_BASE_URL}/${blockchainTxId}`
+      : null;
+    const lines = [
+      fmt`${b}Pagamento confirmado.${b}`,
+      fmt`${b}Resumo:${b}`,
       amountLine,
-      "Seu pedido foi concluído com sucesso.",
-    ].filter(Boolean).join("\n\n");
+      dateTimeLine,
+      transactionLine,
+    ].filter(Boolean);
+
+    return joinTelegramFormattedBlocks(lines);
   }
 
-  return [
-    `Recebemos uma atualização do seu pedido em ${input.tenant.displayName}.`,
-    "Fale com o suporte se precisar de ajuda.",
-  ].join("\n\n");
+  return fmt`${b}Recebemos uma atualização do seu pedido em ${input.tenant.displayName}.${b}
+
+Fale com o suporte se precisar de ajuda.`;
 }
 
 /**
@@ -225,8 +370,11 @@ async function readTelegramNotificationAggregate(input) {
       ? getDepositByDepositEntryId(input.db, input.tenantId, input.depositEntryId)
       : Promise.resolve(null),
   ]);
+  const events = input.depositEntryId
+    ? await listDepositEventsByDepositEntryId(input.db, input.tenantId, input.depositEntryId)
+    : [];
 
-  return { order, deposit };
+  return { order, deposit, events };
 }
 
 /**
@@ -336,10 +484,11 @@ export async function notifyTelegramOrderTransition(input) {
     db: input.db,
     requestContext: input.requestContext,
   });
-  const message = buildTelegramOrderNotificationMessage({
+  const message = formatTelegramOrderNotificationMessage({
     tenant: input.tenant,
     order: aggregate.order,
     kind: decision.kind,
+    paymentEvent: resolvePaymentConfirmedEvent(aggregate.events),
   });
 
   try {
@@ -352,18 +501,19 @@ export async function notifyTelegramOrderTransition(input) {
         tenant: input.tenant,
         order: aggregate.order,
         payload: {
-          kind: aggregate.order.telegramCanonicalMessageKind === "photo" && aggregate.deposit.qrImageUrl
-            ? "photo"
-            : "text",
-          text: buildTelegramCompletedCanonicalReply(input.tenant, aggregate.order, aggregate.deposit),
-          photoUrl: aggregate.deposit.qrImageUrl,
+          kind: "text",
+          text: message.text,
+          entities: message.entities,
         },
         fallbackOnEditFailure: {
-          text: message,
+          text: message.text,
+          entities: message.entities,
         },
       });
     } else {
-      await bot.api.sendMessage(aggregate.order.telegramChatId, message);
+      await bot.api.sendMessage(aggregate.order.telegramChatId, message.text, {
+        entities: message.entities,
+      });
     }
 
     log(input.runtimeConfig, {

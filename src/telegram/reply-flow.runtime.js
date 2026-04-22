@@ -154,12 +154,12 @@ export function installTelegramReplyFlow(bot, input) {
         const orderSession = await startTelegramConversationOrder(ctx, input);
 
         if (orderSession.chatBinding?.blocked) {
-          await ctx.reply(buildTelegramChatBindingBlockedReply());
+          await replyTelegramText(ctx, buildTelegramChatBindingBlockedReply());
           return;
         }
 
         if (orderSession.timeoutReset) {
-          await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+          await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
           return;
         }
 
@@ -193,7 +193,7 @@ export function installTelegramReplyFlow(bot, input) {
           logTelegramWalletResult(ctx, input, walletSession);
 
           if (walletSession.parseResult && !walletSession.parseResult.ok) {
-            await ctx.reply(buildTelegramInvalidWalletReply(walletSession.parseResult));
+            await replyTelegramText(ctx, buildTelegramInvalidWalletReply(walletSession.parseResult));
             return;
           }
 
@@ -227,7 +227,7 @@ export function installTelegramReplyFlow(bot, input) {
       input,
       "unsupported_message_reply",
       async function replyToUnsupportedMessage(ctx) {
-        await ctx.reply(buildTelegramUnsupportedMessageReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramUnsupportedMessageReply(input.tenant));
       },
     ),
   );
@@ -514,11 +514,86 @@ function buildTelegramReplyOptionsForOrder(order) {
     : undefined;
 }
 
-async function replyTelegramFormattedText(ctx, formatted, options = undefined) {
-  await ctx.reply(formatted.text, {
-    ...options,
-    entities: formatted.entities,
+function addTelegramBoldEntity(entities, offset, length) {
+  if (length <= 0) {
+    return;
+  }
+
+  const overlapsExistingEntity = entities.some((entity) => {
+    const entityEnd = entity.offset + entity.length;
+    const nextEnd = offset + length;
+    return offset < entityEnd && entity.offset < nextEnd;
   });
+
+  if (!overlapsExistingEntity) {
+    entities.push({
+      type: "bold",
+      offset,
+      length,
+    });
+  }
+}
+
+function formatTelegramPlainText(text) {
+  const normalizedText = String(text ?? "");
+  const entities = [];
+  let lineOffset = 0;
+
+  for (const line of normalizedText.split("\n")) {
+    const colonIndex = line.indexOf(":");
+
+    if (colonIndex > 0 && colonIndex <= 48 && !line.slice(0, colonIndex).includes("/")) {
+      addTelegramBoldEntity(entities, lineOffset, colonIndex + 1);
+    }
+
+    const commandMatch = /^(\/[a-z]+)\b/u.exec(line);
+    if (commandMatch) {
+      addTelegramBoldEntity(entities, lineOffset, commandMatch[1].length);
+    }
+
+    for (const word of ["Confirmar", "Cancelar", "Ver status", "Ajuda", "Comprar DePix"]) {
+      const wordIndex = line.indexOf(word);
+      if (wordIndex >= 0) {
+        addTelegramBoldEntity(entities, lineOffset + wordIndex, word.length);
+      }
+    }
+
+    lineOffset += line.length + 1;
+  }
+
+  return {
+    text: normalizedText,
+    entities,
+  };
+}
+
+function normalizeTelegramFormattedText(reply) {
+  if (reply && typeof reply.text === "string" && Array.isArray(reply.entities)) {
+    return reply;
+  }
+
+  return formatTelegramPlainText(reply);
+}
+
+function buildTelegramReplyOptions(reply, options = undefined) {
+  const formatted = normalizeTelegramFormattedText(reply);
+
+  return {
+    text: formatted.text,
+    options: {
+      ...options,
+      ...(formatted.entities.length > 0 ? { entities: formatted.entities } : {}),
+    },
+  };
+}
+
+async function replyTelegramText(ctx, reply, options = undefined) {
+  const payload = buildTelegramReplyOptions(reply, options);
+  await ctx.reply(payload.text, payload.options);
+}
+
+async function replyTelegramFormattedText(ctx, formatted, options = undefined) {
+  await replyTelegramText(ctx, formatted, options);
 }
 
 async function replyTelegramOrderStep(ctx, input, order, deposit = null) {
@@ -547,7 +622,7 @@ async function replyTelegramOrderStep(ctx, input, order, deposit = null) {
     return;
   }
 
-  await ctx.reply(buildTelegramOrderStepReply(input.tenant, order), options);
+  await replyTelegramText(ctx, buildTelegramOrderStepReply(input.tenant, order), options);
 }
 
 async function replyTelegramConfirmationPrompt(ctx, order) {
@@ -558,7 +633,7 @@ async function replyTelegramConfirmationPrompt(ctx, order) {
 
 async function replyTelegramStatus(ctx, input, order, deposit = null) {
   const options = buildTelegramReplyOptionsForOrder(order);
-  await ctx.reply(buildTelegramStatusReply(input.tenant, order, deposit), options);
+  await replyTelegramText(ctx, buildTelegramStatusReply(input.tenant, order, deposit), options);
 }
 
 /**
@@ -1014,24 +1089,33 @@ export function buildTelegramCompletedCanonicalReply(tenant, order, deposit = nu
   const amountLine = Number.isSafeInteger(order?.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
     : "Valor: conforme pedido";
-  const qrCopyPaste = typeof deposit?.qrCopyPaste === "string" && deposit.qrCopyPaste.length > 0
-    ? deposit.qrCopyPaste
-    : null;
 
   return [
     `Pagamento confirmado em ${tenant.displayName}.`,
     amountLine,
     "Seu pedido foi concluído com sucesso.",
-    ...(qrCopyPaste ? ["", "Pix deste pedido:", qrCopyPaste] : []),
   ].join("\n");
 }
 
 function buildTelegramCanonicalMessagePayload(order, text, deposit, replyMarkup) {
+  const formatted = formatTelegramPlainText(text);
+
+  if (order?.currentStep === ORDER_PROGRESS_STATES.COMPLETED) {
+    return {
+      kind: "text",
+      text: formatted.text,
+      entities: formatted.entities,
+      photoUrl: null,
+      replyMarkup,
+    };
+  }
+
   const hasPhoto = typeof deposit?.qrImageUrl === "string" && deposit.qrImageUrl.length > 0;
 
   return {
     kind: hasPhoto ? "photo" : "text",
-    text,
+    text: formatted.text,
+    entities: formatted.entities,
     photoUrl: hasPhoto ? deposit.qrImageUrl : null,
     replyMarkup,
   };
@@ -1418,14 +1502,14 @@ async function handleTelegramHelpRequest(ctx, input, source) {
   });
 
   const options = buildTelegramReplyOptionsForOrder(openOrder);
-  await ctx.reply(buildTelegramHelpReply(input.tenant, openOrder), options);
+  await replyTelegramText(ctx, buildTelegramHelpReply(input.tenant, openOrder), options);
 }
 
 async function handleTelegramStartRequest(ctx, input, source) {
   const orderSession = await startTelegramConversationOrder(ctx, input);
 
   if (orderSession.chatBinding?.blocked) {
-    await ctx.reply(buildTelegramChatBindingBlockedReply());
+    await replyTelegramText(ctx, buildTelegramChatBindingBlockedReply());
     return;
   }
 
@@ -1436,7 +1520,7 @@ async function handleTelegramStartRequest(ctx, input, source) {
       previousOrderId: orderSession.timedOutOrder?.orderId,
       nextOrderId: orderSession.order?.orderId,
     });
-    await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+    await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
     return;
   }
 
@@ -1449,7 +1533,7 @@ async function handleTelegramStartRequest(ctx, input, source) {
   }
 
   if (reconciled.order.currentStep === ORDER_PROGRESS_STATES.AWAITING_PAYMENT) {
-    await ctx.reply(buildTelegramAwaitingPaymentStartReply(input.tenant, reconciled.order), {
+    await replyTelegramText(ctx, buildTelegramAwaitingPaymentStartReply(input.tenant, reconciled.order), {
       reply_markup: buildTelegramAwaitingPaymentStartReplyMarkup(),
     });
     return;
@@ -1561,7 +1645,7 @@ async function handleTelegramConfirmRequest(ctx, input, order, source) {
   } catch (error) {
     if (error instanceof TelegramOrderConfirmationError) {
       logTelegramConfirmationFailure(ctx, input, order, error);
-      await ctx.reply(error.userMessage);
+      await replyTelegramText(ctx, error.userMessage);
       return;
     }
 
@@ -1672,7 +1756,7 @@ async function handleTelegramCancelRequest(ctx, input, source) {
       source,
       reason: "no_open_order",
     });
-    await ctx.reply(buildTelegramNoOpenOrderControlReply("cancel"));
+    await replyTelegramText(ctx, buildTelegramNoOpenOrderControlReply("cancel"));
     return;
   }
 
@@ -1689,7 +1773,7 @@ async function handleTelegramCancelRequest(ctx, input, source) {
   });
 
   if (canceledSession.accepted) {
-    await ctx.reply(buildTelegramCanceledReply());
+    await replyTelegramText(ctx, buildTelegramCanceledReply());
     return;
   }
 
@@ -1769,7 +1853,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
       source,
       reason: "no_open_order",
     });
-    await ctx.reply(buildTelegramNoOpenOrderControlReply("restart"));
+    await replyTelegramText(ctx, buildTelegramNoOpenOrderControlReply("restart"));
     return;
   }
 
@@ -1786,7 +1870,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
   });
 
   if (restartedSession.restartFailed) {
-    await ctx.reply(buildTelegramRestartFailedReply());
+    await replyTelegramText(ctx, buildTelegramRestartFailedReply());
     return;
   }
 
@@ -1795,7 +1879,7 @@ async function handleTelegramRestartRequest(ctx, input, source) {
     return;
   }
 
-  await ctx.reply(buildTelegramRestartedReply(input.tenant));
+  await replyTelegramText(ctx, buildTelegramRestartedReply(input.tenant));
 }
 
 async function handleTelegramInlineAction(ctx, input) {
@@ -1808,20 +1892,20 @@ async function handleTelegramInlineAction(ctx, input) {
         await ctx.answerCallbackQuery({
           text: "Pedido expirado.",
         });
-        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
         return;
       }
       await ctx.answerCallbackQuery({
         text: "Envie o valor da compra.",
       });
-      await ctx.reply(buildTelegramBuyPrompt());
+      await replyTelegramText(ctx, buildTelegramBuyPrompt());
       return;
     case "help":
       if (timeoutReset.timedOut) {
         await ctx.answerCallbackQuery({
           text: "Pedido expirado.",
         });
-        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
         return;
       }
       await ctx.answerCallbackQuery({
@@ -1834,7 +1918,7 @@ async function handleTelegramInlineAction(ctx, input) {
         await ctx.answerCallbackQuery({
           text: "Pedido expirado.",
         });
-        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
         return;
       }
       await ctx.answerCallbackQuery({
@@ -1847,7 +1931,7 @@ async function handleTelegramInlineAction(ctx, input) {
         await ctx.answerCallbackQuery({
           text: "Pedido expirado.",
         });
-        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
         return;
       }
       await ctx.answerCallbackQuery({
@@ -1860,7 +1944,7 @@ async function handleTelegramInlineAction(ctx, input) {
         await ctx.answerCallbackQuery({
           text: "Pedido expirado.",
         });
-        await ctx.reply(buildTelegramConversationTimedOutReply(input.tenant));
+        await replyTelegramText(ctx, buildTelegramConversationTimedOutReply(input.tenant));
         return;
       }
 
@@ -1870,7 +1954,7 @@ async function handleTelegramInlineAction(ctx, input) {
         await ctx.answerCallbackQuery({
           text: "Não encontrei pedido aberto.",
         });
-        await ctx.reply(buildTelegramAmountPrompt(input.tenant));
+        await replyTelegramText(ctx, buildTelegramAmountPrompt(input.tenant));
         return;
       }
 
@@ -2228,7 +2312,8 @@ async function respondToUnsupportedTelegramUpdate(ctx, input) {
   const replyChatId = resolveTelegramReplyChatId(ctx.update);
 
   if (replyChatId !== undefined) {
-    await ctx.api.sendMessage(replyChatId, buildTelegramUnsupportedMessageReply(input.tenant));
+    const payload = buildTelegramReplyOptions(buildTelegramUnsupportedMessageReply(input.tenant));
+    await ctx.api.sendMessage(replyChatId, payload.text, payload.options);
     return;
   }
 
