@@ -43,6 +43,12 @@ Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 - em caso de incidente, o caminho aceito precisa ser explicito no runbook
 - toda mudanca que altere ambiente, segredo, fluxo de pagamento ou webhook precisa atualizar esta pagina na mesma PR
 
+## Runbook operacional
+
+O runbook canonico da prova operacional 0.1 esta em [Deploy e Runbooks](Deploy-e-Runbooks#runbook-da-prova-operacional-01).
+
+Estado atual do runbook: `validacao limitada`. Ele ja define pre-requisitos, passo a passo, checkpoints, fontes de log, validacao de reconciliacao Eulen e decisoes `pronto`, `recheck`, `fallback` e `falha`. A validacao passa para `completa` somente depois de uma compra real em `Alpha Production` anexar a evidencia obrigatoria.
+
 ## Leitura correta
 
 Esta pagina nao substitui o runbook nem a documentacao de integracao. Ela so define o que ainda bloqueia o corte de release.
