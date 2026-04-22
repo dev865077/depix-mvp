@@ -301,19 +301,12 @@ describe("ops telegram webhook routes", () => {
         });
       }
 
-      if (url.includes("/setMyCommands")) {
-        return new Response(JSON.stringify({
-          ok: true,
-          result: true,
-        }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        });
-      }
-
-      if (url.includes("/setChatMenuButton")) {
+      if (
+        url.includes("/setMyCommands")
+        || url.includes("/setChatMenuButton")
+        || url.includes("/setMyDescription")
+        || url.includes("/setMyShortDescription")
+      ) {
         return new Response(JSON.stringify({
           ok: true,
           result: true,
@@ -410,6 +403,8 @@ describe("ops telegram webhook routes", () => {
     const setWebhookPayload = requests.find((entry) => entry.url.includes("/setWebhook"))?.payload;
     const setMyCommandsPayload = requests.find((entry) => entry.url.includes("/setMyCommands"))?.payload;
     const setChatMenuButtonPayload = requests.find((entry) => entry.url.includes("/setChatMenuButton"))?.payload;
+    const setMyDescriptionPayload = requests.find((entry) => entry.url.includes("/setMyDescription"))?.payload;
+    const setMyShortDescriptionPayload = requests.find((entry) => entry.url.includes("/setMyShortDescription"))?.payload;
 
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
@@ -428,6 +423,10 @@ describe("ops telegram webhook routes", () => {
     expect(setChatMenuButtonPayload.menu_button).toEqual({
       type: "commands",
     });
+    expect(setMyDescriptionPayload.description).toContain("Toque em Start/Iniciar");
+    expect(setMyDescriptionPayload.description).toContain("Comprar DePix");
+    expect(setMyShortDescriptionPayload.short_description).toBe("Compre DePix com Pix pelo chat.");
+    expect(body.expectedPublicSurface.profile.shortDescription).toBe("Compre DePix com Pix pelo chat.");
     expect(body.commands).toEqual([
       { command: "start", description: "Começar uma compra" },
       { command: "help", description: "Ver ajuda do fluxo" },

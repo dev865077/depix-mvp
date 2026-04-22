@@ -382,6 +382,8 @@ describe("telegram webhook reply flow", () => {
         url.includes("/setWebhook")
         || url.includes("/setMyCommands")
         || url.includes("/setChatMenuButton")
+        || url.includes("/setMyDescription")
+        || url.includes("/setMyShortDescription")
       ) {
         return new Response(JSON.stringify({
           ok: true,
@@ -441,6 +443,8 @@ describe("telegram webhook reply flow", () => {
     expect(setWebhookPayload?.allowed_updates).toEqual(["message", "callback_query"]);
     expect(calls.some((call) => call.url.includes("/setMyCommands"))).toBe(true);
     expect(calls.some((call) => call.url.includes("/setChatMenuButton"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("/setMyDescription"))).toBe(true);
+    expect(calls.some((call) => call.url.includes("/setMyShortDescription"))).toBe(true);
   });
 
   it("returns a tenant-aware webhook reply for /start and emits structured logs", async function assertStartReplyFlow() {
@@ -452,8 +456,18 @@ describe("telegram webhook reply flow", () => {
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
       expect(payload.chat_id).toBe(1001);
-      expect(payload.text).toContain("Olá! Este é o bot Alpha da DePix.");
-      expect(payload.text).toContain("Envie o valor inteiro em BRL que você quer comprar.");
+      expect(payload.text).toContain("Olá! Este é o bot Alpha e te ajudarei a comprar DePix.");
+      expect(payload.text).toContain("Esses são meus comandos:");
+      expect(payload.text).toContain("/status - consultar seu pedido");
+      expect(payload.text).not.toContain("recomecar");
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [
+          {
+            text: "Comprar DePix",
+            callback_data: "depix:buy",
+          },
+        ],
+      ]);
 
       return new Response(JSON.stringify({
         ok: true,
@@ -574,8 +588,11 @@ describe("telegram webhook reply flow", () => {
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
-      expect(payload.text).toContain("Olá! Este é o bot Alpha da DePix.");
-      expect(payload.text).toContain("Envie o valor inteiro em BRL que você quer comprar.");
+      expect(payload.text).toContain("Olá! Este é o bot Alpha e te ajudarei a comprar DePix.");
+      expect(payload.reply_markup?.inline_keyboard?.[0]?.[0]).toEqual({
+        text: "Comprar DePix",
+        callback_data: "depix:buy",
+      });
 
       return new Response(JSON.stringify({
         ok: true,
@@ -1476,7 +1493,7 @@ describe("telegram webhook reply flow", () => {
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
-      expect(payload.text).toContain("Envie o valor inteiro em BRL que você quer comprar.");
+      expect(payload.text).toContain("Olá! Este é o bot Alpha e te ajudarei a comprar DePix.");
 
       return new Response(JSON.stringify({
         ok: true,
@@ -2045,7 +2062,7 @@ describe("telegram webhook reply flow", () => {
     expect(currentOrder?.orderId).not.toBe("order_cancel_then_restart");
     expect(currentOrder?.currentStep).toBe("amount");
     expect(replies[0]).toContain("Pedido cancelado com sucesso.");
-    expect(replies[1]).toContain("Envie o valor inteiro em BRL");
+    expect(replies[1]).toContain("Esses são meus comandos:");
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -2115,7 +2132,7 @@ describe("telegram webhook reply flow", () => {
     expect(currentOrder?.currentStep).toBe("amount");
     expect(replies[0]).toContain("Pedido anterior cancelado.");
     expect(replies[0]).toContain("Vamos recomeçar do início.");
-    expect(replies[0]).toContain("Envie o valor inteiro em BRL");
+    expect(replies[0]).toContain("Esses são meus comandos:");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -2349,8 +2366,8 @@ describe("telegram webhook reply flow", () => {
     expect(newLegacyPaidUserOrder?.currentStep).toBe("amount");
     expect(replies[0]).toContain("Não existe pedido aberto para cancelar.");
     expect(replies[1]).toContain("Não consegui validar esse valor.");
-    expect(replies[2]).toContain("Envie o valor inteiro em BRL");
-    expect(replies[3]).toContain("Envie o valor inteiro em BRL");
+    expect(replies[2]).toContain("Esses são meus comandos:");
+    expect(replies[3]).toContain("Esses são meus comandos:");
     expect(fetchSpy).toHaveBeenCalledTimes(4);
   });
 
@@ -2450,7 +2467,7 @@ describe("telegram webhook reply flow", () => {
     expect(replacementOrder?.currentStep).toBe("amount");
     expect(replacementOrder?.amountInCents).toBeNull();
     expect(replies[0]).toContain("expirou por inatividade");
-    expect(replies[0]).toContain("Envie o valor inteiro em BRL");
+    expect(replies[0]).toContain("Esses são meus comandos:");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -3638,8 +3655,8 @@ describe("telegram webhook reply flow", () => {
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/sendMessage");
-      expect(payload.text).toContain("Olá! Este é o bot Alpha da DePix.");
-      expect(payload.text).toContain("Envie o valor inteiro em BRL que você quer comprar.");
+      expect(payload.text).toContain("Olá! Este é o bot Alpha e te ajudarei a comprar DePix.");
+      expect(payload.reply_markup?.inline_keyboard?.[0]?.[0]?.text).toBe("Comprar DePix");
 
       return new Response(JSON.stringify({
         ok: true,
@@ -3968,6 +3985,72 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(currentOrder).toBeNull();
     expect(logRecords.some((record) => record.details?.handlerName === "unsupported_update_reply")).toBe(true);
+  });
+
+  it("answers the initial Comprar DePix CTA with the amount instruction", async function assertBuyCallbackPrompt() {
+    const app = createApp();
+    const telegramCalls = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
+      const url = String(input);
+      const payload = JSON.parse(String(init?.body));
+
+      telegramCalls.push({
+        kind: url.includes("/answerCallbackQuery") ? "callback" : "message",
+        payload,
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: url.includes("/answerCallbackQuery")
+          ? true
+          : {
+            message_id: 31,
+            date: 1713434431,
+            text: payload.text,
+            chat: {
+              id: payload.chat_id,
+              type: "private",
+            },
+          },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramCallbackQueryUpdate({
+          chatId: 3004,
+          fromId: 504,
+          updateId: 4,
+          data: "depix:buy",
+        }),
+      },
+      createWorkerEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramCalls).toHaveLength(2);
+    expect(telegramCalls[0]).toMatchObject({
+      kind: "callback",
+      payload: {
+        callback_query_id: "callback-4",
+        text: "Envie o valor da compra.",
+      },
+    });
+    expect(telegramCalls[1].kind).toBe("message");
+    expect(telegramCalls[1].payload.text).toContain("Para comprar DePix, envie o valor inteiro em BRL.");
+    expect(telegramCalls[1].payload.text).toContain("Exemplo: 100");
   });
 
   it("confirms the order from confirmation when the user presses the inline CTA", async function assertInlineConfirmationFlow() {
