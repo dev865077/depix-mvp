@@ -220,6 +220,36 @@ describe("eulen deposit webhook", () => {
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).text).toContain("Pagamento confirmado");
   });
 
+  it("rolls back deposit and order updates together while preserving the webhook audit event", async function assertWebhookAggregateAtomicity() {
+    await seedDepositAggregate();
+
+    const db = getDatabase(env);
+
+    await db.prepare(`
+      CREATE TRIGGER fail_order_update_before_update
+      BEFORE UPDATE ON orders
+      WHEN NEW.order_id = 'order_alpha_001'
+      BEGIN
+        SELECT RAISE(ABORT, 'synthetic order update failure');
+      END;
+    `).run();
+
+    const response = await requestEulenWebhook({
+      authorizationHeader: "Basic alpha-eulen-secret",
+    });
+    const currentOrder = await getOrderById(db, "alpha", "order_alpha_001");
+    const currentDeposit = await getDepositByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+    const savedEvents = await listDepositEventsByDepositEntryId(db, "alpha", "deposit_entry_alpha_001");
+
+    expect(response.status).toBe(500);
+    expect(currentOrder?.status).toBe("pending");
+    expect(currentOrder?.currentStep).toBe("awaiting_payment");
+    expect(currentDeposit?.externalStatus).toBe("pending");
+    expect(savedEvents).toHaveLength(1);
+    expect(savedEvents[0]?.externalStatus).toBe("depix_sent");
+    expect(savedEvents[0]?.bankTxId).toBe("bank_tx_alpha_001");
+  });
+
   it("keeps webhook reconciliation successful when the Telegram notification layer throws unexpectedly", async function assertWebhookNotificationFailureIsolation() {
     await seedDepositAggregate();
 
