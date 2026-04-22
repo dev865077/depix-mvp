@@ -230,6 +230,59 @@ function hasCanonicalAllowedUpdates(allowedUpdates) {
   });
 }
 
+function buildTelegramPublicSurfaceCalls(telegramBotToken) {
+  return [
+    {
+      method: "setMyDescription",
+      run: () => callTelegramApi(telegramBotToken, "setMyDescription", buildTelegramPublicDescriptionPayload()),
+    },
+    {
+      method: "setMyShortDescription",
+      run: () => callTelegramApi(telegramBotToken, "setMyShortDescription", buildTelegramPublicShortDescriptionPayload()),
+    },
+    {
+      method: "setMyCommands",
+      run: () => callTelegramApi(telegramBotToken, "setMyCommands", {
+        commands: buildTelegramPublicCommandsPayload(),
+      }),
+    },
+    {
+      method: "setChatMenuButton",
+      run: () => callTelegramApi(telegramBotToken, "setChatMenuButton", {
+        menu_button: buildTelegramPublicMenuButtonPayload(),
+      }),
+    },
+  ];
+}
+
+function summarizeTelegramPublicSurfaceFailures(calls, settledResults) {
+  return settledResults.flatMap(function toFailure(settledResult, index) {
+    if (settledResult.status === "fulfilled") {
+      return [];
+    }
+
+    const reason = settledResult.reason;
+
+    return [{
+      method: calls[index]?.method ?? "unknown",
+      error: reason instanceof Error ? reason.message : String(reason),
+    }];
+  });
+}
+
+async function refreshTelegramPublicSurfaceBestEffort(telegramBotToken) {
+  const publicSurfaceCalls = buildTelegramPublicSurfaceCalls(telegramBotToken);
+  const settledResults = await Promise.allSettled(publicSurfaceCalls.map(function runPublicSurfaceCall(call) {
+    return call.run();
+  }));
+  const failures = summarizeTelegramPublicSurfaceFailures(publicSurfaceCalls, settledResults);
+
+  return {
+    ok: failures.length === 0,
+    failures,
+  };
+}
+
 /**
  * Busca `getMe` e `getWebhookInfo` do tenant autenticado.
  *
@@ -301,25 +354,15 @@ export async function ensureTelegramWebhookPublicSurface(input) {
   const webhookInfoResult = await callTelegramApi(telegramBotToken, "getWebhookInfo");
   const webhook = summarizeTelegramWebhookInfo(webhookInfoResult.body);
   const needsRepair = webhook.url !== webhookUrl || !hasCanonicalAllowedUpdates(webhook.allowedUpdates);
-  const publicProfileCalls = [
-    callTelegramApi(telegramBotToken, "setMyDescription", buildTelegramPublicDescriptionPayload()),
-    callTelegramApi(telegramBotToken, "setMyShortDescription", buildTelegramPublicShortDescriptionPayload()),
-    callTelegramApi(telegramBotToken, "setMyCommands", {
-      commands: buildTelegramPublicCommandsPayload(),
-    }),
-    callTelegramApi(telegramBotToken, "setChatMenuButton", {
-      menu_button: buildTelegramPublicMenuButtonPayload(),
-    }),
-  ];
+  const publicSurfaceRefresh = await refreshTelegramPublicSurfaceBestEffort(telegramBotToken);
 
   if (!needsRepair) {
-    await Promise.all(publicProfileCalls);
-
     const result = {
       ok: true,
       repaired: false,
       webhookUrl,
       allowedUpdates: webhook.allowedUpdates,
+      publicSurfaceRefresh,
     };
 
     telegramPublicSurfaceEnsureCache.set(cacheKey, result);
@@ -332,7 +375,6 @@ export async function ensureTelegramWebhookPublicSurface(input) {
       secret_token: telegramWebhookSecret,
       allowed_updates: TELEGRAM_ALLOWED_UPDATES,
     }),
-    ...publicProfileCalls,
   ]);
 
   const result = {
@@ -342,6 +384,7 @@ export async function ensureTelegramWebhookPublicSurface(input) {
     previousWebhookUrl: webhook.url,
     previousAllowedUpdates: webhook.allowedUpdates,
     allowedUpdates: TELEGRAM_ALLOWED_UPDATES,
+    publicSurfaceRefresh,
   };
 
   telegramPublicSurfaceEnsureCache.set(cacheKey, result);
