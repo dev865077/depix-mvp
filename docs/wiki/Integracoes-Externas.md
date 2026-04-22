@@ -95,6 +95,4 @@ Estado atual:
 
 ## Regra operacional central
 
-Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
-
-O endpoint operacional de Telegram tambem passou a publicar respostas frescas para status, replay e confirmacao de pagamento, sem depender de edicao da mensagem antiga.
+Integracoes externas nao devem ser documentadas como contratos concluidos quando o codigo ainda as trata como caminho parcial ou experimental.

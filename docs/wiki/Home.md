@@ -74,19 +74,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - a migracao TypeScript central foi encerrada com `src/index.ts` como entrypoint canonico
 - o comando canonico de verficacao continua sendo `npm run typecheck`
-- as respostas de status, replay e confirmacao de pagamento no Telegram agora saem como mensagens/fotos novas, nao como edicoes da mensagem anterior
 
-## O que ainda precisa amadurecer
+## Leitura correta
 
-- runbooks operacionais mais completos
-- consolidacao final da estrategia de CI
-- governanca da manutencao automatica da wiki apos merge
-
-## Como navegar
-
-- [Leitura Inicial](Leitura-Inicial)
-- [Visao Geral do Produto](Visao-Geral-do-Produto)
-- [Escopo e Fluxo](Escopo-e-Fluxo)
-- [Arquitetura Geral](Arquitetura-Geral)
-- [Integracoes Externas](Integracoes-Externas)
-- [Deploy e Runbooks](Deploy-e-Runbooks)
+Esta pagina da visao geral resume o que o produto e e o que ja existe no `main`, nao substitui as paginas especializadas de fluxo, arquitetura e operacao.
