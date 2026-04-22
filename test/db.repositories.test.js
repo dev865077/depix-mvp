@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import migration0005Sql from "../migrations/0005_deposit_order_uniqueness.sql?raw";
 import migration0008Sql from "../migrations/0008_operational_request_ids.sql?raw";
+import migration0009Sql from "../migrations/0009_order_correlation_id.sql?raw";
 
 import { getDatabase } from "../src/db/client.js";
 import { createDepositEvent, listDepositEventsByDepositEntryId } from "../src/db/repositories/deposit-events-repository.js";
@@ -103,6 +104,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS orders (
     tenant_id TEXT NOT NULL,
     order_id TEXT PRIMARY KEY NOT NULL,
+    correlation_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     channel TEXT NOT NULL DEFAULT 'telegram',
     product_type TEXT NOT NULL,
@@ -121,6 +123,7 @@ const CURRENT_SCHEMA_STATEMENTS = [
   "CREATE INDEX IF NOT EXISTS orders_user_id_idx ON orders (user_id)",
   "CREATE INDEX IF NOT EXISTS orders_status_idx ON orders (status)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_id_idx ON orders (tenant_id)",
+  "CREATE INDEX IF NOT EXISTS orders_correlation_id_idx ON orders (correlation_id)",
   "CREATE INDEX IF NOT EXISTS orders_tenant_user_channel_chat_idx ON orders (tenant_id, user_id, channel, telegram_chat_id)",
   `CREATE TABLE IF NOT EXISTS deposits (
     tenant_id TEXT NOT NULL,
@@ -364,6 +367,9 @@ const MIGRATION_0005_STATEMENTS = splitMigrationStatements(
 const MIGRATION_0008_STATEMENTS = splitMigrationStatements(
   migration0008Sql,
 );
+const MIGRATION_0009_STATEMENTS = splitMigrationStatements(
+  migration0009Sql,
+);
 
 export function readInitialMigrationSql() {
   return CURRENT_SCHEMA_STATEMENTS;
@@ -600,6 +606,7 @@ async function assertLegacyMigrationBackfill() {
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0008_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0009_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const migratedDepositByEntryId = await getDepositByDepositEntryId(db, "alpha", "legacy_deposit_001");
@@ -738,6 +745,7 @@ async function assertDepositOrderUniquenessMigrationQuarantinesLegacyDuplicates(
   await env.DB.batch(MIGRATION_0003_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0005_STATEMENTS.map((statement) => env.DB.prepare(statement)));
   await env.DB.batch(MIGRATION_0008_STATEMENTS.map((statement) => env.DB.prepare(statement)));
+  await env.DB.batch(MIGRATION_0009_STATEMENTS.map((statement) => env.DB.prepare(statement)));
 
   const db = getDatabase(env);
   const activeDeposits = await db

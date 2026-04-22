@@ -482,7 +482,9 @@ export async function applyWebhookTruthToAggregate(
  *   tenant: EulenWebhookTenant,
  *   eulenApiToken: string,
  *   depositEntryId: string,
- *   requestId?: string
+ *   requestId?: string,
+ *   correlationId?: string,
+ *   orderId?: string
  * }} input Dependencias da leitura remota.
  * @returns {Promise<EulenDepositStatusResponsePayload>} Status remoto reduzido.
  */
@@ -492,6 +494,8 @@ async function readRemoteDepositStatusByEntryId(input: {
   eulenApiToken: string;
   depositEntryId: string;
   requestId?: string;
+  correlationId?: string;
+  orderId?: string;
 }): Promise<EulenDepositStatusResponsePayload> {
   const response = await getEulenDepositStatus(input.runtimeConfig, {
     apiToken: input.eulenApiToken,
@@ -499,6 +503,14 @@ async function readRemoteDepositStatusByEntryId(input: {
   }, {
     id: input.depositEntryId,
     asyncMode: "false",
+    telemetry: {
+      tenantId: input.tenant.tenantId,
+      requestId: input.requestId,
+      correlationId: input.correlationId,
+      operation: "webhook_deposit_lookup",
+      orderId: input.orderId,
+      depositEntryId: input.depositEntryId,
+    },
   });
 
   return resolveEulenDepositStatusResponse(response, {}, input.requestId);
@@ -879,7 +891,9 @@ export async function processEulenDepositWebhook(
       message: repairedAggregate ? "webhook.eulen.duplicate_repaired" : "webhook.eulen.duplicate_ignored",
       tenantId: input.tenant.tenantId,
       requestId: input.requestId,
+      correlationId: order.correlationId,
       details: {
+        orderId: deposit.orderId,
         depositEntryId: deposit.depositEntryId,
         qrId: deposit.qrId ?? payload.qrId,
         eventId: duplicateEvent.id,
@@ -924,6 +938,7 @@ export async function processEulenDepositWebhook(
     message: "webhook.eulen.processed",
     tenantId: input.tenant.tenantId,
     requestId: input.requestId,
+    correlationId: order.correlationId,
     details: {
       depositEntryId: deposit.depositEntryId,
       qrId: deposit.qrId ?? payload.qrId,

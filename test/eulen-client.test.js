@@ -382,6 +382,46 @@ export async function assertDepositStatusResponseShape() {
   });
 }
 
+export async function assertTelemetryCorrelationLogging() {
+  const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ response: { errorMessage: "temporary failure" }, async: false }), {
+      status: 502,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }),
+  );
+
+  await expect(requestEulenApi({
+    ...RUNTIME_CONFIG,
+    logLevel: "info",
+    appName: "depix-mvp",
+    environment: "test",
+  }, TENANT_CREDENTIALS, {
+    path: "/deposit-status",
+    method: "GET",
+    nonce: "nonce_log_001",
+    telemetry: {
+      tenantId: "alpha",
+      requestId: "request-log-001",
+      correlationId: "corr_alpha_telemetry_001",
+      operation: "get_deposit_status",
+      orderId: "order_alpha_telemetry_001",
+      depositEntryId: "deposit_alpha_telemetry_001",
+    },
+  })).rejects.toBeInstanceOf(EulenApiError);
+
+  const records = consoleLogSpy.mock.calls.map(([record]) => JSON.parse(String(record)));
+  const startedLog = records.find((record) => record.message === "eulen.request.started");
+  const failedLog = records.find((record) => record.message === "eulen.request.failed");
+
+  expect(startedLog?.correlationId).toBe("corr_alpha_telemetry_001");
+  expect(failedLog?.correlationId).toBe("corr_alpha_telemetry_001");
+  expect(failedLog?.details?.depositEntryId).toBe("deposit_alpha_telemetry_001");
+}
+
 describe("eulen client", () => {
   it("builds the required auth, partner and async headers", assertRequiredHeaders);
   it("executes ping with the expected request shape", assertPingRequest);
@@ -414,4 +454,5 @@ describe("eulen client", () => {
   it("fails closed with a structured response error when create-deposit payload is invalid", assertStructuredCreateResponseValidationError);
   it("keeps bank and blockchain tx ids from deposit-status responses", assertDepositStatusResponseShape);
   it("fails closed with a structured response error when deposit-status payload is invalid", assertStructuredDepositStatusValidationError);
+  it("reuses the same correlation id in Eulen client telemetry logs", assertTelemetryCorrelationLogging);
 });

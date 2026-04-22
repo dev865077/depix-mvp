@@ -5,6 +5,7 @@
  * resposta para os endpoints usados no MVP. Ele existe para separar integracao
  * externa da regra de negocio e explicitar os contratos externos sensiveis.
  */
+import { log } from "../lib/logger.js";
 
 const REQUIRED_DEPOSIT_SPLIT_FIELDS = [
   "depixSplitAddress",
@@ -24,6 +25,15 @@ export interface EulenRuntimeConfig {
 export interface EulenCredentials {
   apiToken?: string;
   partnerId?: string;
+}
+
+export interface EulenRequestTelemetry {
+  tenantId?: string;
+  requestId?: string;
+  correlationId?: string;
+  operation?: string;
+  orderId?: string;
+  depositEntryId?: string;
 }
 
 export interface EulenCreateDepositRequest {
@@ -96,6 +106,7 @@ type EulenApiRequest = {
   body?: Record<string, unknown>;
   nonce?: string;
   asyncMode?: string;
+  telemetry?: EulenRequestTelemetry;
 };
 
 type EulenAsyncResultOptions = {
@@ -786,6 +797,24 @@ export async function requestEulenApi(
   const url = buildEulenUrl(runtimeConfig.eulenApiBaseUrl, request.path, request.query);
   const timeoutMs = runtimeConfig.eulenApiTimeoutMs;
   const { controller, cleanup } = createTimeoutController(timeoutMs);
+  const telemetry = request.telemetry;
+
+  log(runtimeConfig, {
+    level: "info",
+    message: "eulen.request.started",
+    tenantId: telemetry?.tenantId,
+    requestId: telemetry?.requestId,
+    correlationId: telemetry?.correlationId,
+    details: {
+      operation: telemetry?.operation ?? null,
+      orderId: telemetry?.orderId ?? null,
+      depositEntryId: telemetry?.depositEntryId ?? null,
+      method: request.method ?? "GET",
+      path: request.path,
+      nonce,
+      asyncMode,
+    },
+  });
 
   try {
     const response = await fetch(url, {
@@ -805,6 +834,24 @@ export async function requestEulenApi(
       });
     }
 
+    log(runtimeConfig, {
+      level: "info",
+      message: "eulen.request.succeeded",
+      tenantId: telemetry?.tenantId,
+      requestId: telemetry?.requestId,
+      correlationId: telemetry?.correlationId,
+      details: {
+        operation: telemetry?.operation ?? null,
+        orderId: telemetry?.orderId ?? null,
+        depositEntryId: telemetry?.depositEntryId ?? null,
+        method: request.method ?? "GET",
+        path: request.path,
+        nonce,
+        asyncMode,
+        status: response.status,
+      },
+    });
+
     return {
       ok: response.ok,
       status: response.status,
@@ -815,22 +862,79 @@ export async function requestEulenApi(
     };
   } catch (error) {
     if (error instanceof EulenApiError) {
+      log(runtimeConfig, {
+        level: "error",
+        message: "eulen.request.failed",
+        tenantId: telemetry?.tenantId,
+        requestId: telemetry?.requestId,
+        correlationId: telemetry?.correlationId,
+        details: {
+          operation: telemetry?.operation ?? null,
+          orderId: telemetry?.orderId ?? null,
+          depositEntryId: telemetry?.depositEntryId ?? null,
+          method: request.method ?? "GET",
+          path: request.path,
+          nonce,
+          asyncMode,
+          cause: error.details,
+        },
+      });
       throw error;
     }
 
     if (error instanceof Error && error.name === "AbortError") {
-      throw new EulenApiError("Eulen API request timed out.", {
+      const timeoutError = new EulenApiError("Eulen API request timed out.", {
         nonce,
         path: request.path,
         timeoutMs,
       });
+
+      log(runtimeConfig, {
+        level: "error",
+        message: "eulen.request.failed",
+        tenantId: telemetry?.tenantId,
+        requestId: telemetry?.requestId,
+        correlationId: telemetry?.correlationId,
+        details: {
+          operation: telemetry?.operation ?? null,
+          orderId: telemetry?.orderId ?? null,
+          depositEntryId: telemetry?.depositEntryId ?? null,
+          method: request.method ?? "GET",
+          path: request.path,
+          nonce,
+          asyncMode,
+          cause: timeoutError.details,
+        },
+      });
+
+      throw timeoutError;
     }
 
-    throw new EulenApiError("Unexpected Eulen API error.", {
+    const unexpectedError = new EulenApiError("Unexpected Eulen API error.", {
       nonce,
       path: request.path,
       cause: error instanceof Error ? error.message : String(error),
     });
+
+    log(runtimeConfig, {
+      level: "error",
+      message: "eulen.request.failed",
+      tenantId: telemetry?.tenantId,
+      requestId: telemetry?.requestId,
+      correlationId: telemetry?.correlationId,
+      details: {
+        operation: telemetry?.operation ?? null,
+        orderId: telemetry?.orderId ?? null,
+        depositEntryId: telemetry?.depositEntryId ?? null,
+        method: request.method ?? "GET",
+        path: request.path,
+        nonce,
+        asyncMode,
+        cause: unexpectedError.details,
+      },
+    });
+
+    throw unexpectedError;
   } finally {
     cleanup();
   }
@@ -868,7 +972,7 @@ export function pingEulen(
 export function createEulenDeposit(
   runtimeConfig: EulenRuntimeConfig,
   credentials: EulenCredentials,
-  options: { body: unknown; nonce?: string; asyncMode?: string; requestId?: string },
+  options: { body: unknown; nonce?: string; asyncMode?: string; requestId?: string; telemetry?: EulenRequestTelemetry },
 ): Promise<EulenApiResponse<unknown>> {
   return requestEulenApi(runtimeConfig, credentials, {
     path: "/deposit",
@@ -876,6 +980,11 @@ export function createEulenDeposit(
     body: { ...assertEulenCreateDepositRequest(options.body, options.requestId) },
     nonce: options.nonce,
     asyncMode: options.asyncMode,
+    telemetry: {
+      ...options.telemetry,
+      requestId: options.telemetry?.requestId ?? options.requestId,
+      operation: options.telemetry?.operation ?? "create_deposit",
+    },
   });
 }
 
@@ -890,7 +999,7 @@ export function createEulenDeposit(
 export function getEulenDepositStatus(
   runtimeConfig: EulenRuntimeConfig,
   credentials: EulenCredentials,
-  options: { id: string; nonce?: string; asyncMode?: string },
+  options: { id: string; nonce?: string; asyncMode?: string; telemetry?: EulenRequestTelemetry },
 ): Promise<EulenApiResponse<unknown>> {
   return requestEulenApi(runtimeConfig, credentials, {
     path: "/deposit-status",
@@ -900,6 +1009,10 @@ export function getEulenDepositStatus(
     },
     nonce: options.nonce,
     asyncMode: options.asyncMode,
+    telemetry: {
+      ...options.telemetry,
+      operation: options.telemetry?.operation ?? "get_deposit_status",
+    },
   });
 }
 
