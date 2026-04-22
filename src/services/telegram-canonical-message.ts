@@ -1,5 +1,3 @@
-import { GrammyError } from "grammy";
-
 import { log } from "../lib/logger.js";
 import { updateOrderById } from "../db/repositories/orders-repository.js";
 
@@ -25,42 +23,12 @@ type SyncTelegramCanonicalMessageInput = {
   tenant: { tenantId: string };
   order: OrderRecord;
   payload: TelegramCanonicalMessagePayload;
-  fallbackOnEditFailure?: {
-    text: string;
-    replyMarkup?: InlineKeyboardMarkup;
-  } | null;
 };
-
-function isSafeMessageId(value: unknown): value is number {
-  return Number.isSafeInteger(value);
-}
 
 function buildReplyOptions(payload: TelegramCanonicalMessagePayload) {
   return payload.replyMarkup
     ? { reply_markup: payload.replyMarkup }
     : undefined;
-}
-
-function buildFallbackReplyOptions(input: SyncTelegramCanonicalMessageInput["fallbackOnEditFailure"]) {
-  return input?.replyMarkup
-    ? { reply_markup: input.replyMarkup }
-    : undefined;
-}
-
-function readTelegramEditErrorDescription(error: unknown) {
-  if (error instanceof GrammyError && typeof error.description === "string") {
-    return error.description;
-  }
-
-  if (error instanceof Error && typeof error.message === "string") {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function isBenignTelegramNoopEditError(error: unknown) {
-  return readTelegramEditErrorDescription(error).toLowerCase().includes("message is not modified");
 }
 
 async function persistCanonicalMessageMetadata(
@@ -115,33 +83,6 @@ async function sendCanonicalMessage(input: SyncTelegramCanonicalMessageInput) {
   };
 }
 
-async function editCanonicalMessage(input: SyncTelegramCanonicalMessageInput) {
-  const chatId = input.order.telegramChatId;
-  const messageId = input.order.telegramCanonicalMessageId;
-  const storedKind = input.order.telegramCanonicalMessageKind;
-
-  if (typeof chatId !== "string" || chatId.trim().length === 0 || !isSafeMessageId(messageId) || typeof storedKind !== "string") {
-    return null;
-  }
-
-  if (storedKind === "photo") {
-    await input.api.editMessageCaption(chatId, messageId, {
-      caption: input.payload.text,
-      ...buildReplyOptions(input.payload),
-    });
-    return {
-      action: "edited",
-      kind: "photo" as const,
-    };
-  }
-
-  await input.api.editMessageText(chatId, messageId, input.payload.text, buildReplyOptions(input.payload));
-  return {
-    action: "edited",
-    kind: "text" as const,
-  };
-}
-
 function logCanonicalMessageEvent(
   input: SyncTelegramCanonicalMessageInput,
   message: string,
@@ -183,62 +124,6 @@ function logCanonicalMessageError(
 }
 
 export async function syncTelegramCanonicalMessage(input: SyncTelegramCanonicalMessageInput) {
-  try {
-    const edited = await editCanonicalMessage(input);
-
-    if (edited) {
-      logCanonicalMessageEvent(input, "telegram.canonical_message.edited", {
-        nextKind: input.payload.kind,
-      });
-      return {
-        delivered: true,
-        edited: true,
-        fallbackSent: false,
-      };
-    }
-  } catch (error) {
-    if (isBenignTelegramNoopEditError(error)) {
-      logCanonicalMessageEvent(input, "telegram.canonical_message.edit_noop", {
-        nextKind: input.payload.kind,
-        cause: readTelegramEditErrorDescription(error),
-      });
-      return {
-        delivered: true,
-        edited: false,
-        fallbackSent: false,
-      };
-    }
-
-    logCanonicalMessageError(input, "telegram.canonical_message.edit_failed", {
-      nextKind: input.payload.kind,
-      cause: readTelegramEditErrorDescription(error),
-    });
-
-    if (input.fallbackOnEditFailure && typeof input.order.telegramChatId === "string" && input.order.telegramChatId.length > 0) {
-      const fallbackMessage = await input.api.sendMessage(
-        input.order.telegramChatId,
-        input.fallbackOnEditFailure.text,
-        buildFallbackReplyOptions(input.fallbackOnEditFailure),
-      );
-      await persistCanonicalMessageMetadata(
-        input.db,
-        input.tenant.tenantId,
-        input.order.orderId,
-        fallbackMessage,
-        "text",
-      );
-      logCanonicalMessageEvent(input, "telegram.canonical_message.fallback_sent", {
-        nextKind: input.payload.kind,
-        fallbackMessageId: fallbackMessage.message_id,
-      });
-      return {
-        delivered: true,
-        edited: false,
-        fallbackSent: true,
-      };
-    }
-  }
-
   const sent = await sendCanonicalMessage(input);
   logCanonicalMessageEvent(input, "telegram.canonical_message.sent", {
     nextKind: sent.kind,

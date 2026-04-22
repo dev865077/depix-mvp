@@ -185,7 +185,7 @@ describe("telegram payment notifications", () => {
     expect(message).toContain("concluído");
   });
 
-  it("edits the canonical Telegram order message when payment confirmation arrives", async function assertCanonicalMessageEdit() {
+  it("sends a fresh Telegram order message when payment confirmation arrives", async function assertCanonicalMessageSend() {
     const db = await seedTelegramNotificationOrder();
     const telegramCalls = [];
 
@@ -199,7 +199,15 @@ describe("telegram payment notifications", () => {
 
       return new Response(JSON.stringify({
         ok: true,
-        result: true,
+        result: {
+          message_id: 45,
+          date: 1713434498,
+          caption: payload.caption,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
       }), {
         status: 200,
         headers: {
@@ -239,14 +247,14 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/editMessageCaption");
-    expect(telegramCalls[0].payload.message_id).toBe(44);
+    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].payload.chat_id).toBe("telegram_chat_alpha_001");
     expect(telegramCalls[0].payload.caption).toContain("Pagamento confirmado em Alpha.");
     expect(telegramCalls[0].payload.caption).toContain("Pix deste pedido:");
     expect(telegramCalls[0].payload.caption).toContain("0002010102122688pix-alpha-notification-001");
   });
 
-  it("treats Telegram no-op edit errors as delivered without fallback duplication", async function assertCanonicalNoopEdit() {
+  it("does not edit old Telegram messages for duplicate payment confirmations", async function assertCanonicalDuplicateSend() {
     const db = await seedTelegramNotificationOrder();
     const telegramCalls = [];
 
@@ -258,19 +266,23 @@ describe("telegram payment notifications", () => {
         payload,
       });
 
-      if (url.includes("/editMessageCaption")) {
-        return new Response(JSON.stringify({
-          ok: false,
-          description: "Bad Request: message is not modified",
-        }), {
-          status: 400,
-          headers: {
-            "content-type": "application/json",
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: 45,
+          date: 1713434498,
+          caption: payload.caption,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
           },
-        });
-      }
-
-      throw new Error(`Unexpected URL in canonical noop flow: ${url}`);
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
     });
 
     const result = await notifyTelegramOrderTransitionSafely({
@@ -308,14 +320,15 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/editMessageCaption");
+    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).not.toContain("/editMessage");
     expect(updatedOrder).toEqual({
-      telegramCanonicalMessageId: 44,
+      telegramCanonicalMessageId: 45,
       telegramCanonicalMessageKind: "photo",
     });
   });
 
-  it("reanchors the canonical Telegram message when edit fails and fallback send succeeds", async function assertCanonicalFallbackReanchor() {
+  it("keeps appending fresh payment messages instead of reediting a prior one", async function assertCanonicalRepeatedSend() {
     const db = await seedTelegramNotificationOrder();
     const telegramCalls = [];
 
@@ -327,39 +340,23 @@ describe("telegram payment notifications", () => {
         payload,
       });
 
-      if (url.includes("/editMessageCaption")) {
-        return new Response(JSON.stringify({
-          ok: false,
-          description: "Bad Request: message to edit not found",
-        }), {
-          status: 400,
-          headers: {
-            "content-type": "application/json",
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: telegramCalls.length + 87,
+          date: 1713434499,
+          caption: payload.caption,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
           },
-        });
-      }
-
-      if (url.includes("/sendMessage")) {
-        return new Response(JSON.stringify({
-          ok: true,
-          result: {
-            message_id: 88,
-            date: 1713434499,
-            text: payload.text,
-            chat: {
-              id: payload.chat_id,
-              type: "private",
-            },
-          },
-        }), {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        });
-      }
-
-      throw new Error(`Unexpected URL in canonical fallback flow: ${url}`);
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
     });
 
     const firstResult = await notifyTelegramOrderTransitionSafely({
@@ -396,11 +393,11 @@ describe("telegram payment notifications", () => {
       reason: "delivered",
       kind: "payment_confirmed",
     });
-    expect(telegramCalls[0].url).toContain("/editMessageCaption");
-    expect(telegramCalls[1].url).toContain("/sendMessage");
+    expect(telegramCalls).toHaveLength(1);
+    expect(telegramCalls[0].url).toContain("/sendPhoto");
     expect(updatedOrder).toEqual({
       telegramCanonicalMessageId: 88,
-      telegramCanonicalMessageKind: "text",
+      telegramCanonicalMessageKind: "photo",
     });
 
     telegramCalls.length = 0;
@@ -435,7 +432,8 @@ describe("telegram payment notifications", () => {
       reason: "delivered",
       kind: "payment_confirmed",
     });
-    expect(telegramCalls[0].url).toContain("/editMessageText");
-    expect(telegramCalls[0].payload.message_id).toBe(88);
+    expect(telegramCalls).toHaveLength(1);
+    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).not.toContain("/editMessage");
   });
 });
