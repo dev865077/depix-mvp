@@ -54,6 +54,8 @@ Estado atual:
 - callback queries com essas CTAs sao roteadas pelo mesmo fluxo de pedido, sem remover o fallback por texto
 - quando o pedido tem mensagem canonica persistida, o Telegram pode editar a mensagem de QR/status/conclusao no lugar, em vez de emitir uma nova mensagem a cada transicao
 - as respostas de status, replay e confirmacao de pagamento agora sao enviadas como mensagens novas ou fotos novas, nao como edicoes da mensagem antiga
+- a confirmacao de pagamento passou a ser um recibo curto em texto, sem QR, com link para a transacao Liquid quando o identificador estiver disponivel
+- a resposta final de confirmacao preserva entidades do Telegram quando atravesa replies diretas, mensagens canonicas ou captions de foto
 - a copy normal de valor agora remove "inteiro" da orientacao principal; a instrução de valor inteiro fica reservada para o caso de centavos nao suportados
 
 ## Eulen
@@ -91,6 +93,6 @@ Estado atual:
 - o recheck operacional por `deposit-status` ja entrou no fluxo real usando `depositEntryId` como ancora local
 - o fallback por janela via `deposits` ja existe para reconciliar linhas compactas por `qrId`
 - a confirmacao do Telegram agora resolve a resposta async da Eulen antes de responder ao usuario
-- a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de criacao do deposito
-- a criacao de deposito persiste `orders` e `deposits` juntos para evitar duplicidade silenciosa
-- em falha da Eulen, o pedido e
+- a expiracao do Pix so deve aparecer na mensagem quando a Eulen realmente a devolver, inclusive no caminho async de confirmacao
+- a confirmacao de pagamento agora gera um recibo textual curto, sem QR, e com link para a transacao Liquid quando houver `blockchainTxId`
+- o fluxo de notificacao pos-pagamento precisa preservar entidades de formatação quando a mensagem for enviada como texto, reply canonica ou caption de foto

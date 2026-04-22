@@ -72,6 +72,14 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
 - a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza espacos visuais e avanca o pedido para `confirmation`
 - em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
-- o fluxo Telegram agora aceita `/cancel` e comandos equivalentes para cancelar pedidos abertos em `amount`, `wallet` e `confirmation`
-- `/help` responde com orientacao contextual, mas nao cria nem altera pedidos
-- `reco
+- o fluxo Telegram agora aceita `/cancel` e controles equivalentes para encerrar ou reiniciar conversas abertas sem criar pedido novo indevidamente
+- as respostas de confirmacao de pagamento agora sao mais curtas, em texto puro, sem QR, e incluem um link para a transacao Liquid quando disponivel
+- as respostas formatadas do Telegram preservam entidades de bold e outras anotacoes suportadas ao atravessar replies diretas, mensagens canonicas e captions de foto
+
+## Como navegar
+
+- [Leitura Inicial](Leitura-Inicial)
+- [Visao Geral do Produto](Visao-Geral-do-Produto)
+- [Escopo e Fluxo](Escopo-e-Fluxo)
+- [Arquitetura Geral](Arquitetura-Geral)
+- [Integracoes Externas](Integracoes-Externas)

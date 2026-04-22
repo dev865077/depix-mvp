@@ -46,6 +46,8 @@
 - quando existe uma mensagem canonica persistida no pedido, o fluxo pode editar esse mesmo payload em vez de enviar um novo message para cada etapa relevante
 - as mensagens de `wallet`, `confirmation` e do valor invalido agora sao renderizadas com entidades do Telegram, em vez de texto plano, para preservar a formatação visivel sem alterar a navegacao ou o comportamento financeiro
 - as respostas de status, replay e confirmacao de pagamento no Telegram agora sao enviadas como mensagens novas ou fotos novas, sem edicao da mensagem canonica antiga
+- as respostas de confirmacao de pagamento agora sao concisas, em texto puro, sem QR, e podem incluir um link para a transacao Liquid quando o identificador estiver disponivel
+- a mensagem de confirmacao nao deve embutir o Pix/QR do pedido; ela deve se limitar ao recibo de pagamento e ao encaminhamento para a transacao
 
 ## Fora de escopo
 
@@ -76,6 +78,8 @@
 - a notificacao assincrona pos-pagamento ja faz parte do estado atual do sistema quando a conciliacao confirma o pagamento
 - quando o pedido ja tiver mensagem canonica persistida, a entrega do QR e a atualizacao de status podem reutilizar a mesma mensagem em vez de abrir um novo thread de mensagens no chat
 - as respostas de status, replay e confirmacao de pagamento agora sao publicadas como novas mensagens ou fotos, nao como edicoes da mensagem anterior
+- a confirmacao de pagamento no Telegram passou a ser um recibo curto em texto, sem QR, com link para a transacao Liquid quando disponivel
+- a resposta de confirmacao preserva a formatação visivel via entidades do Telegram quando o texto passa por replies diretas, mensagens canonicas ou captions de foto
 
 ## Leitura correta
 
