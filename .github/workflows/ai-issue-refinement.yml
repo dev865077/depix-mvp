@@ -50,6 +50,7 @@ jobs:
       - name: Run AI issue refinement
         env:
           AI_ISSUE_REFINEMENT_PROMPT_PATH: .github/prompts/ai-issue-refinement.md
+          AI_ISSUE_PLANNING_MODERATOR_PROMPT_PATH: .github/prompts/ai-issue-planning-moderator.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_ISSUE_REFINEMENT_MODEL: ${{ vars.OPENAI_ISSUE_REFINEMENT_MODEL || 'gpt-5.4-mini' }}

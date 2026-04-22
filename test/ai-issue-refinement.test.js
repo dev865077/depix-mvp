@@ -5,9 +5,14 @@ import { describe, expect, it } from "vitest";
 import issueRefinementWorkflowText from "../.github/workflows/ai-issue-refinement.yml?raw";
 
 import {
+  assertValidIssuePlanningModeratorDecision,
   assertValidIssueRefinementPlan,
   buildGitHubSubIssueLinkRequest,
+  buildIssuePlanningModeratorAutomationSection,
   buildIssuePlanningRerunDispatchRequest,
+  buildIssuePlanningModeratorReplyBody,
+  buildIssuePlanningModeratorStatusComment,
+  buildIssuePlanningModeratorUserPrompt,
   buildIssueTriageDispatchRequest,
   buildIssueRefinementAutomationSection,
   buildIssueRefinementReplyBody,
@@ -22,6 +27,7 @@ import {
   findLatestPlanningFinalComment,
   isRefinementChildIssue,
   normalizeChildIssueDrafts,
+  normalizeModeratorChildIssueDrafts,
   normalizeIssueArtifactTitle,
   parseIssueRefinementDispatchInput,
   parseIssueRefinementResponse,
@@ -36,6 +42,7 @@ describe("ai issue refinement", () => {
     expect(issueRefinementWorkflowText).toContain("discussions: write");
     expect(issueRefinementWorkflowText).toContain("issues: write");
     expect(issueRefinementWorkflowText).toContain("AI_ISSUE_REFINEMENT_PROVIDER");
+    expect(issueRefinementWorkflowText).toContain("AI_ISSUE_PLANNING_MODERATOR_PROMPT_PATH");
     expect(issueRefinementWorkflowText).toContain("AI_ISSUE_REFINEMENT_MAX_ROUNDS: ${{ vars.AI_ISSUE_REFINEMENT_MAX_ROUNDS || '4' }}");
   });
 
@@ -151,6 +158,15 @@ describe("ai issue refinement", () => {
     }));
 
     expect(normalizeChildIssueDrafts(drafts)).toHaveLength(4);
+  });
+
+  it("bounds moderator split drafts to three child issues", () => {
+    const drafts = Array.from({ length: 6 }, (_, index) => ({
+      title: `sub-issue: ${index}`,
+      body: `Body ${index}`,
+    }));
+
+    expect(normalizeModeratorChildIssueDrafts(drafts)).toHaveLength(3);
   });
 
   it("detects refinement child issues and blocks recursive child creation", () => {
@@ -399,6 +415,104 @@ describe("ai issue refinement", () => {
     expect(section).toContain("canonical_state: `issue_planning_blocked`");
     expect(section).toContain("next_actor: `dependency_owner`");
     expect(reply).toContain("created_child_issue: #301 - sub-issue: validate callback proof");
+  });
+
+  it("builds prompt and canonical outputs for the final planning moderator", () => {
+    const prompt = buildIssuePlanningModeratorUserPrompt({
+      repository: "dev865077/depix-mvp",
+      issue: {
+        number: 610,
+        title: "track: moderador final",
+        html_url: "https://github.com/dev865077/depix-mvp/issues/610",
+      },
+      discussion: { url: "https://github.com/dev865077/depix-mvp/discussions/612" },
+      planningStatus: "request_changes",
+      blockingRoles: ["technical", "risk"],
+      blockedByDependencies: false,
+      roundCount: 4,
+      maxRounds: 4,
+      humanIssueBody: "## Outcome\nTight body.",
+      currentManagedSection: "canonical_state: `issue_planning_request_changes`",
+      childIssues: [],
+      reviewerMemos: [],
+      latestConclusionBody: "Final recommendation: `Request changes`",
+      humanReplies: [],
+      automatedReplies: [],
+      discussionContext: "Full bounded discussion context",
+      blockingDependencies: ["#606"],
+    });
+    const section = buildIssuePlanningModeratorAutomationSection({
+      model: "gpt-test",
+      provider: "openai_responses",
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/612",
+      planningStatus: "request_changes",
+      blockingRoles: ["technical"],
+      blockingDependencies: ["#606"],
+      roundCount: 4,
+      decision: "issue_blocked_external_dependency",
+      summary: "Final decision blocked.",
+      resolutionSummary: "The issue is good but still depends on #606.",
+      createdChildIssues: [],
+    });
+    const status = buildIssuePlanningModeratorStatusComment({
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/612",
+      planningStatus: "request_changes",
+      blockingRoles: ["technical"],
+      blockingDependencies: ["#606"],
+      roundCount: 4,
+      decision: "issue_blocked_external_dependency",
+      createdChildIssues: [],
+    });
+    const reply = buildIssuePlanningModeratorReplyBody({
+      decision: "issue_split_required",
+      replyBody: "The root should split into child issues.",
+      createdChildIssues: [{ number: 401, title: "sub-issue: child" }],
+      blockingDependencies: [],
+    });
+
+    expect(prompt).toContain("Round limit reached: true");
+    expect(prompt).toContain("Completed refinement rounds: 4");
+    expect(section).toContain("moderator_decision: `issue_blocked_external_dependency`");
+    expect(section).toContain("canonical_state: `issue_blocked_external_dependency`");
+    expect(status).toContain("Final moderator decision: `issue_blocked_external_dependency`");
+    expect(reply).toContain("<!-- ai-issue-planning-moderator:openai -->");
+    expect(reply).toContain("final_decision: `issue_split_required`");
+  });
+
+  it("validates the final moderator decision contract", () => {
+    const blocked = assertValidIssuePlanningModeratorDecision(JSON.stringify({
+      summary: "Blocked on #606.",
+      updatedTitle: "track: moderador final",
+      updatedBodyHumanSection: "## Outcome\nBlocked on #606.",
+      resolutionSummary: "The artifact is good but still depends on #606.",
+      replyBody: "The issue is now blocked only on #606.",
+      decision: "issue_blocked_external_dependency",
+      failureReason: null,
+      blockingDependencies: ["#606"],
+      newChildIssues: [],
+    }));
+
+    expect(blocked.decision).toBe("issue_blocked_external_dependency");
+    expect(() => assertValidIssuePlanningModeratorDecision(JSON.stringify({
+      summary: "Split.",
+      updatedTitle: "track: moderador final",
+      updatedBodyHumanSection: "## Outcome\nSplit.",
+      resolutionSummary: "Split required.",
+      replyBody: "Split this root.",
+      decision: "issue_split_required",
+      failureReason: null,
+      blockingDependencies: [],
+      newChildIssues: [],
+    }))).toThrow("at least one child issue");
+    expect(buildIssuePlanningModeratorStatusComment({
+      discussionUrl: "https://github.com/dev865077/depix-mvp/discussions/612",
+      planningStatus: "request_changes",
+      blockingRoles: ["product"],
+      blockingDependencies: [],
+      roundCount: 4,
+      decision: "issue_rejected_or_duplicate",
+      createdChildIssues: [],
+    })).toContain("canonical_state: `issue_rejected_or_duplicate`");
   });
 
   it("marks refinement round 4 as the final common round before moderator escalation", () => {
@@ -673,6 +787,214 @@ describe("ai issue refinement", () => {
       292,
       "main",
     ]);
+  });
+
+  it("invokes the final moderator after the refinement round limit and marks the issue ready for Codex", async () => {
+    const calls = [];
+    const runtime = {
+      readPrompt: async (path) => path.includes("moderator") ? "moderator prompt" : "refinement prompt",
+      fetchIssue: async () => ({
+        number: 610,
+        title: "track: moderador final",
+        body: "## Outcome\nTight body.",
+        html_url: "https://github.com/dev865077/depix-mvp/issues/610",
+      }),
+      fetchIssueComments: async () => [],
+      fetchDiscussionByNumber: async () => ({
+        id: "discussion-612",
+        number: 612,
+        title: "[Issue #610] track: moderador final",
+        body: "Issue origem: #610",
+        url: "https://github.com/dev865077/depix-mvp/discussions/612",
+        comments: {
+          nodes: [
+            {
+              id: "planning-final-4",
+              author: { login: "github-actions[bot]" },
+              createdAt: "2026-04-21T12:00:03Z",
+              body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+              replies: {
+                nodes: Array.from({ length: 4 }, (_, index) => ({
+                  author: { login: "github-actions[bot]" },
+                  createdAt: `2026-04-21T12:00:1${index}Z`,
+                  body: "<!-- ai-issue-refinement:openai -->\n## Issue refinement update",
+                })),
+              },
+            },
+          ],
+        },
+      }),
+      updateIssue: async (...args) => {
+        calls.push(["updateIssue", ...args]);
+      },
+      upsertIssuePlanningStatusComment: async (...args) => {
+        calls.push(["status", ...args]);
+      },
+      createDiscussionReply: async (...args) => {
+        calls.push(["reply", ...args]);
+      },
+      createOrReuseChildIssues: async () => [],
+      dispatchIssueTriage: async (...args) => {
+        calls.push(["child-triage", ...args]);
+      },
+      dispatchPlanningRerun: async (...args) => {
+        calls.push(["rerun", ...args]);
+      },
+      generateWithOpenAI: async () => {
+        throw new Error("should not call refinement generator");
+      },
+      generateWithChatCompletions: async () => {
+        throw new Error("should not call refinement generator");
+      },
+      generateModeratorWithOpenAI: async () => JSON.stringify({
+        summary: "Final decision: ready for Codex.",
+        updatedTitle: "track: moderador final",
+        updatedBodyHumanSection: "## Outcome\nReady.",
+        resolutionSummary: "The issue is now implementation-ready as one artifact.",
+        replyBody: "The final moderator decision is that this issue is ready for Codex.",
+        decision: "issue_ready_for_codex",
+        failureReason: null,
+        blockingDependencies: [],
+        newChildIssues: [],
+      }),
+      generateModeratorWithChatCompletions: async () => {
+        throw new Error("should not call chat moderator");
+      },
+      generateWithEndpoint: async () => {
+        throw new Error("should not call endpoint");
+      },
+    };
+
+    const result = await runIssueRefinementWorkflow({
+      repository: "dev865077/depix-mvp",
+      owner: "dev865077",
+      name: "depix-mvp",
+      workflowRef: "main",
+      promptPath: ".github/prompts/ai-issue-refinement.md",
+      moderatorPromptPath: ".github/prompts/ai-issue-planning-moderator.md",
+      provider: "openai_responses",
+      model: "gpt-test",
+      maxRounds: 4,
+      dispatchInput: {
+        issueNumber: 610,
+        discussionNumber: 612,
+        planningStatus: "request_changes",
+        blockingRoles: ["technical"],
+        blockedByDependencies: false,
+      },
+    }, runtime);
+
+    expect(result.nextPhase).toBe("moderated");
+    expect(calls.find((call) => call[0] === "updateIssue")[4]).toContain("canonical_state: `issue_ready_for_codex`");
+    expect(calls.find((call) => call[0] === "status")[3]).toContain("Final moderator decision: `issue_ready_for_codex`");
+    expect(calls.find((call) => call[0] === "reply")).toEqual([
+      "reply",
+      "discussion-612",
+      "planning-final-4",
+      expect.stringContaining("Final planning moderator decision"),
+    ]);
+    expect(calls.some((call) => call[0] === "rerun")).toBe(false);
+  });
+
+  it("reuses an existing final moderator decision idempotently on rerun", async () => {
+    const calls = [];
+    const runtime = {
+      readPrompt: async () => {
+        throw new Error("should not read prompts after final moderator decision");
+      },
+      fetchIssue: async () => ({
+        number: 610,
+        title: "track: moderador final",
+        body: [
+          "## Outcome",
+          "Ready.",
+          "",
+          "<!-- ai-issue-automation:start -->",
+          "## Canonical automation handoff",
+          "canonical_state: `issue_ready_for_codex`",
+          "moderator_decision: `issue_ready_for_codex`",
+          "blocking_dependencies: ``",
+          "<!-- ai-issue-automation:end -->",
+        ].join("\n"),
+        html_url: "https://github.com/dev865077/depix-mvp/issues/610",
+      }),
+      fetchIssueComments: async () => [],
+      fetchDiscussionByNumber: async () => ({
+        id: "discussion-612",
+        number: 612,
+        title: "[Issue #610] track: moderador final",
+        body: "Issue origem: #610",
+        url: "https://github.com/dev865077/depix-mvp/discussions/612",
+        comments: {
+          nodes: [
+            {
+              id: "planning-final-4",
+              author: { login: "github-actions[bot]" },
+              createdAt: "2026-04-21T12:00:00Z",
+              body: "<!-- ai-issue-planning-final:openai -->\nFinal recommendation: `Request changes`",
+              replies: { nodes: [] },
+            },
+          ],
+        },
+      }),
+      updateIssue: async (...args) => {
+        calls.push(["updateIssue", ...args]);
+      },
+      upsertIssuePlanningStatusComment: async (...args) => {
+        calls.push(["status", ...args]);
+      },
+      createDiscussionReply: async (...args) => {
+        calls.push(["reply", ...args]);
+      },
+      createOrReuseChildIssues: async () => {
+        throw new Error("should not create child issues");
+      },
+      dispatchIssueTriage: async (...args) => {
+        calls.push(["child-triage", ...args]);
+      },
+      dispatchPlanningRerun: async (...args) => {
+        calls.push(["rerun", ...args]);
+      },
+      generateWithOpenAI: async () => {
+        throw new Error("should not call refinement generator");
+      },
+      generateWithChatCompletions: async () => {
+        throw new Error("should not call refinement generator");
+      },
+      generateModeratorWithOpenAI: async () => {
+        throw new Error("should not call moderator generator");
+      },
+      generateModeratorWithChatCompletions: async () => {
+        throw new Error("should not call moderator generator");
+      },
+      generateWithEndpoint: async () => {
+        throw new Error("should not call endpoint");
+      },
+    };
+
+    const result = await runIssueRefinementWorkflow({
+      repository: "dev865077/depix-mvp",
+      owner: "dev865077",
+      name: "depix-mvp",
+      workflowRef: "main",
+      promptPath: ".github/prompts/ai-issue-refinement.md",
+      moderatorPromptPath: ".github/prompts/ai-issue-planning-moderator.md",
+      provider: "openai_responses",
+      model: "gpt-test",
+      maxRounds: 4,
+      dispatchInput: {
+        issueNumber: 610,
+        discussionNumber: 612,
+        planningStatus: "request_changes",
+        blockingRoles: ["technical"],
+        blockedByDependencies: false,
+      },
+    }, runtime);
+
+    expect(result.nextPhase).toBe("moderated_reused");
+    expect(calls.find((call) => call[0] === "status")[3]).toContain("Final moderator decision: `issue_ready_for_codex`");
+    expect(calls.some((call) => call[0] === "updateIssue")).toBe(false);
+    expect(calls.some((call) => call[0] === "reply")).toBe(false);
   });
 
   it("keeps the issue blocked when explicit dependencies remain", async () => {

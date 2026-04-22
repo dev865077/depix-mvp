@@ -1257,12 +1257,36 @@ describe("ai pr review discussion rendering", () => {
     const synthesis = buildDiscussionDebateFailureSynthesis([
       { role: "Technical and architecture", error: new DOMException("Timed out", "TimeoutError") },
     ]);
+    const parsedContract = parseBlockingRoleContract(memo);
+    const blockerSummary = summarizeDiscussionBlockingContracts({
+      product: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      technical: memo,
+      risk: "## Perspective\nReady.\n\n## Findings\n- None.\n\n## Questions\n- None.\n\n## Merge posture\nReady.\n\n## Recommendation\nApprove",
+      synthesis: "Request changes\n\n## Findings\n- Operational blocker remains.\n\n## Recommendation\nRequest changes",
+    });
 
     expect(memo).toContain("could not complete");
+    expect(memo).toContain("## Blocker contract");
     expect(assertValidReviewRecommendation(memo)).toBe("Request changes");
+    expect(parsedContract).toEqual({
+      status: "valid",
+      testability: "Not testable",
+      fields: {
+        Testability: "Not testable",
+        Reason: "Automated reviewer failed before producing a memo: Timed out",
+        "Required human resolution": "rerun the discussion review after the transient model/API issue is resolved",
+      },
+    });
     expect(memo.length).toBeLessThan(900);
     expect(assertValidReviewRecommendation(synthesis)).toBe("Request changes");
     expect(synthesis).toContain("Rerun the discussion review");
+    expect(blockerSummary.notTestable).toEqual([
+      {
+        role: "technical",
+        reason: "Automated reviewer failed before producing a memo: Timed out",
+        requiredHumanResolution: "rerun the discussion review after the transient model/API issue is resolved",
+      },
+    ]);
     expect(buildDiscussionCompletionComment(assertValidReviewRecommendation(synthesis))).toContain(
       "Final recommendation: `Request changes`",
     );

@@ -3951,6 +3951,8 @@ function buildSynthesisUserPrompt(sharedUserPrompt, memos) {
  */
 export function buildModelFailureMemo(role, error) {
   const message = error instanceof Error ? error.message : String(error);
+  const normalizedMessage = truncateText(message, 240).replace(/`/g, "'");
+  const requiredHumanResolution = "rerun the discussion review after the transient model/API issue is resolved";
 
   return [
     "## Perspective",
@@ -3965,6 +3967,11 @@ export function buildModelFailureMemo(role, error) {
     "",
     "## Merge posture",
     "Request changes until the discussion review can be rerun or manually accepted by a maintainer.",
+    "",
+    "## Blocker contract",
+    "Testability: Not testable",
+    `Reason: Automated reviewer failed before producing a memo: ${normalizedMessage}`,
+    `Required human resolution: ${requiredHumanResolution}`,
     "",
     "## Recommendation",
     "Request changes",
