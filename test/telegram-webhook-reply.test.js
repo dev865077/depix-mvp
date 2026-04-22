@@ -945,8 +945,8 @@ describe("telegram webhook reply flow", () => {
     const statusCases = [
       ["13401", 13401, "order_status_amount", "amount", "draft", null, "Próximo passo: envie o valor em BRL"],
       ["13402", 13402, "order_status_wallet", "wallet", "draft", 1500, "envie seu endereço DePix/Liquid"],
-      ["13403", 13403, "order_status_confirmation", "confirmation", "draft", 1500, "confirme com sim"],
-      ["13404", 13404, "order_status_awaiting_payment", "awaiting_payment", "pending", 1500, "Pix copia e cola:"],
+      ["13403", 13403, "order_status_confirmation", "confirmation", "draft", 1500, "toque em Confirmar"],
+      ["13404", 13404, "order_status_awaiting_payment", "awaiting_payment", "pending", 1500, "Seu Pix já foi gerado"],
       ["13405", 13405, "order_status_completed", "completed", "paid", 1500, "Pagamento concluído"],
       ["13406", 13406, "order_status_failed", "failed", "failed", 1500, "Este pedido falhou"],
       ["13407", 13407, "order_status_canceled", "canceled", "canceled", 1500, "Este pedido foi cancelado"],
@@ -1011,7 +1011,8 @@ describe("telegram webhook reply flow", () => {
       });
     }
 
-    expect(repliesByChatId.get("13404")).toContain("0002010102122688pix-status-awaiting-payment");
+    expect(repliesByChatId.get("13404")).not.toContain("Pix copia e cola:");
+    expect(repliesByChatId.get("13404")).not.toContain("0002010102122688pix-status-awaiting-payment");
   });
 
   it("rechecks an awaiting payment order before answering /status", async function assertStatusRechecksAwaitingPaymentOrder() {
@@ -1217,6 +1218,114 @@ describe("telegram webhook reply flow", () => {
     expect(orderCount?.count).toBe(1);
     expect(replies[0]).toContain("Pagamento concluído");
     expect(replies[0]).not.toContain("aguardando pagamento");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
+  });
+
+  it("answers /start for a pending payment without resending the QR", async function assertStartForPendingPaymentDoesNotResendQr() {
+    const app = createApp();
+    const workerEnv = createWorkerEnv();
+    const telegramCalls = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockPendingStart(input, init) {
+      const url = String(input);
+
+      if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_start_pending_001") {
+        return new Response(JSON.stringify({
+          qrId: "qr_start_pending_001",
+          status: "pending",
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+      }
+
+      const payload = JSON.parse(String(init?.body));
+      telegramCalls.push({
+        url,
+        payload,
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        result: {
+          message_id: telegramCalls.length,
+          date: 1713434425,
+          text: payload.text,
+          chat: {
+            id: payload.chat_id,
+            type: "private",
+          },
+        },
+      }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    });
+
+    await createOrder(getDatabase(env), {
+      tenantId: "alpha",
+      orderId: "order_start_pending_001",
+      userId: "13411",
+      channel: "telegram",
+      productType: "depix",
+      telegramChatId: "13411",
+      amountInCents: 300,
+      currentStep: "awaiting_payment",
+      status: "pending",
+      telegramCanonicalMessageId: 88,
+      telegramCanonicalMessageKind: "photo",
+    });
+    await createDeposit(getDatabase(env), {
+      tenantId: "alpha",
+      depositEntryId: "deposit_start_pending_001",
+      qrId: "qr_start_pending_001",
+      orderId: "order_start_pending_001",
+      nonce: "nonce_start_pending_001",
+      qrCopyPaste: "0002010102122688pix-start-pending",
+      qrImageUrl: "https://example.com/start-pending.png",
+      externalStatus: "pending",
+    });
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: createTelegramTextUpdate({
+          text: "/start",
+          chatId: 13411,
+          fromId: 13411,
+          updateId: 13411,
+        }),
+      },
+      workerEnv,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramCalls).toHaveLength(1);
+    expect(telegramCalls[0].url).toContain("/sendMessage");
+    expect(telegramCalls[0].url).not.toContain("/sendPhoto");
+    expect(telegramCalls[0].payload.text).toContain("Você tem um pagamento em aberto em Alpha.");
+    expect(telegramCalls[0].payload.text).toContain("Toque em Ver status");
+    expect(telegramCalls[0].payload.text).not.toContain("0002010102122688pix-start-pending");
+    expect(telegramCalls[0].payload.reply_markup?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Ver status",
+          callback_data: "depix:status",
+        },
+        {
+          text: "Cancelar pedido",
+          callback_data: "depix:cancel",
+        },
+      ],
+    ]);
     expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
   });
 
@@ -1666,9 +1775,12 @@ describe("telegram webhook reply flow", () => {
     expect(confirmedOrder?.walletAddress).toBe(SIDESWAP_LQ_ADDRESS);
     expect(thirdReply.text).toContain("Revise seu pedido:");
     expect(thirdReply.text).toContain("Valor: R$ 10");
-    expect(thirdReply.text).toContain(`Endereço: ${SIDESWAP_LQ_ADDRESS}`);
-    expect(thirdReply.text).toContain("Toque em Confirmar ou envie: sim, confirmar ou ok.");
-    expect(thirdReply.text).toContain("Para encerrar este pedido, toque em Cancelar ou envie: cancelar.");
+    expect(thirdReply.text).toContain(`Endereço:\n${SIDESWAP_LQ_ADDRESS}`);
+    expect(thirdReply.text).toContain("Toque em Confirmar.");
+    expect(thirdReply.text).toContain("Para encerrar este pedido, toque em Cancelar.");
+    expect(thirdReply.text).not.toContain("sim, confirmar ou ok");
+    expect(thirdReply.text).not.toContain("envie: cancelar");
+    expect(thirdReply.text).toMatch(/Revise seu pedido:\n\nValor: R\$ 10\n\nEndereço:\n/);
     expect(Array.isArray(thirdReply.entities)).toBe(true);
     expect(thirdReply.entities.length).toBeGreaterThan(0);
     expect(thirdReply.reply_markup?.inline_keyboard).toEqual([
@@ -1767,6 +1879,12 @@ describe("telegram webhook reply flow", () => {
       amountInCents: 1000,
       walletAddress: SIDESWAP_LQ_ADDRESS,
     },
+    {
+      currentStep: "awaiting_payment",
+      amountInCents: 1000,
+      walletAddress: SIDESWAP_LQ_ADDRESS,
+      status: "pending",
+    },
   ])("cancels an open order from $currentStep via /cancel", async function assertCancelableStates(entry) {
     const app = createApp();
     const workerEnv = createWorkerEnv();
@@ -1780,14 +1898,18 @@ describe("telegram webhook reply flow", () => {
       amountInCents: entry.amountInCents,
       walletAddress: entry.walletAddress,
       currentStep: entry.currentStep,
-      status: "draft",
+      status: entry.status ?? "draft",
+      telegramCanonicalMessageId: entry.currentStep === "awaiting_payment" ? 14 : null,
+      telegramCanonicalMessageKind: entry.currentStep === "awaiting_payment" ? "photo" : null,
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
+      expect(url).not.toContain("/sendPhoto");
       expect(payload.text).toContain("Pedido cancelado com sucesso.");
+      expect(payload.text).not.toContain("Pix copia e cola");
 
       return new Response(JSON.stringify({
         ok: true,

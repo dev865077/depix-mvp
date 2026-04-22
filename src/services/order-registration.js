@@ -677,6 +677,7 @@ export async function cancelTelegramOpenOrder(input) {
     ORDER_PROGRESS_STATES.AMOUNT,
     ORDER_PROGRESS_STATES.WALLET,
     ORDER_PROGRESS_STATES.CONFIRMATION,
+    ORDER_PROGRESS_STATES.AWAITING_PAYMENT,
   ]);
 
   if (!cancellableSteps.has(currentStep)) {

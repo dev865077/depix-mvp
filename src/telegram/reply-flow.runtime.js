@@ -372,7 +372,7 @@ export function buildTelegramStatusReply(tenant, order, deposit = null) {
         header,
         amountLine,
         statusLine,
-        "Próximo passo: confirme com sim, confirmar ou ok.",
+        "Próximo passo: toque em Confirmar.",
       ].join("\n");
     case ORDER_PROGRESS_STATES.CREATING_DEPOSIT:
       return [
@@ -464,6 +464,21 @@ function buildTelegramAwaitingPaymentReplyMarkup() {
   ]);
 }
 
+function buildTelegramAwaitingPaymentStartReplyMarkup() {
+  return buildTelegramInlineKeyboard([
+    [
+      {
+        text: "Ver status",
+        callback_data: "depix:status",
+      },
+      {
+        text: "Cancelar pedido",
+        callback_data: "depix:cancel",
+      },
+    ],
+  ]);
+}
+
 function buildTelegramReplyMarkupForOrder(order) {
   switch (order?.currentStep) {
     case ORDER_PROGRESS_STATES.CONFIRMATION:
@@ -529,19 +544,6 @@ async function replyTelegramConfirmationPrompt(ctx, order) {
 }
 
 async function replyTelegramStatus(ctx, input, order, deposit = null) {
-  if (
-    Number.isSafeInteger(order?.telegramCanonicalMessageId)
-    && (
-      order?.currentStep === ORDER_PROGRESS_STATES.AWAITING_PAYMENT
-      || order?.currentStep === ORDER_PROGRESS_STATES.COMPLETED
-    )
-  ) {
-    if (deposit) {
-      await replyTelegramCanonicalStatusMessage(ctx, input, order, deposit);
-      return;
-    }
-  }
-
   const options = buildTelegramReplyOptionsForOrder(order);
   await ctx.reply(buildTelegramStatusReply(input.tenant, order, deposit), options);
 }
@@ -549,8 +551,8 @@ async function replyTelegramStatus(ctx, input, order, deposit = null) {
 /**
  * Monta a variante de `/status` para pedidos aguardando pagamento.
  *
- * O copia-e-cola so aparece quando ja existe deposito do mesmo pedido. Isso
- * evita inventar QR ou recuperar dado de outro agregado por conveniencia.
+ * Status nunca reenvia QR nem copia-e-cola: ele apenas orienta o usuario sobre
+ * o pedido atual para nao poluir a conversa nem parecer uma nova cobrança.
  *
  * @param {{ header: string, amountLine: string, statusLine: string, deposit?: { qrCopyPaste?: unknown, expiration?: unknown } | null }} input Partes ja normalizadas do texto.
  * @returns {string} Texto final para pedido em `awaiting_payment`.
@@ -565,11 +567,6 @@ function buildTelegramAwaitingPaymentStatusReply(input) {
 
   if (typeof input.deposit?.expiration === "string" && input.deposit.expiration.length > 0) {
     lines.push(`Expiração informada pela cobrança: ${input.deposit.expiration}`);
-  }
-
-  if (typeof input.deposit?.qrCopyPaste === "string" && input.deposit.qrCopyPaste.length > 0) {
-    lines.push("Pix copia e cola:");
-    lines.push(input.deposit.qrCopyPaste);
   }
 
   return lines.join("\n");
@@ -730,32 +727,45 @@ function buildTelegramConfirmationPrompt(order) {
   const amountLine = Number.isSafeInteger(order?.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
     : "Valor: pendente";
-  const walletLine = typeof order?.walletAddress === "string" && order.walletAddress.length > 0
-    ? `Endereço: ${order.walletAddress}`
-    : "Endereço: pendente";
 
   return [
     "Revise seu pedido:",
+    "",
     amountLine,
-    walletLine,
-    "Toque em Confirmar ou envie: sim, confirmar ou ok.",
-    "Para encerrar este pedido, toque em Cancelar ou envie: cancelar.",
+    "",
+    "Endereço:",
+    typeof order?.walletAddress === "string" && order.walletAddress.length > 0 ? order.walletAddress : "pendente",
+    "",
+    "Toque em Confirmar.",
+    "Para encerrar este pedido, toque em Cancelar.",
   ].join("\n");
 }
 
 function formatTelegramConfirmationPrompt(order) {
+  return fmt`${b}Revise seu pedido:${b}
+
+${b}Valor:${b} ${Number.isSafeInteger(order?.amountInCents) ? formatBrlAmountInCents(order.amountInCents) : "pendente"}
+
+${b}Endereço:${b}
+${typeof order?.walletAddress === "string" && order.walletAddress.length > 0 ? order.walletAddress : "pendente"}
+
+Toque em ${b}Confirmar${b}.
+Para encerrar este pedido, toque em ${b}Cancelar${b}.`;
+}
+
+function buildTelegramAwaitingPaymentStartReply(tenant, order) {
   const amountLine = Number.isSafeInteger(order?.amountInCents)
     ? `Valor: ${formatBrlAmountInCents(order.amountInCents)}`
-    : "Valor: pendente";
-  const walletLine = typeof order?.walletAddress === "string" && order.walletAddress.length > 0
-    ? `Endereço: ${order.walletAddress}`
-    : "Endereço: pendente";
+    : "Valor: conforme pedido";
 
-  return fmt`${b}Revise seu pedido:${b}
-${b}Valor:${b} ${Number.isSafeInteger(order?.amountInCents) ? formatBrlAmountInCents(order.amountInCents) : "pendente"}
-${b}Endereço:${b} ${typeof order?.walletAddress === "string" && order.walletAddress.length > 0 ? order.walletAddress : "pendente"}
-Toque em ${b}Confirmar${b} ou envie: sim, confirmar ou ok.
-Para encerrar este pedido, toque em ${b}Cancelar${b} ou envie: cancelar.`;
+  return [
+    `Você tem um pagamento em aberto em ${tenant.displayName}.`,
+    amountLine,
+    "Se já pagou, aguarde a confirmação.",
+    "",
+    "Toque em Ver status para consultar.",
+    "Toque em Cancelar pedido para encerrar e começar de novo depois.",
+  ].join("\n");
 }
 
 /**
@@ -1410,6 +1420,13 @@ async function handleTelegramStartRequest(ctx, input, source) {
     return;
   }
 
+  if (reconciled.order.currentStep === ORDER_PROGRESS_STATES.AWAITING_PAYMENT) {
+    await ctx.reply(buildTelegramAwaitingPaymentStartReply(input.tenant, reconciled.order), {
+      reply_markup: buildTelegramAwaitingPaymentStartReplyMarkup(),
+    });
+    return;
+  }
+
   await replyTelegramOrderStep(ctx, input, reconciled.order, reconciled.deposit);
 }
 
@@ -1418,8 +1435,8 @@ async function handleTelegramStartRequest(ctx, input, source) {
  *
  * Diferente de `/start` e texto livre, este handler nunca chama o caminho de
  * materializacao de pedido. Ele seleciona o pedido aberto ou o ultimo pedido
- * relevante do mesmo usuario e, quando aplicavel, le o deposito desse pedido
- * apenas para repetir o Pix copia-e-cola ja associado ao agregado.
+ * relevante do mesmo usuario. Quando houver Pix aberto, o deposito pode ser
+ * usado para recheck/status, mas a resposta nunca reenvia QR nem copia-e-cola.
  *
  * @param {any} ctx Contexto atual do grammY.
  * @param {{
