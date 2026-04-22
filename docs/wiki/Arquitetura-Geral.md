@@ -52,7 +52,7 @@ flowchart LR
 - o tempo limite de conversas abertas do Telegram agora vem de configuracao de runtime tipada e tem valor padrao quando nao configurado
 - o fluxo Telegram agora persiste a mensagem canonica do pedido para permitir edicao in-place do mesmo payload em etapas posteriores do QR, status e confirmacao final
 - a persistencia dessa mensagem canonica usa os campos `telegramCanonicalMessageId` e `telegramCanonicalMessageKind` no agregado `orders`
-- a notificacao assincrona de pagamento confirmado pode editar a mensagem canonica em vez de publicar uma nova quando o pedido ja tem metadados persistidos
+- as respostas de status, replay e confirmacao de pagamento no Telegram agora sao enviadas como mensagens novas ou fotos novas; o fluxo nao depende de `editMessageText` nem `editMessageCaption` para essas respostas
 
 ## Principios arquiteturais
 

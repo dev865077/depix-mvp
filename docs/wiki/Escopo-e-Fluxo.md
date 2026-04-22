@@ -43,6 +43,7 @@
 - callback queries desses CTAs sao tratadas pelo mesmo fluxo de pedido, preservando o fallback por texto
 - quando existe uma mensagem canonica persistida no pedido, o fluxo pode editar esse mesmo payload em vez de enviar um novo message para cada etapa relevante
 - as mensagens de `wallet`, `confirmation` e do valor invalido agora sao renderizadas com entidades do Telegram, em vez de texto plano, para preservar a formatação visivel sem alterar a navegacao ou o comportamento financeiro
+- as respostas de status, replay e confirmacao de pagamento no Telegram agora sao enviadas como mensagens novas ou fotos novas, sem edicao da mensagem canonica antiga
 
 ## Fora de escopo
 
@@ -70,6 +71,7 @@
 - o processamento real do fluxo ainda esta incompleto
 - a notificacao assincrona pos-pagamento ja faz parte do estado atual do sistema quando a conciliacao confirma o pagamento
 - quando o pedido ja tiver mensagem canonica persistida, a entrega do QR e a atualizacao de status podem reutilizar a mesma mensagem em vez de abrir um novo thread de mensagens no chat
+- as respostas de status, replay e confirmacao de pagamento agora sao publicadas como novas mensagens ou fotos, nao como edicoes da mensagem anterior
 
 ## Leitura correta
 

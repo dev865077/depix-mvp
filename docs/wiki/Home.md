@@ -73,18 +73,20 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - `recomecar` pode cancelar um pedido aberto e reiniciar a conversa com seguranca; sem contexto aberto, nao cria pedido novo por acidente
 - replays de mensagens antigas nao sobrescrevem um pedido que ja avancou para `wallet`
 - a migracao TypeScript central foi encerrada com `src/index.ts` como entrypoint canonico
-- o comando canonico de verficacao de tipos e `npm run typecheck`
-- os tipos gerados do Worker sao verificados separadamente com `npm run cf:types`
-- `npm test` agora usa um runner sequencial para isolar specs Cloudflare, manter a suite deterministica e descobrir `*.test.js` e `*.test.ts`
+- o comando canonico de verficacao continua sendo `npm run typecheck`
+- as respostas de status, replay e confirmacao de pagamento no Telegram agora saem como mensagens/fotos novas, nao como edicoes da mensagem anterior
 
-## Comece por aqui
+## O que ainda precisa amadurecer
 
-1. [Leitura Inicial](Leitura-Inicial)
-2. [Visao Geral do Produto](Visao-Geral-do-Produto)
-3. [Arquitetura Geral](Arquitetura-Geral)
-4. [Estrutura do Repositorio](Estrutura-do-Repositorio)
-5. [Contribuicao e PRs](Contribuicao-e-PRs)
+- runbooks operacionais mais completos
+- consolidacao final da estrategia de CI
+- governanca da manutencao automatica da wiki apos merge
 
-## Regra de manutencao
+## Como navegar
 
-Se uma mudanca altera arquitetura, schema, integracao ou operacao, a documentacao correspondente precisa mudar na mesma PR.
+- [Leitura Inicial](Leitura-Inicial)
+- [Visao Geral do Produto](Visao-Geral-do-Produto)
+- [Escopo e Fluxo](Escopo-e-Fluxo)
+- [Arquitetura Geral](Arquitetura-Geral)
+- [Integracoes Externas](Integracoes-Externas)
+- [Deploy e Runbooks](Deploy-e-Runbooks)

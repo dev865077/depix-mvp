@@ -50,6 +50,7 @@ Estado atual:
 - em `confirmation`, a resposta com confirmacao/cancelamento agora pode incluir CTAs inline para `Confirmar` e `Cancelar`
 - callback queries com essas CTAs sao roteadas pelo mesmo fluxo de pedido, sem remover o fallback por texto
 - quando o pedido tem mensagem canonica persistida, o Telegram pode editar a mensagem de QR/status/conclusao no lugar, em vez de emitir uma nova mensagem a cada transicao
+- as respostas de status, replay e confirmacao de pagamento agora sao enviadas como mensagens novas ou fotos novas, nao como edicoes da mensagem antiga
 
 ## Eulen
 
@@ -96,8 +97,4 @@ Estado atual:
 
 Webhook de deposito e o caminho principal de confirmacao. `deposit-status` e `deposits` sao fallback de reconciliacao e suporte.
 
-O endpoint operacional `POST /ops/:tenantId/recheck/deposit` consulta `deposit-status` para um `depositEntryId` especifico, registra o evento como `recheck_deposit_status` e aplica a verdade reconciliada sem atravessar tenants.
-
-Essa rota nao e publica por tenant apenas pelo path. Ela exige `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e fica desabilitada quando o segredo operacional nao estiver configurado.
-
-O recheck e aditivo ao caminho principal: webhook continua sendo a confirmacao canonica, `deposit-status` e `deposits` continuam como mecanismos de reconciliacao e suporte operacional.
+O endpoint operacional de Telegram tambem passou a publicar respostas frescas para status, replay e confirmacao de pagamento, sem depender de edicao da mensagem antiga.
