@@ -6,6 +6,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getDatabase } from "../src/db/client.js";
+import { createDepositEvent } from "../src/db/repositories/deposit-events-repository.js";
 import { createDeposit } from "../src/db/repositories/deposits-repository.js";
 import { createOrder } from "../src/db/repositories/orders-repository.js";
 
@@ -50,6 +51,21 @@ async function seedTelegramNotificationOrder() {
     qrCopyPaste: "0002010102122688pix-alpha-notification-001",
     qrImageUrl: "https://example.com/qr/alpha-notification-001.png",
     externalStatus: "depix_sent",
+  });
+  await createDepositEvent(db, {
+    tenantId: "alpha",
+    depositEntryId: "deposit_alpha_notification_001",
+    orderId: "order_alpha_notification_001",
+    qrId: "deposit_alpha_notification_001",
+    source: "webhook",
+    externalStatus: "depix_sent",
+    bankTxId: "bank_tx_alpha_notification_001",
+    blockchainTxId: "liquid_tx_alpha_notification_001",
+    rawPayload: JSON.stringify({
+      response: {
+        date: "22/04/2026 10:12:19",
+      },
+    }),
   });
 
   return db;
@@ -178,14 +194,27 @@ describe("telegram payment notifications", () => {
         amountInCents: 12345,
       },
       kind: "payment_confirmed",
+      paymentEvent: {
+        receivedAt: "2026-04-22 10:12:19",
+        rawPayload: JSON.stringify({
+          response: {
+            date: "22/04/2026 10:12:19",
+          },
+        }),
+        blockchainTxId: "liquid_tx_alpha_notification_001",
+      },
     });
 
-    expect(message).toContain("Pagamento confirmado em Alpha.");
-    expect(message).toContain("R$");
-    expect(message).toContain("concluído");
+    expect(message).toContain("Pagamento confirmado.");
+    expect(message).toContain("Resumo:");
+    expect(message).toContain("Valor: 123 DePix");
+    expect(message).toContain("Data e hora: 22/04/2026 10:12:19");
+    expect(message).toContain("Transação: https://blockstream.info/liquid/tx/liquid_tx_alpha_notification_001");
+    expect(message).not.toContain("Pix deste pedido");
+    expect(message).not.toContain("000201");
   });
 
-  it("sends a fresh Telegram order message when payment confirmation arrives", async function assertCanonicalMessageSend() {
+  it("sends a text-only receipt without QR when payment confirmation arrives", async function assertCanonicalMessageSend() {
     const db = await seedTelegramNotificationOrder();
     const telegramCalls = [];
 
@@ -247,11 +276,18 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).toContain("/sendMessage");
     expect(telegramCalls[0].payload.chat_id).toBe("telegram_chat_alpha_001");
-    expect(telegramCalls[0].payload.caption).toContain("Pagamento confirmado em Alpha.");
-    expect(telegramCalls[0].payload.caption).toContain("Pix deste pedido:");
-    expect(telegramCalls[0].payload.caption).toContain("0002010102122688pix-alpha-notification-001");
+    expect(telegramCalls[0].payload.text).toContain("Pagamento confirmado.");
+    expect(telegramCalls[0].payload.text).toContain("Resumo:");
+    expect(telegramCalls[0].payload.text).toContain("Valor: 123 DePix");
+    expect(telegramCalls[0].payload.text).toContain("Data e hora: 22/04/2026 10:12:19");
+    expect(telegramCalls[0].payload.text).toContain("Transação: https://blockstream.info/liquid/tx/liquid_tx_alpha_notification_001");
+    expect(telegramCalls[0].payload.text).not.toContain("Pix deste pedido:");
+    expect(telegramCalls[0].payload.text).not.toContain("0002010102122688pix-alpha-notification-001");
+    expect(telegramCalls[0].payload.entities?.some((entity) => entity.type === "bold")).toBe(true);
+    expect(telegramCalls[0].payload).not.toHaveProperty("photo");
+    expect(telegramCalls[0].payload).not.toHaveProperty("caption");
   });
 
   it("does not edit old Telegram messages for duplicate payment confirmations", async function assertCanonicalDuplicateSend() {
@@ -320,11 +356,11 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).toContain("/sendMessage");
     expect(telegramCalls[0].url).not.toContain("/editMessage");
     expect(updatedOrder).toEqual({
       telegramCanonicalMessageId: 45,
-      telegramCanonicalMessageKind: "photo",
+      telegramCanonicalMessageKind: "text",
     });
   });
 
@@ -394,10 +430,10 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).toContain("/sendMessage");
     expect(updatedOrder).toEqual({
       telegramCanonicalMessageId: 88,
-      telegramCanonicalMessageKind: "photo",
+      telegramCanonicalMessageKind: "text",
     });
 
     telegramCalls.length = 0;
@@ -433,7 +469,7 @@ describe("telegram payment notifications", () => {
       kind: "payment_confirmed",
     });
     expect(telegramCalls).toHaveLength(1);
-    expect(telegramCalls[0].url).toContain("/sendPhoto");
+    expect(telegramCalls[0].url).toContain("/sendMessage");
     expect(telegramCalls[0].url).not.toContain("/editMessage");
   });
 });

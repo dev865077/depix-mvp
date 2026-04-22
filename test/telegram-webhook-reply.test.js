@@ -462,6 +462,7 @@ describe("telegram webhook reply flow", () => {
       expect(payload.text).toContain("Esses são meus comandos:");
       expect(payload.text).toContain("/status - consultar seu pedido");
       expect(payload.text).not.toContain("recomecar");
+      expect(payload.entities?.some((entity) => entity.type === "bold")).toBe(true);
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
           {

@@ -2,7 +2,7 @@ import { log } from "../lib/logger.js";
 import { updateOrderById } from "../db/repositories/orders-repository.js";
 
 import type { D1Database } from "@cloudflare/workers-types";
-import type { InlineKeyboardMarkup, Message } from "@grammyjs/types";
+import type { InlineKeyboardMarkup, Message, MessageEntity } from "@grammyjs/types";
 import type { Api, RawApi } from "grammy";
 import type { OrderRecord } from "../types/persistence.js";
 
@@ -11,6 +11,7 @@ export type TelegramCanonicalMessageKind = "text" | "photo";
 type TelegramCanonicalMessagePayload = {
   kind: TelegramCanonicalMessageKind;
   text: string;
+  entities?: MessageEntity[];
   photoUrl?: string | null;
   replyMarkup?: InlineKeyboardMarkup;
 };
@@ -26,9 +27,17 @@ type SyncTelegramCanonicalMessageInput = {
 };
 
 function buildReplyOptions(payload: TelegramCanonicalMessagePayload) {
-  return payload.replyMarkup
-    ? { reply_markup: payload.replyMarkup }
-    : undefined;
+  return {
+    ...(payload.replyMarkup ? { reply_markup: payload.replyMarkup } : {}),
+    ...(payload.entities ? { entities: payload.entities } : {}),
+  };
+}
+
+function buildPhotoReplyOptions(payload: TelegramCanonicalMessagePayload) {
+  return {
+    ...(payload.replyMarkup ? { reply_markup: payload.replyMarkup } : {}),
+    ...(payload.entities ? { caption_entities: payload.entities } : {}),
+  };
 }
 
 async function persistCanonicalMessageMetadata(
@@ -59,7 +68,7 @@ async function sendCanonicalMessage(input: SyncTelegramCanonicalMessageInput) {
     try {
       const message = await input.api.sendPhoto(chatId, input.payload.photoUrl, {
         caption: input.payload.text,
-        ...buildReplyOptions(input.payload),
+        ...buildPhotoReplyOptions(input.payload),
       });
 
       await persistCanonicalMessageMetadata(input.db, input.tenant.tenantId, input.order.orderId, message, "photo");
