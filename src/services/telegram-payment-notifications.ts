@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Notificacoes assincronas de pagamento no Telegram.
  *

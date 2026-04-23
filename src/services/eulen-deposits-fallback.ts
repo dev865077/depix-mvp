@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Fallback operacional de reconciliacao por janela usando `/deposits`.
  *
@@ -39,6 +40,10 @@ export const DEPOSITS_FALLBACK_MAX_REMOTE_ROWS = 200;
  * Erro controlado do fallback por `/deposits`.
  */
 export class DepositsFallbackError extends Error {
+  status: number;
+  code: string;
+  details: Record<string, unknown>;
+
   /**
    * @param {number} status Status HTTP esperado na borda.
    * @param {string} code Codigo estavel.

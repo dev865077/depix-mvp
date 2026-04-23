@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import type { OrderRecord } from "../types/persistence.js";
 
 import { cancelTelegramOpenOrder, getTelegramOpenOrderForUser } from "./order-registration.js";
 
@@ -54,11 +55,11 @@ export async function expireTelegramOpenOrderIfTimedOut(input: {
   timeoutMinutes: number,
   now?: Date,
 }): Promise<{
-  openOrder: Record<string, unknown> | null,
+  openOrder: OrderRecord | null,
   timedOut: boolean,
   cancellationAccepted: boolean,
   cancellationConflict: boolean,
-  canceledOrder: Record<string, unknown> | null,
+  canceledOrder: OrderRecord | null,
 }> {
   const openOrder = await getTelegramOpenOrderForUser({
     db: input.db,
