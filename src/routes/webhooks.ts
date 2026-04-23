@@ -10,6 +10,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { readTenantSecret } from "../config/tenants.js";
 import { jsonError } from "../lib/http.js";
 import { dispatchNonBlockingTask } from "../lib/background-tasks.js";
+import { createWebhookRateLimitMiddleware } from "../middleware/webhook-rate-limit.js";
 import { processEulenDepositWebhook } from "../services/eulen-deposit-webhook.js";
 import { notifyTelegramOrderTransitionSafely } from "../services/telegram-payment-notifications.js";
 import type { AppBindings, AppContext } from "../types/runtime";
@@ -110,4 +111,4 @@ export function handleEulenDepositWebhookProbe(c: AppContext): Response {
 // Este path foi escolhido como borda canonica do webhook por tenant.
 webhooksRouter.get("/eulen/:tenantId/deposit", handleEulenDepositWebhookProbe);
 webhooksRouter.on("HEAD", "/eulen/:tenantId/deposit", handleEulenDepositWebhookProbe);
-webhooksRouter.post("/eulen/:tenantId/deposit", handleEulenDepositWebhook);
+webhooksRouter.post("/eulen/:tenantId/deposit", createWebhookRateLimitMiddleware("eulen_deposit_webhook"), handleEulenDepositWebhook);

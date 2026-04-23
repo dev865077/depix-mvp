@@ -900,7 +900,10 @@ export async function requestEulenApi(
   const url = buildEulenUrl(runtimeConfig.eulenApiBaseUrl, request.path, request.query);
   const timeoutMs = runtimeConfig.eulenApiTimeoutMs;
   const telemetry = request.telemetry;
-  const retryOptions = resolveEulenRetryOptions(request);
+  const resolvedRetryOptions = resolveEulenRetryOptions(request);
+  const retryOptions = runtimeConfig.environment === "local"
+    ? { ...resolvedRetryOptions, initialDelayMs: 0, maxDelayMs: 0 }
+    : resolvedRetryOptions;
   let lastTransientError: EulenApiError | undefined;
 
   log(runtimeConfig, {

@@ -10,6 +10,7 @@ import { readTenantSecret } from "../config/tenants.js";
 import { dispatchNonBlockingTask } from "../lib/background-tasks.js";
 import { jsonError } from "../lib/http.js";
 import { log } from "../lib/logger.js";
+import { createWebhookRateLimitMiddleware } from "../middleware/webhook-rate-limit.js";
 import { ensureTelegramWebhookPublicSurface } from "../services/telegram-webhook-ops.js";
 import { normalizeTelegramWebhookError } from "../telegram/errors.js";
 import { parseTelegramRawUpdateEnvelope } from "../telegram/raw-update.js";
@@ -179,4 +180,4 @@ export async function handleTelegramWebhook(c: AppContext): Promise<Response> {
 
 // O tenant fica no path para evitar ambiguidade operacional e simplificar
 // configuracao de webhook por bot.
-telegramRouter.post("/:tenantId/webhook", handleTelegramWebhook);
+telegramRouter.post("/:tenantId/webhook", createWebhookRateLimitMiddleware("telegram_webhook"), handleTelegramWebhook);
