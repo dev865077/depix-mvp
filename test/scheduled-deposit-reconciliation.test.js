@@ -388,7 +388,7 @@ describe("scheduled deposit reconciliation", () => {
     expect(await countDepositEvents("deposit_failure")).toBe(0);
     expect(await countScheduledClaims("deposit_success")).toBe(0);
     expect(await countScheduledClaims("deposit_failure")).toBe(0);
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
   });
 
   it("continues other tenants when one tenant dependency is missing", async function assertTenantFailureIsolation() {

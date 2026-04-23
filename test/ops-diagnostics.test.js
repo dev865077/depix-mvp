@@ -129,11 +129,11 @@ describe("ops diagnostics routes", () => {
 
   it("includes async mode in structured Eulen diagnostic failures", async function assertEulenErrorIncludesAsyncMode() {
     const app = createApp();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => (
       new Response("error code: 520", {
         status: 520,
-      }),
-    );
+      })
+    ));
 
     const { response, body } = await requestJson(
       app,
@@ -264,11 +264,11 @@ describe("ops diagnostics routes", () => {
 
   it("accepts SideSwap liquid confidential split addresses and removes visual spacing", async function assertSideSwapSplitAddressFormat() {
     const app = createApp();
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => (
       new Response("error code: 520", {
         status: 520,
-      }),
-    );
+      })
+    ));
 
     const { response, body } = await requestJson(
       app,
@@ -290,7 +290,7 @@ describe("ops diagnostics routes", () => {
     );
     const eulenPayload = JSON.parse(fetchSpy.mock.calls[0][1].body);
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(eulenPayload.depixSplitAddress).toBe(MOCK_LIQUID_CONFIDENTIAL_SPLIT_ADDRESS);
     expect(response.status).toBe(502);
     expect(body.error.code).toBe("eulen_api_request_failed");
