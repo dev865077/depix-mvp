@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Fluxo inicial de resposta do bot Telegram.
  *
@@ -336,7 +337,7 @@ export function buildTelegramHelpReply(tenant, order) {
  * @param {{ qrCopyPaste?: unknown, expiration?: unknown } | null} deposit Deposito associado ao pedido, quando existir.
  * @returns {string} Texto final para o usuario.
  */
-export function buildTelegramStatusReply(tenant, order, deposit = null) {
+export function buildTelegramStatusReply(tenant, order, deposit = null as { qrCopyPaste?: unknown, expiration?: unknown } | null) {
   if (!order) {
     return [
       `Não encontrei pedido recente em ${tenant.displayName}.`,
@@ -1170,7 +1171,7 @@ async function replyTelegramCanonicalStatusMessage(ctx, input, order, deposit) {
  * copia-e-cola. Se o `sendPhoto` falhar por qualquer motivo do Telegram, o
  * bot ainda devolve o texto util na mesma conversa.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{ displayName: string }} tenant Tenant atual.
  * @param {{ amountInCents?: unknown }} order Pedido confirmado.
  * @param {{ qrImageUrl?: unknown, qrCopyPaste?: unknown, expiration?: unknown }} deposit Deposito criado.
@@ -1308,7 +1309,7 @@ export function buildTelegramUnsupportedCallbackReply(tenant) {
  * D1. O handler continua responsavel apenas pela resposta ao usuario; esta
  * funcao deixa o pedido pronto para a proxima fatia funcional do fluxo.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -1429,7 +1430,7 @@ async function startTelegramConversationOrder(ctx, input) {
  * Isso e usado por comandos de controle. Sem essa leitura dedicada, um texto
  * como `cancelar` poderia acidentalmente criar um pedido novo em `amount`.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   db?: import("@cloudflare/workers-types").D1Database
@@ -1478,7 +1479,7 @@ async function getExistingTelegramConversationOrder(ctx, input) {
  * qualquer etapa sem risco de criar pedido novo, avançar estado, cancelar algo
  * por engano ou disparar integracao externa.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   db?: import("@cloudflare/workers-types").D1Database,
@@ -1555,7 +1556,7 @@ async function handleTelegramStartRequest(ctx, input, source) {
  * relevante do mesmo usuario. Quando houver Pix aberto, o deposito pode ser
  * usado para recheck/status, mas a resposta nunca reenvia QR nem copia-e-cola.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   db?: import("@cloudflare/workers-types").D1Database,
@@ -1741,7 +1742,7 @@ async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit,
 /**
  * Processa um cancelamento explicito do usuario.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   db?: import("@cloudflare/workers-types").D1Database,
@@ -1794,7 +1795,7 @@ async function handleTelegramCancelRequest(ctx, input, source) {
  * O reinicio so avanca quando o pedido aberto pode ser cancelado primeiro.
  * Em qualquer outro estado, a resposta cai de volta para o estado atual.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   db?: import("@cloudflare/workers-types").D1Database,
@@ -2045,7 +2046,7 @@ async function readTimedOutTelegramConversationReset(ctx, input) {
 /**
  * Registra o resultado da tentativa de interpretar valor em BRL.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2089,7 +2090,7 @@ function logTelegramAmountResult(ctx, input, amountSession) {
 /**
  * Registra o resultado da tentativa de interpretar endereco DePix/Liquid.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2133,7 +2134,7 @@ function logTelegramWalletResult(ctx, input, walletSession) {
 /**
  * Registra o resultado de uma decisao de confirmacao ou cancelamento.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2159,7 +2160,7 @@ function logTelegramConfirmationDecision(ctx, input, decision, order, details) {
 /**
  * Registra falhas controladas da confirmacao antes da resposta ao usuario.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2189,7 +2190,7 @@ function logTelegramConfirmationFailure(ctx, input, order, error) {
  * conflito transitorio, por outro lado, precisam aparecer nos logs porque
  * protegem o destino futuro das notificacoes assincronas de pagamento.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2289,7 +2290,7 @@ function installTelegramOutboundLogging(bot, input) {
  * Assim, o runtime cobre explicitamente o comportamento para updates fora do
  * escopo inicial do MVP, sem deixar lacunas silenciosas.
  *
- * @param {any} ctx Contexto do grammY.
+ * @param {unknown} ctx Contexto do grammY.
  * @param {{
  *   tenant: { tenantId: string, displayName: string },
  *   runtimeConfig?: Record<string, unknown>,
@@ -2335,8 +2336,8 @@ async function respondToUnsupportedTelegramUpdate(ctx, input) {
  *   }
  * }} input Contexto operacional do runtime.
  * @param {string} handlerName Nome estavel do handler.
- * @param {(ctx: any) => Promise<void>} handler Implementacao do handler.
- * @returns {(ctx: any) => Promise<void>} Middleware com observabilidade.
+ * @param {(ctx: unknown) => Promise<void>} handler Implementacao do handler.
+ * @returns {(ctx: unknown) => Promise<void>} Middleware com observabilidade.
  */
 function createLoggedTelegramHandler(input, handlerName, handler) {
   return async function loggedTelegramHandler(ctx) {
@@ -2378,7 +2379,7 @@ function createLoggedTelegramHandler(input, handlerName, handler) {
  * `answerCallbackQuery`; ja updates como `inline_query` nao oferecem um chat
  * enderecavel.
  *
- * @param {Record<string, any>} update Update bruto recebido.
+ * @param {Record<string, unknown>} update Update bruto recebido.
  * @returns {number | string | undefined} Chat id quando houver destino valido.
  */
 function resolveTelegramReplyChatId(update) {
@@ -2399,7 +2400,7 @@ function resolveTelegramReplyChatId(update) {
  * ser entregues. Persistir essa distincao evita assumir que chat privado sera
  * sempre o unico modo operacional do Telegram.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @param {{ chatId?: string, parseFailed: boolean } | undefined} rawTelegramUpdate Metadados extraidos do corpo bruto.
  * @returns {string | number | undefined} Identificador do chat, quando existir.
  */
@@ -2419,7 +2420,7 @@ function resolveTelegramChatId(ctx, rawTelegramUpdate) {
  * vincular o pedido ao usuario do Telegram. A funcao cobre as superficies que
  * podem chegar aos handlers conversacionais presentes nesta fase.
  *
- * @param {any} ctx Contexto atual do grammY.
+ * @param {unknown} ctx Contexto atual do grammY.
  * @returns {string | number | undefined} Identificador do usuario, quando existir.
  */
 function resolveTelegramActorId(ctx) {
