@@ -19,6 +19,8 @@ export const ORDER_PROGRESS_STATES = Object.freeze({
   MANUAL_REVIEW: "manual_review",
 });
 
+export type OrderProgressState = typeof ORDER_PROGRESS_STATES[keyof typeof ORDER_PROGRESS_STATES];
+
 export const ORDER_PROGRESS_EVENTS = Object.freeze({
   START_ORDER: "START_ORDER",
   AMOUNT_RECEIVED: "AMOUNT_RECEIVED",
@@ -29,6 +31,8 @@ export const ORDER_PROGRESS_EVENTS = Object.freeze({
   FAIL_ORDER: "FAIL_ORDER",
   CANCEL_ORDER: "CANCEL_ORDER",
 });
+
+export type OrderProgressEvent = typeof ORDER_PROGRESS_EVENTS[keyof typeof ORDER_PROGRESS_EVENTS];
 
 export const ORDER_STATUS_BY_STEP = Object.freeze({
   [ORDER_PROGRESS_STATES.DRAFT]: "draft",
@@ -43,6 +47,8 @@ export const ORDER_STATUS_BY_STEP = Object.freeze({
   [ORDER_PROGRESS_STATES.MANUAL_REVIEW]: "under_review",
 });
 
+export type OrderStatusByStep = typeof ORDER_STATUS_BY_STEP[keyof typeof ORDER_STATUS_BY_STEP];
+
 export const ORDER_PROGRESS_LEGACY_STEP_ALIASES = Object.freeze({
   awaiting_amount: ORDER_PROGRESS_STATES.AMOUNT,
   collecting_amount: ORDER_PROGRESS_STATES.AMOUNT,
@@ -54,6 +60,8 @@ export const ORDER_PROGRESS_LEGACY_STEP_ALIASES = Object.freeze({
   pending_payment: ORDER_PROGRESS_STATES.AWAITING_PAYMENT,
   paid: ORDER_PROGRESS_STATES.COMPLETED,
 });
+
+type LegacyOrderProgressStep = keyof typeof ORDER_PROGRESS_LEGACY_STEP_ALIASES;
 
 /**
  * Passos canonicos que encerram a parte editavel do pedido.
@@ -69,7 +77,7 @@ export const ORDER_PROGRESS_TERMINAL_STATES = Object.freeze([
   ORDER_PROGRESS_STATES.MANUAL_REVIEW,
 ]);
 
-const ORDER_PROGRESS_TERMINAL_STATE_SET = new Set(ORDER_PROGRESS_TERMINAL_STATES);
+const ORDER_PROGRESS_TERMINAL_STATE_SET = new Set<string>(ORDER_PROGRESS_TERMINAL_STATES);
 
 /**
  * Valores persistidos que devem ser ignorados por lookups de pedido aberto.
@@ -91,8 +99,14 @@ export const ORDER_PROGRESS_TERMINAL_LOOKUP_STEPS = Object.freeze([
  * @param {unknown} currentStep Passo persistido em `orders.current_step`.
  * @returns {unknown} Passo canonico quando o valor for alias conhecido.
  */
-export function normalizePersistedOrderProgressStep(currentStep) {
-  return ORDER_PROGRESS_LEGACY_STEP_ALIASES[currentStep] ?? currentStep;
+function isLegacyOrderProgressStep(currentStep: string): currentStep is LegacyOrderProgressStep {
+  return Object.hasOwn(ORDER_PROGRESS_LEGACY_STEP_ALIASES, currentStep);
+}
+
+export function normalizePersistedOrderProgressStep(currentStep: unknown): unknown {
+  return typeof currentStep === "string" && isLegacyOrderProgressStep(currentStep)
+    ? ORDER_PROGRESS_LEGACY_STEP_ALIASES[currentStep]
+    : currentStep;
 }
 
 /**
@@ -101,7 +115,9 @@ export function normalizePersistedOrderProgressStep(currentStep) {
  * @param {unknown} currentStep Passo persistido em `orders.current_step`.
  * @returns {boolean} Verdadeiro quando o passo encerra o fluxo editavel.
  */
-export function isTerminalOrderProgressStep(currentStep) {
-  return typeof currentStep === "string"
-    && ORDER_PROGRESS_TERMINAL_STATE_SET.has(normalizePersistedOrderProgressStep(currentStep));
+export function isTerminalOrderProgressStep(currentStep: unknown): boolean {
+  const normalizedStep = normalizePersistedOrderProgressStep(currentStep);
+
+  return typeof normalizedStep === "string"
+    && ORDER_PROGRESS_TERMINAL_STATE_SET.has(normalizedStep);
 }

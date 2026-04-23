@@ -20,9 +20,54 @@ const REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS = [
 
 const OPTIONAL_TENANT_OPS_BINDING_KEYS = [
   "depositRecheckBearerToken",
-];
+] as const;
 
 const DEFAULT_TENANT_REGISTRY_STAGE = "initial_materialization";
+
+type TenantRegistryValidationReason =
+  | "missing_required_key"
+  | "invalid_type"
+  | "empty_binding_name"
+  | "malformed_tenant"
+  | "invalid_json"
+  | "empty_registry";
+
+type TenantRegistryValidationStage = "initial_materialization" | "tenant_lookup";
+
+type ValidationContext = Readonly<{
+  tenantId: string | null;
+  stage: TenantRegistryValidationStage;
+}>;
+
+export type TenantSecretBindingKey =
+  | "telegramBotToken"
+  | "telegramWebhookSecret"
+  | "eulenApiToken"
+  | "eulenWebhookSecret";
+
+export type TenantSplitConfigBindings = Readonly<{
+  depixSplitAddress: string;
+  splitFee: string;
+}>;
+
+export type TenantOpsBindings = Readonly<{
+  depositRecheckBearerToken?: string;
+}>;
+
+export type TenantConfig = Readonly<{
+  tenantId: string;
+  displayName: string;
+  eulenPartnerId?: string;
+  splitConfigBindings: TenantSplitConfigBindings;
+  opsBindings: TenantOpsBindings;
+  secretBindings: Record<TenantSecretBindingKey, string>;
+}>;
+
+export type TenantRegistry = Record<string, TenantConfig>;
+
+type SecretBindingValue = {
+  get: () => Promise<unknown>;
+};
 
 /**
  * Erro canonico para falhas de contrato do TENANT_REGISTRY.
@@ -36,7 +81,18 @@ export class TenantRegistryValidationError extends Error {
    *   stage: "initial_materialization" | "tenant_lookup"
    * }} input Dados estruturados do erro.
    */
-  constructor({ tenantId, field, reason, stage }) {
+  code: "invalid_tenant_registry";
+  tenantId: string | null;
+  field: string;
+  reason: TenantRegistryValidationReason;
+  stage: TenantRegistryValidationStage;
+
+  constructor({ tenantId, field, reason, stage }: Readonly<{
+    tenantId: string | null;
+    field: string;
+    reason: TenantRegistryValidationReason;
+    stage: TenantRegistryValidationStage;
+  }>) {
     super(`Invalid tenant registry: ${field} (${reason})`);
     this.name = "TenantRegistryValidationError";
     this.code = "invalid_tenant_registry";
@@ -57,15 +113,22 @@ export class TenantRegistryValidationError extends Error {
   }
 }
 
-function isPlainObject(value) {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function createValidationContext(tenantId, stage = DEFAULT_TENANT_REGISTRY_STAGE) {
+function createValidationContext(
+  tenantId: string | null,
+  stage: TenantRegistryValidationStage = DEFAULT_TENANT_REGISTRY_STAGE,
+): ValidationContext {
   return { tenantId, stage };
 }
 
-function throwTenantRegistryValidationError(context, field, reason) {
+function throwTenantRegistryValidationError(
+  context: ValidationContext,
+  field: string,
+  reason: TenantRegistryValidationReason,
+): never {
   throw new TenantRegistryValidationError({
     tenantId: context.tenantId,
     field,
@@ -85,7 +148,7 @@ function throwTenantRegistryValidationError(context, field, reason) {
  * @param {string} field Caminho logico do campo.
  * @returns {Record<string, unknown>} Objeto validado.
  */
-function assertTenantObject(value, field, context) {
+function assertTenantObject(value: unknown, field: string, context: ValidationContext): Record<string, unknown> {
   if (typeof value === "undefined") {
     throwTenantRegistryValidationError(context, field, "missing_required_key");
   }
@@ -104,7 +167,7 @@ function assertTenantObject(value, field, context) {
  * @param {string} field Caminho logico do campo.
  * @returns {string} Texto limpo e valido.
  */
-function assertTenantString(value, field, context) {
+function assertTenantString(value: unknown, field: string, context: ValidationContext): string {
   if (typeof value === "undefined") {
     throwTenantRegistryValidationError(context, field, "missing_required_key");
   }
@@ -133,7 +196,13 @@ function assertTenantString(value, field, context) {
  * @param {string[]} requiredKeys Chaves obrigatorias esperadas.
  * @returns {Record<string, string>} Mapa de bindings normalizado.
  */
-function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys, stage) {
+function normalizeTenantBindingMap<Key extends string>(
+  tenantId: string,
+  input: unknown,
+  registryField: string,
+  requiredKeys: readonly Key[],
+  stage: TenantRegistryValidationStage,
+): Record<Key, string> {
   const context = createValidationContext(tenantId, stage);
   const bindingMap = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}.${registryField}`, context);
 
@@ -146,7 +215,7 @@ function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys,
         context,
       ),
     ]),
-  );
+  ) as Record<Key, string>;
 }
 
 /**
@@ -161,10 +230,18 @@ function normalizeTenantBindingMap(tenantId, input, registryField, requiredKeys,
  * @param {Record<string, unknown>} input Conteudo bruto dos bindings de split.
  * @returns {{ depixSplitAddress: string, splitFee: string }} Bindings validados.
  */
-function normalizeTenantSplitConfigBindings(tenantId, input, stage) {
-  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (
-    normalizeTenantBindingMap(tenantId, input, "splitConfigBindings", REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS, stage)
-  );
+function normalizeTenantSplitConfigBindings(
+  tenantId: string,
+  input: unknown,
+  stage: TenantRegistryValidationStage,
+): TenantSplitConfigBindings {
+  return normalizeTenantBindingMap(
+    tenantId,
+    input,
+    "splitConfigBindings",
+    REQUIRED_TENANT_SPLIT_CONFIG_BINDINGS,
+    stage,
+  ) as TenantSplitConfigBindings;
 }
 
 /**
@@ -179,7 +256,11 @@ function normalizeTenantSplitConfigBindings(tenantId, input, stage) {
  * @param {unknown} input Conteudo bruto dos bindings operacionais.
  * @returns {{ depositRecheckBearerToken?: string }} Bindings opcionais validados.
  */
-function normalizeTenantOpsBindings(tenantId, input, stage) {
+function normalizeTenantOpsBindings(
+  tenantId: string,
+  input: unknown,
+  stage: TenantRegistryValidationStage,
+): TenantOpsBindings {
   if (typeof input === "undefined") {
     return {};
   }
@@ -200,7 +281,7 @@ function normalizeTenantOpsBindings(tenantId, input, stage) {
         assertTenantString(bindingValue, `TENANT_REGISTRY.${tenantId}.opsBindings.${bindingKey}`, context),
       ]];
     }),
-  );
+  ) as TenantOpsBindings;
 }
 
 /**
@@ -230,7 +311,11 @@ function normalizeTenantOpsBindings(tenantId, input, stage) {
  *   secretBindings: Record<string, string>
  * }} Tenant validado.
  */
-function normalizeTenantConfig(tenantId, input, stage = DEFAULT_TENANT_REGISTRY_STAGE) {
+function normalizeTenantConfig(
+  tenantId: string,
+  input: unknown,
+  stage: TenantRegistryValidationStage = DEFAULT_TENANT_REGISTRY_STAGE,
+): TenantConfig {
   const context = createValidationContext(tenantId, stage);
   const tenantConfig = assertTenantObject(input, `TENANT_REGISTRY.${tenantId}`, context);
   const displayName = typeof tenantConfig.displayName === "undefined"
@@ -261,7 +346,10 @@ function normalizeTenantConfig(tenantId, input, stage = DEFAULT_TENANT_REGISTRY_
  * @param {Record<string, unknown>} env Bindings do Worker.
  * @returns {Record<string, ReturnType<typeof normalizeTenantConfig>>} Registro de tenants pronto para uso.
  */
-export function readTenantRegistry(env, options = {}) {
+export function readTenantRegistry(
+  env: Record<string, unknown>,
+  options: Readonly<{ stage?: TenantRegistryValidationStage }> = {},
+): TenantRegistry {
   const stage = options.stage ?? DEFAULT_TENANT_REGISTRY_STAGE;
   const context = createValidationContext(null, stage);
   const rawRegistry = env.TENANT_REGISTRY;
@@ -307,7 +395,7 @@ export function readTenantRegistry(env, options = {}) {
  * @param {string} path Caminho da requisicao atual.
  * @returns {string | undefined} Tenant identificado no path, se existir.
  */
-export function resolveTenantIdFromPath(path) {
+export function resolveTenantIdFromPath(path: string): string | undefined {
   const tenantPathPatterns = [
     /^\/telegram\/([^/]+)\/webhook$/,
     /^\/webhooks\/eulen\/([^/]+)\/deposit$/,
@@ -338,7 +426,11 @@ export function resolveTenantIdFromPath(path) {
  * @param {string | undefined} tenantHeader Header alternativo para operacoes internas.
  * @returns {ReturnType<typeof normalizeTenantConfig> | undefined} Tenant encontrado.
  */
-export function resolveTenantFromRequest(runtimeConfig, path, tenantHeader) {
+export function resolveTenantFromRequest(
+  runtimeConfig: Readonly<{ tenants: TenantRegistry }>,
+  path: string,
+  tenantHeader?: string,
+): TenantConfig | undefined {
   const resolvedTenantId = resolveTenantIdFromPath(path) ?? tenantHeader;
 
   if (!resolvedTenantId) {
@@ -365,14 +457,18 @@ export function resolveTenantFromRequest(runtimeConfig, path, tenantHeader) {
  * @param {string} bindingName Nome do binding secreto configurado para o tenant.
  * @returns {Promise<string>} Valor do segredo.
  */
-export async function readSecretBindingValue(env, bindingName) {
+function isSecretStoreBinding(binding: unknown): binding is SecretBindingValue {
+  return Boolean(binding && typeof binding === "object" && "get" in binding && typeof binding.get === "function");
+}
+
+export async function readSecretBindingValue(env: Record<string, unknown>, bindingName: string): Promise<string> {
   const binding = env[bindingName];
 
   if (typeof binding === "string" && binding.trim().length > 0) {
     return binding.trim();
   }
 
-  if (binding && typeof binding === "object" && typeof binding.get === "function") {
+  if (isSecretStoreBinding(binding)) {
     const value = await binding.get();
 
     if (typeof value === "string" && value.trim().length > 0) {
@@ -392,7 +488,12 @@ export async function readSecretBindingValue(env, bindingName) {
  * @param {string} key Chave logica procurada.
  * @returns {string} Nome do binding no runtime.
  */
-function resolveTenantBindingName(bindingMap, tenantId, groupName, key) {
+function resolveTenantBindingName(
+  bindingMap: Readonly<Record<string, string>> | undefined,
+  tenantId: string,
+  groupName: string,
+  key: string,
+): string {
   const bindingName = bindingMap?.[key];
 
   if (typeof bindingName !== "string" || bindingName.trim().length === 0) {
@@ -412,15 +513,18 @@ function resolveTenantBindingName(bindingMap, tenantId, groupName, key) {
  * @param {Record<string, string>} bindingMap Mapa logico -> nome do binding.
  * @returns {Promise<Record<string, string>>} Mapa logico -> valor secreto.
  */
-async function readBindingMapValues(env, bindingMap) {
+async function readBindingMapValues<Key extends string>(
+  env: Record<string, unknown>,
+  bindingMap: Readonly<Record<Key, string>>,
+): Promise<Record<Key, string>> {
   const entries = await Promise.all(
-    Object.entries(bindingMap).map(async ([key, bindingName]) => [
+    (Object.keys(bindingMap) as Key[]).map(async (key) => [
       key,
-      await readSecretBindingValue(env, bindingName),
+      await readSecretBindingValue(env, bindingMap[key]),
     ]),
   );
 
-  return Object.fromEntries(entries);
+  return Object.fromEntries(entries) as Record<Key, string>;
 }
 
 /**
@@ -435,7 +539,11 @@ async function readBindingMapValues(env, bindingMap) {
  * @param {string} secretKey Chave logica do segredo no tenant.
  * @returns {Promise<string>} Valor do segredo solicitado.
  */
-export async function readTenantSecret(env, tenantConfig, secretKey) {
+export async function readTenantSecret(
+  env: Record<string, unknown>,
+  tenantConfig: TenantConfig,
+  secretKey: TenantSecretBindingKey,
+): Promise<string> {
   const tenantId = tenantConfig?.tenantId ?? "unknown";
   const bindingName = resolveTenantBindingName(tenantConfig?.secretBindings, tenantId, "secretBindings", secretKey);
 
@@ -453,10 +561,13 @@ export async function readTenantSecret(env, tenantConfig, secretKey) {
  * @param {ReturnType<typeof normalizeTenantConfig>} tenantConfig Tenant ja resolvido.
  * @returns {Promise<{ depixSplitAddress: string, splitFee: string }>} Split real materializado.
  */
-export async function readTenantSplitConfig(env, tenantConfig) {
+export async function readTenantSplitConfig(
+  env: Record<string, unknown>,
+  tenantConfig: TenantConfig,
+): Promise<Record<keyof TenantSplitConfigBindings, string>> {
   const splitConfig = await readBindingMapValues(env, tenantConfig.splitConfigBindings);
 
-  return /** @type {{ depixSplitAddress: string, splitFee: string }} */ (splitConfig);
+  return splitConfig;
 }
 
 /**
@@ -466,8 +577,11 @@ export async function readTenantSplitConfig(env, tenantConfig) {
  * @param {ReturnType<typeof normalizeTenantConfig>} tenantConfig Tenant ja resolvido.
  * @returns {Promise<Record<string, string>>} Segredos carregados do tenant.
  */
-export async function readTenantSecrets(env, tenantConfig) {
+export async function readTenantSecrets(
+  env: Record<string, unknown>,
+  tenantConfig: TenantConfig,
+): Promise<Record<TenantSecretBindingKey, string>> {
   const secrets = await readBindingMapValues(env, tenantConfig.secretBindings);
 
-  return /** @type {any} */ (secrets);
+  return secrets;
 }
