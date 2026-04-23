@@ -86,12 +86,9 @@ maior risco, mas ainda ha arquivos JavaScript com razao pratica para permanecer:
 
 Lista curta de excecoes de runtime ainda existentes em `src/`:
 
-- `src/config/runtime.js`
-- `src/config/tenants.js`
 - `src/lib/background-tasks.js`
 - `src/lib/logger.js`
 - `src/middleware/request-context.js`
-- `src/order-flow/order-progress-constants.js`
 - `src/services/eulen-deposit-recheck.js`
 - `src/services/eulen-deposits-fallback.js`
 - `src/services/local-diagnostic-validation.js`

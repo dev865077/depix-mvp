@@ -6,7 +6,22 @@
  * seguro da configuracao, sem nunca expor valores sensiveis.
  */
 import { readTenantRegistry } from "./tenants.js";
+import type { TenantRegistry } from "./tenants.js";
 import { readTelegramOpenOrderTimeoutMinutes } from "../services/telegram-conversation-timeout.js";
+
+type AppEnvironment = "local" | "test" | "production";
+type LogLevel = "debug" | "info" | "warn" | "error";
+type OpsRouteState = "ready" | "disabled" | "invalid_config" | "missing_secret";
+type ScheduledReconciliationState = "ready" | "disabled" | "invalid_config" | "missing_database" | "missing_secret";
+type BooleanFlagState = Readonly<{
+  configured: boolean;
+  recognized: boolean;
+  rawValue: string | null;
+}>;
+type SecretStoreBinding = Readonly<{
+  get: () => Promise<unknown>;
+}>;
+type RuntimeEnv = Record<string, unknown>;
 
 const APP_ENVIRONMENTS = new Set(["local", "test", "production"]);
 const LOG_LEVELS = new Set(["debug", "info", "warn", "error"]);
@@ -22,12 +37,22 @@ const FALSE_BOOLEAN_BINDING_VALUES = new Set(["false", "0", "no", "off", ""]);
  * @param {unknown} binding Binding bruto no env.
  * @returns {boolean} Verdadeiro quando o binding existe de forma utilizavel.
  */
-function isSecretBindingConfigured(binding) {
+function isSecretStoreBinding(binding: unknown): binding is SecretStoreBinding {
+  return Boolean(binding && typeof binding === "object" && "get" in binding && typeof binding.get === "function");
+}
+
+function readOptionalStringBinding(env: RuntimeEnv, key: string): string | undefined {
+  const value = env[key];
+
+  return typeof value === "string" ? value : undefined;
+}
+
+function isSecretBindingConfigured(binding: unknown): boolean {
   if (typeof binding === "string") {
     return binding.trim().length > 0;
   }
 
-  return Boolean(binding && typeof binding === "object" && typeof binding.get === "function");
+  return isSecretStoreBinding(binding);
 }
 
 /**
@@ -41,7 +66,7 @@ function isSecretBindingConfigured(binding) {
  * @param {Record<string, { opsBindings?: { depositRecheckBearerToken?: string } }>} tenants Registro de tenants.
  * @returns {number} Quantidade de overrides declarados sem segredo valido.
  */
-function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
+function countInvalidTenantScopedDepositRecheckOverrides(env: RuntimeEnv, tenants: TenantRegistry): number {
   return Object.values(tenants).filter((tenant) => {
     const bindingName = tenant.opsBindings?.depositRecheckBearerToken;
 
@@ -64,7 +89,11 @@ function countInvalidTenantScopedDepositRecheckOverrides(env, tenants) {
  * @param {boolean} globalBearerBindingConfigured Se o token global existe no ambiente.
  * @returns {"ready" | "disabled" | "invalid_config" | "missing_secret"} Estado global redigido.
  */
-export function describeOpsRouteState(featureFlag, enabled, globalBearerBindingConfigured) {
+export function describeOpsRouteState(
+  featureFlag: BooleanFlagState,
+  enabled: boolean,
+  globalBearerBindingConfigured: boolean,
+): OpsRouteState {
   if (featureFlag.configured && !featureFlag.recognized) {
     return "invalid_config";
   }
@@ -96,11 +125,11 @@ export const describeDepositRecheckState = describeOpsRouteState;
  * @returns {"ready" | "disabled" | "invalid_config" | "missing_database" | "missing_secret"} Estado global redigido.
  */
 export function describeScheduledDepositReconciliationState(
-  featureFlag,
-  enabled,
-  databaseBindingConfigured,
-  tenantSecretBindingsConfigured,
-) {
+  featureFlag: BooleanFlagState,
+  enabled: boolean,
+  databaseBindingConfigured: boolean,
+  tenantSecretBindingsConfigured: boolean,
+): ScheduledReconciliationState {
   if (featureFlag.configured && !featureFlag.recognized) {
     return "invalid_config";
   }
@@ -131,7 +160,7 @@ export function describeScheduledDepositReconciliationState(
  * @param {string} key Nome do binding para mensagens de erro.
  * @returns {boolean} Flag normalizada.
  */
-export function readBooleanFlag(value, key) {
+export function readBooleanFlag(value: string | undefined, key: string): boolean {
   if (typeof value === "undefined") {
     return false;
   }
@@ -158,7 +187,7 @@ export function readBooleanFlag(value, key) {
  * @param {string | undefined} value Valor bruto do runtime.
  * @returns {{ configured: boolean, recognized: boolean, rawValue: string | null }}
  */
-export function describeBooleanFlagState(value) {
+export function describeBooleanFlagState(value: string | undefined): BooleanFlagState {
   if (typeof value === "undefined") {
     return {
       configured: false,
@@ -184,7 +213,7 @@ export function describeBooleanFlagState(value) {
  * @param {string} key Nome do binding para mensagem de erro.
  * @returns {string} Valor validado.
  */
-export function assertRequiredString(value, key) {
+export function assertRequiredString(value: string | undefined, key: string): string {
   if (!value || value.trim().length === 0) {
     throw new Error(`Missing required binding: ${key}`);
   }
@@ -199,7 +228,7 @@ export function assertRequiredString(value, key) {
  * @param {string} key Nome do binding para mensagem de erro.
  * @returns {number} Numero inteiro positivo.
  */
-export function assertPositiveInteger(value, key) {
+export function assertPositiveInteger(value: string | undefined, key: string): number {
   const parsedValue = Number.parseInt(assertRequiredString(value, key), 10);
 
   if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
@@ -218,7 +247,7 @@ export function assertPositiveInteger(value, key) {
  * - tenants registrados
  * - indicadores de bindings sensiveis configurados
  *
- * @param {Record<string, any>} env Bindings recebidos do Worker.
+ * @param {Record<string, unknown>} env Bindings recebidos do Worker.
  * @returns {{
  *   appName: string,
  *   environment: "local" | "test" | "production",
@@ -290,13 +319,15 @@ export function assertPositiveInteger(value, key) {
  *   }
  * }} Configuracao consolidada do runtime.
  */
-export function readRuntimeConfig(env) {
-  const appName = assertRequiredString(env.APP_NAME, "APP_NAME");
-  const rawEnvironment = assertRequiredString(env.APP_ENV, "APP_ENV");
-  const rawLogLevel = assertRequiredString(env.LOG_LEVEL, "LOG_LEVEL");
-  const eulenApiBaseUrl = assertRequiredString(env.EULEN_API_BASE_URL, "EULEN_API_BASE_URL");
-  const eulenApiTimeoutMs = assertPositiveInteger(env.EULEN_API_TIMEOUT_MS, "EULEN_API_TIMEOUT_MS");
-  const telegramOpenOrderTimeoutMinutes = readTelegramOpenOrderTimeoutMinutes(env.TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES);
+export function readRuntimeConfig(env: RuntimeEnv) {
+  const appName = assertRequiredString(readOptionalStringBinding(env, "APP_NAME"), "APP_NAME");
+  const rawEnvironment = assertRequiredString(readOptionalStringBinding(env, "APP_ENV"), "APP_ENV");
+  const rawLogLevel = assertRequiredString(readOptionalStringBinding(env, "LOG_LEVEL"), "LOG_LEVEL");
+  const eulenApiBaseUrl = assertRequiredString(readOptionalStringBinding(env, "EULEN_API_BASE_URL"), "EULEN_API_BASE_URL");
+  const eulenApiTimeoutMs = assertPositiveInteger(readOptionalStringBinding(env, "EULEN_API_TIMEOUT_MS"), "EULEN_API_TIMEOUT_MS");
+  const telegramOpenOrderTimeoutMinutes = readTelegramOpenOrderTimeoutMinutes(
+    readOptionalStringBinding(env, "TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES"),
+  );
 
   if (!APP_ENVIRONMENTS.has(rawEnvironment)) {
     throw new Error(`Invalid APP_ENV value: ${rawEnvironment}`);
@@ -311,19 +342,27 @@ export function readRuntimeConfig(env) {
     Object.values(tenant.secretBindings).every(Boolean)
     && Object.values(tenant.splitConfigBindings).every(Boolean)
   ));
-  const depositRecheckEnabled = readBooleanFlag(env.ENABLE_OPS_DEPOSIT_RECHECK, "ENABLE_OPS_DEPOSIT_RECHECK");
-  const depositRecheckFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSIT_RECHECK);
+  const environment = rawEnvironment as AppEnvironment;
+  const logLevel = rawLogLevel as LogLevel;
+  const depositRecheckBinding = readOptionalStringBinding(env, "ENABLE_OPS_DEPOSIT_RECHECK");
+  const depositsFallbackBinding = readOptionalStringBinding(env, "ENABLE_OPS_DEPOSITS_FALLBACK");
+  const scheduledDepositReconciliationBinding = readOptionalStringBinding(
+    env,
+    "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION",
+  );
+  const depositRecheckEnabled = readBooleanFlag(depositRecheckBinding, "ENABLE_OPS_DEPOSIT_RECHECK");
+  const depositRecheckFlagState = describeBooleanFlagState(depositRecheckBinding);
   const depositsFallbackEnabled = readBooleanFlag(
-    env.ENABLE_OPS_DEPOSITS_FALLBACK,
+    depositsFallbackBinding,
     "ENABLE_OPS_DEPOSITS_FALLBACK",
   );
-  const depositsFallbackFlagState = describeBooleanFlagState(env.ENABLE_OPS_DEPOSITS_FALLBACK);
+  const depositsFallbackFlagState = describeBooleanFlagState(depositsFallbackBinding);
   const scheduledDepositReconciliationEnabled = readBooleanFlag(
-    env.ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION,
+    scheduledDepositReconciliationBinding,
     "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION",
   );
   const scheduledDepositReconciliationFlagState = describeBooleanFlagState(
-    env.ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION,
+    scheduledDepositReconciliationBinding,
   );
   const databaseBindingConfigured = Boolean(env.DB);
   const globalBearerBindingConfigured = isSecretBindingConfigured(env.OPS_ROUTE_BEARER_TOKEN);
@@ -347,8 +386,8 @@ export function readRuntimeConfig(env) {
 
   return {
     appName,
-    environment: rawEnvironment,
-    logLevel: rawLogLevel,
+    environment,
+    logLevel,
     eulenApiBaseUrl,
     eulenApiTimeoutMs,
     telegramOpenOrderTimeoutMinutes,
