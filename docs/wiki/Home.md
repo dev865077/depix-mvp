@@ -72,16 +72,12 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - os prompts controlados pelo repositorio ficam auditaveis em [Automacoes e Prompts](Automacoes-e-Prompts)
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar
-- o modulo da maquina de progresso de pedidos foi migrado para TypeScript estrito, mantendo o contrato de transicao e os consumidores com importacao minima
-- o ponto de entrada JavaScript da maquina continua carregavel em Node para compatibilidade com consumidores existentes
-- o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa
-- a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
-- a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normalizando e persistindo o endereco antes de seguir para `confirmation`
-- o webhook da Eulen ja valida e idempotentiza o recebimento do pagamento e atualiza o estado local antes de acionar notificacao assincrona
+- o modulo da maquina de progresso de pedidos foi migrado para TypeScript estrito, mantendo o contrato de estado e a persistencia explicita no D1
+- a documentacao de fronteira financeira foi adicionada em [Financial API Boundary](financial-api-boundary)
 
-## O que ainda nao esta pronto
+## Como navegar
 
-- o processamento completo do fluxo do bot ainda nao foi fechado em todas as bordas
-- ainda existem etapas de operacao e conciliacao a amadurecer para o fluxo inteiro
-
-```
+- Comece por [Leitura Inicial](Leitura-Inicial)
+- Veja a arquitetura em [Arquitetura Geral](Arquitetura-Geral)
+- Consulte as integracoes em [Integracoes Externas](Integracoes-Externas)
+- Consulte a nova fronteira financeira em [Financial API Boundary](financial-api-boundary)

@@ -17,6 +17,7 @@
 - [Modelo de Dados](Modelo-de-Dados)
 - [XState e Fluxo de Pedidos](XState-e-Fluxo-de-Pedidos)
 - [Integracoes Externas](Integracoes-Externas)
+- [Financial API Boundary](financial-api-boundary)
 
 ## Engenharia
 
