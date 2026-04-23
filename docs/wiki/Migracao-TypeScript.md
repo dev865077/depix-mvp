@@ -8,9 +8,6 @@ A migracao central continua em andamento, com o runtime, rotas centrais e contra
 
 ## Lista curta de excecoes de runtime ainda existentes em `src/`
 
-- `src/lib/background-tasks.js`
-- `src/lib/logger.js`
-- `src/middleware/request-context.js`
 - `src/services/eulen-deposit-recheck.js`
 - `src/services/eulen-deposits-fallback.js`
 - `src/services/local-diagnostic-validation.js`

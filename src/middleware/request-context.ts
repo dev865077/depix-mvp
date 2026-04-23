@@ -11,15 +11,15 @@ import { resolveTenantFromRequest, resolveTenantIdFromPath } from "../config/ten
 import { getDatabase } from "../db/client.js";
 import { log } from "../lib/logger.js";
 
-/** @typedef {import("../types/runtime").AppContext} AppContext */
-/** @typedef {import("hono").Next} Next */
+import type { Next } from "hono";
+import type { AppContext } from "../types/runtime.js";
 
 /**
  * @param {AppContext} c
  * @param {Next} next
  * @returns {Promise<void>}
  */
-export async function requestContextMiddleware(c, next) {
+export async function requestContextMiddleware(c: AppContext, next: Next): Promise<void> {
   const requestId = crypto.randomUUID();
   const requestStartedAt = Date.now();
   const runtimeConfig = readRuntimeConfig(c.env);
@@ -41,10 +41,12 @@ export async function requestContextMiddleware(c, next) {
   c.set("db", db);
   c.set("tenant", tenant);
 
-  for (const [bindingName, operation] of [
+  const operationsToValidate = [
     ["ENABLE_OPS_DEPOSIT_RECHECK", runtimeConfig.operations?.depositRecheck],
     ["ENABLE_OPS_DEPOSITS_FALLBACK", runtimeConfig.operations?.depositsFallback],
-  ]) {
+  ] as const;
+
+  for (const [bindingName, operation] of operationsToValidate) {
     if (operation?.featureFlag.configured && !operation.featureFlag.recognized) {
       log(runtimeConfig, {
         level: "warn",

@@ -6,6 +6,7 @@
  * `ExecutionContext` estiver disponivel. Em execucao local sem `waitUntil`, o
  * helper cai para `await` explicito para manter testes deterministas.
  */
+import type { Context } from "hono";
 
 /**
  * Despacha uma tarefa sem transformar o side effect em dependencia obrigatoria
@@ -15,7 +16,7 @@
  * @param {Promise<unknown>} task Promessa do side effect ja criada.
  * @returns {Promise<void>} Resolve quando o despacho seguro terminar.
  */
-export async function dispatchNonBlockingTask(context, task) {
+export async function dispatchNonBlockingTask(context: Context, task: Promise<unknown>): Promise<void> {
   let executionCtx = null;
 
   try {
