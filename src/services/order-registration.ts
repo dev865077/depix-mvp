@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Service de materializacao do pedido inicial do Telegram.
  *

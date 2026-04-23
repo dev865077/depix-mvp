@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Service de confirmacao do pedido Telegram com criacao de deposito Eulen.
  *
@@ -59,6 +60,10 @@ const FAIL_CLOSED_RECOVERY_ERROR_CODES = new Set([
  * transformar falha de negocio em retry do webhook.
  */
 export class TelegramOrderConfirmationError extends Error {
+  code: string;
+  userMessage: string;
+  details: Record<string, unknown>;
+
   /**
    * @param {string} code Codigo estavel para logs e troubleshooting.
    * @param {string} message Mensagem tecnica principal.

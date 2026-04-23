@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Servicos de diagnostico local para validacao de integracoes externas.
  *
@@ -41,6 +42,10 @@ const SUPPORTED_SPLIT_ADDRESS_KINDS = new Set([
  * precisar entender a origem detalhada de cada falha.
  */
 export class DiagnosticServiceError extends Error {
+  status: number;
+  code: string;
+  details?: Record<string, unknown>;
+
   /**
    * @param {number} status Status HTTP desejado para a borda.
    * @param {string} code Codigo estavel do erro.

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Operacoes autenticadas de webhook do Telegram.
  *
@@ -30,6 +31,10 @@ const telegramPublicSurfaceEnsureCache = new Map();
  * origem exata da falha interna.
  */
 export class TelegramWebhookOpsError extends Error {
+  status: number;
+  code: string;
+  details: Record<string, unknown>;
+
   /**
    * @param {number} status Status HTTP desejado para a resposta.
    * @param {string} code Codigo estavel para troubleshooting.

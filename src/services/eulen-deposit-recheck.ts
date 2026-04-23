@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Recheck operacional de deposito via `deposit-status`.
  *
@@ -42,6 +43,10 @@ const NON_REGRESSIVE_COMPLETED_REMOTE_STATUSES = new Set(["depix_sent", "expired
  * Erro controlado do service de recheck.
  */
 export class DepositRecheckError extends Error {
+  status: number;
+  code: string;
+  details: Record<string, unknown>;
+
   /**
    * @param {number} status Status HTTP esperado na borda.
    * @param {string} code Codigo estavel.

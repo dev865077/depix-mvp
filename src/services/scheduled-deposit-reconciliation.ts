@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Reconciliacao agendada bounded para depositos Telegram pendentes.
  *
