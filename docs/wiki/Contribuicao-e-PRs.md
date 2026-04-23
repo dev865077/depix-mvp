@@ -58,13 +58,29 @@
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
 - o parser de referencias do planning nao deve tratar mencoes em prosa como `PR #209` ou `pull request #209` como child issues; apenas referencias reais de issues entram na lista de contexto
 - referencias opcionais de child issue que retornem `403` ou `404` devem ser ignoradas com aviso operacional, sem abortar o planning da issue raiz
-- a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel na lista do `pull_request`
-- o workflow de review nao deve depender de um trigger duplicado em `workflow_run` para publicar o check visivel
-- o gate de `discussion-review` deve permanecer travado ate o `CI / Test` canonico ficar verde
-- especialistas so devem executar depois do `CI / Test` canonico concluir com sucesso
+- a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel no `pull_request`
+- a Discussion de PR agora tem rounds comuns limitados; quando o payload expuser contexto de round, a revisao deve usar esse numero para calibrar severidade e convergir sem reabrir debate antigo
+- depois do limite configurado de rounds comuns, um moderador terminal emite a decisao final da Discussion de PR; revisores especialistas nao devem tentar contornar esse limite
+- quando a revisão cair no caminho terminal de moderador, a saida precisa continuar coerente com o contrato canonico da Discussion e com o estado final do check
+- o contrato de review nao deve depender de edicao retroativa de comentarios anteriores; cada rodada continua append-only
+- quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`
+- a reconciliacao de follow-up blockers exige ler a ultima conclusao da Discussion, transformar a resposta final em blockers testaveis canonicos e manter os bloqueios anteriores ativos ate haver alinhamento entre diff atual, evidencia explicita de arquivo de teste e `CI / Test`
+- em follow-up, a revisao deve preferir a reconciliacao estavel do conjunto anterior de bloqueios em vez de reabrir um blocker mais amplo sem contradicao concreta
+- approvações de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
+- a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
+- contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
+- a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao
+- a conclusao do workflow `CI` deve acordar a lane de Discussion por `workflow_run`, para que a revisao de PR rode depois do resultado canonico de testes sem depender de operador procurando manualmente
+- o evento `workflow_run` nao deve acionar review direto; ele existe para reconciliar Discussions abertas contra o resultado final de `CI / Test`
+- o fluxo de review automatica de PR nao deve iniciar a Discussion durante `pull_request`; esse evento apenas prepara a classificacao e preserva os checks visiveis sem abrir a lane multi-comentario
+- a Discussion de review deve ser retomada por `workflow_run` somente depois que o `CI / Test` canonico estiver verde
+- a evidencia operacional precisa registrar o contrato de nao-cancelamento: o run que publica comentarios de Discussion nao deve ser cancelado por reuse de concurrency group entre eventos `pull_request` e `workflow_run`
+- os checks visiveis do PR devem permanecer coerentes com o gatilho canonico, sem duplicar o mesmo review entre eventos concorrentes
+- a visibilidade do check `AI PR Review / discussion-review` no `pull_request` deve ser preservada mesmo quando a revisao especializada aguarda o CI verde
+- o gate de CI deve ser explicitado no proprio workflow de review para que especialistas so executem depois do `CI / Test` canonico concluir com sucesso
 - falhas operacionais de GitHub API, permissao, schema e logs de GitHub Actions devem ser classificadas como contexto operacional antes de qualquer analise de review de conteudo
 - quando a revisao automatica precisar puxar logs de falha, o contexto desses logs deve entrar no prompt de review de forma controlada e redigida, sem virar ruido nem expor segredos
 
 ## Regra de longo prazo
 
-Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em issue, comentario ou conversa oral. Ela precisa ficar registrada em documentacao versionada.
+Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em PR ou issue; deve virar contrato documental.

@@ -64,4 +64,4 @@
 
 ## Regra de longo prazo
 
-Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em issue, comentario ou conversa oral. Ela precisa ficar registrada em documentacao versionada.
+Se uma decisao muda a forma do sistema, ela nao deve ficar apenas em PR ou issue; deve virar contrato documental.

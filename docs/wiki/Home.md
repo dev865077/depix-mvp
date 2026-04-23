@@ -72,10 +72,12 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o ponto de entrada JavaScript da maquina continua carregavel em Node para compatibilidade com consumidores existentes
 - o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa
 - a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
-- a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza espacos visuais e avanca o pedido para `confirmation`
-- em `confirmation`, respostas como `sim`, `confirmar` e `ok` criam o deposito real na Eulen; `cancelar` encerra o pedido como `canceled`
-- o fluxo Telegram agora aceita `/cancel` e comandos de reinicio sem criar duplicata quando o contexto aberto nao existe
+- a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza a entrada e avanca para `confirmation`
+- a confirmacao do pedido ainda depende da integracao completa com a Eulen para criar o deposito final
 
-## Leitura correta
+## Onde olhar depois
 
-O projeto ja tem uma arquitetura-alvo bem definida e uma fundacao concreta no `main`. O gap atual nao e falta de direcao; e falta de implementar as ultimas fatias funcionais do fluxo.
+- se a duvida for sobre produto, leia [Visao Geral do Produto](Visao-Geral-do-Produto)
+- se a duvida for sobre fluxo, leia [Escopo e Fluxo](Escopo-e-Fluxo)
+- se a duvida for sobre estrutura tecnica, leia [Arquitetura Geral](Arquitetura-Geral) e [Estrutura do Repositorio](Estrutura-do-Repositorio)
+- se a duvida for sobre governanca, leia [Contribuicao e PRs](Contribuicao-e-PRs) e [Governanca Tecnica](Governanca-Tecnica)
