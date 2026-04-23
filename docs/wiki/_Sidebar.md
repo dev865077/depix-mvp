@@ -22,6 +22,7 @@
 
 - [Estrutura do Repositorio](Estrutura-do-Repositorio)
 - [Contribuicao e PRs](Contribuicao-e-PRs)
+- [Automacoes e Prompts](Automacoes-e-Prompts)
 - [Testes e Qualidade](Testes-e-Qualidade)
 - [Migracao TypeScript](Migracao-TypeScript)
 - [Validacao e Rollback TypeScript](Validacao-e-Rollback-TypeScript)

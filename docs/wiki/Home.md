@@ -69,6 +69,7 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - a review de PR por IA agora reconcilia follow-up blockers contra o diff atual, evidencia explicita de arquivos de teste e `CI / Test` antes de descarregar bloqueios antigos
 - quando a thread final traz uma reply humana com cenario de validacao ou resolucao do bloqueio, essa evidencia pode ser usada no handoff do follow-up
 - quando restarem bloqueios de follow-up, a automacao publica memos deterministas de `Request changes` em vez de aprovacoes nao reconciliadas
+- os prompts controlados pelo repositorio ficam auditaveis em [Automacoes e Prompts](Automacoes-e-Prompts)
 - o fluxo funcional completo do bot ainda nao esta concluido
 - `XState` ja materializa e persiste o pedido inicial em `draft` no runtime do Telegram, e o bot consegue retomar o pedido aberto do usuario quando ele volta a conversar
 - o modulo da maquina de progresso de pedidos foi migrado para TypeScript estrito, mantendo o contrato de transicao e os consumidores com importacao minima
