@@ -243,6 +243,8 @@ jobs:
           AI_PR_DISCUSSION_RISK_PROMPT_PATH: .github/prompts/ai-pr-discussion-risk.md
           AI_PR_DISCUSSION_SYNTHESIS_PROMPT_PATH: .github/prompts/ai-pr-discussion-synthesis.md
           AI_PR_DISCUSSION_TECHNICAL_PROMPT_PATH: .github/prompts/ai-pr-discussion-technical.md
+          AI_PR_DISCUSSION_MODERATOR_PROMPT_PATH: .github/prompts/ai-pr-discussion-moderator.md
+          AI_PR_DISCUSSION_MAX_ROUNDS: 4
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL || 'gpt-5.4-mini' }}

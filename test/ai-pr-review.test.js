@@ -1,16 +1,19 @@
 /**
  * Focused tests for the PR review gate and recommendation parser.
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
   assertValidReviewRecommendation,
   buildAutomationEvidenceContext,
   buildDiscussionCompletionComment,
+  buildDiscussionGateReviewFromModeratorDecision,
   buildDiscussionDebateFailureSynthesis,
   buildFailedActionsLogContext,
   buildDiscussionGateReview,
   buildDiscussionHistoryContext,
+  buildDiscussionModeratorComment,
   buildDiscussionSynthesisContractAppendix,
   buildMalformedBlockerContractMemo,
   assessDiscussionGate,
@@ -23,6 +26,7 @@ import {
   buildPullRequestCommentBody,
   buildPullRequestDiscussionBody,
   buildPullRequestUserPrompt,
+  buildPrDiscussionRoundContext,
   applyFollowUpReconciliationToDebate,
   classifyGitHubOperationalFailure,
   evaluateDiscussionRecommendation,
@@ -54,6 +58,7 @@ import {
   workflowHasVisibleDiscussionReviewCiGate,
   workflowChecksOutDiscussionPullRequestHead,
   collectFollowUpEvidenceRecords,
+  countCompletedDiscussionRounds,
 } from "../scripts/ai-pr-review.mjs";
 
 /**
@@ -1250,6 +1255,116 @@ describe("ai pr review discussion rendering", () => {
     expect(blocked).toContain("ready_for_merge: `false`");
     expect(followUpApproved).toContain("Why this passed now");
     expect(followUpApproved).toContain("resolved the prior blockers");
+  });
+
+  it("counts PR discussion rounds from the latest final-status thread only", () => {
+    const finalComment = {
+      body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Request changes`",
+      replies: {
+        nodes: [
+          {
+            author: { login: "dev865077" },
+            body: "Human reply with context.",
+          },
+          {
+            author: { login: "github-actions" },
+            body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Request changes`",
+          },
+          {
+            author: { login: "github-actions[bot]" },
+            body: "<!-- ai-pr-discussion-final:openai -->\nFinal recommendation: `Approve`",
+          },
+          {
+            author: { login: "github-actions" },
+            body: "<!-- ai-pr-discussion-moderator:openai -->\nmoderator_decision: `pr_ready_to_merge`",
+          },
+        ],
+      },
+    };
+
+    expect(countCompletedDiscussionRounds(finalComment)).toBe(3);
+    expect(buildPrDiscussionRoundContext(finalComment, 4)).toEqual({
+      completedRounds: 3,
+      currentRound: 4,
+      maxRounds: 4,
+      roundsRemaining: 0,
+      isLastCommonRound: true,
+    });
+  });
+
+  it("adds PR discussion round context to reviewer prompts", () => {
+    const body = buildPullRequestUserPrompt(
+      "dev865077/depix-mvp",
+      {
+        number: 624,
+        title: "Limit PR review rounds",
+        html_url: "https://github.com/dev865077/depix-mvp/pull/624",
+        body: "Adds moderator limit.",
+        base: { ref: "main" },
+        head: { ref: "codex/issue-624-pr-moderator-rounds" },
+      },
+      [
+        {
+          filename: "scripts/ai-pr-review.mjs",
+          status: "modified",
+          additions: 40,
+          deletions: 2,
+          patch: "@@\n+round limit",
+        },
+      ],
+      {
+        ...gate,
+        route: "discussion_before_merge",
+        requiresDiscussion: true,
+      },
+      "",
+      "",
+      "",
+      "",
+      [],
+      {
+        completedRounds: 3,
+        currentRound: 4,
+        maxRounds: 4,
+        roundsRemaining: 0,
+        isLastCommonRound: true,
+      },
+    );
+
+    expect(body).toContain("## PR discussion round context");
+    expect(body).toContain("current_round: `4`");
+    expect(body).toContain("max_rounds: `4`");
+    expect(body).toContain("is_last_common_round_before_moderator: `true`");
+    expect(body).toContain("This is the last common specialist round before the terminal moderator decision.");
+  });
+
+  it("renders a terminal PR moderator decision with canonical state", () => {
+    const comment = buildDiscussionModeratorComment({
+      decision: "pr_blocked_external_dependency",
+      summary: "External payment provider evidence is still missing.",
+      resolutionSummary: "Do not continue normal PR review rounds until the dependency is resolved.",
+      replyBody: "Provider evidence is required before merge.",
+      failureReason: null,
+      blockingDependencies: ["Eulen webhook delivery evidence"],
+      roundCount: 4,
+    });
+    const review = buildDiscussionGateReviewFromModeratorDecision({
+      decision: "pr_blocked_external_dependency",
+      summary: "External payment provider evidence is still missing.",
+      resolutionSummary: "Do not continue normal PR review rounds until the dependency is resolved.",
+      blockingDependencies: ["Eulen webhook delivery evidence"],
+    });
+
+    expect(comment).toContain("<!-- ai-pr-discussion-moderator:openai -->");
+    expect(comment).toContain("Provider evidence is required before merge.");
+    expect(comment).toContain("moderator_decision: `pr_blocked_external_dependency`");
+    expect(comment).toContain("canonical_state: `pr_blocked_external_dependency`");
+    expect(comment).toContain("next_actor: `dependency_owner`");
+    expect(comment).toContain("discussion_round_count: `4`");
+    expect(comment).toContain("round_limit_reached: `true`");
+    expect(comment).toContain("Final recommendation: `Request changes`");
+    expect(review).toContain("Final PR review moderator decision: `pr_blocked_external_dependency`");
+    expect(assertValidReviewRecommendation(review)).toBe("Request changes");
   });
 
   it("turns model timeouts into bounded request-changes output", () => {
@@ -2627,6 +2742,11 @@ describe("ai pr review discussion rendering", () => {
       "          if [ -z \"$pr_number\" ]; then\n            echo \"::error::Could not resolve the linked pull request from the Discussion title/body.\"\n            exit 1\n          fi\n",
       "",
     ))).toBe(false);
+
+    const actualWorkflow = readFileSync(".github/workflows/ai-pr-review.yml", "utf8");
+
+    expect(actualWorkflow).toContain("AI_PR_DISCUSSION_MODERATOR_PROMPT_PATH: .github/prompts/ai-pr-discussion-moderator.md");
+    expect(actualWorkflow).toContain("AI_PR_DISCUSSION_MAX_ROUNDS: 4");
 
     const evidence = buildAutomationEvidenceContext({
       files: [

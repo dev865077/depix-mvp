@@ -14,7 +14,48 @@ const DISCUSSION_ROUTE_DIRECT = "direct_review";
 const DISCUSSION_ROUTE_REQUIRED = "discussion_before_merge";
 const DISCUSSION_COMMENT_MARKER = "<!-- ai-pr-discussion-review:openai -->";
 const DISCUSSION_FINAL_COMMENT_MARKER = "<!-- ai-pr-discussion-final:openai -->";
+const DISCUSSION_MODERATOR_COMMENT_MARKER = "<!-- ai-pr-discussion-moderator:openai -->";
 const DISCUSSION_SPECIALIST_ROLE_KEYS = ["product", "technical", "risk"];
+const MAX_PR_DISCUSSION_ROUNDS = 4;
+const PR_DISCUSSION_MODERATOR_DECISIONS = new Set([
+  "pr_ready_to_merge",
+  "pr_request_changes_terminal",
+  "pr_blocked_external_dependency",
+  "pr_split_required_or_wrong_scope",
+  "pr_rejected_duplicate_or_invalid",
+]);
+const PR_DISCUSSION_MODERATOR_JSON_SCHEMA = {
+  name: "pr_discussion_moderator_decision",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: { type: "string" },
+      resolutionSummary: { type: "string" },
+      replyBody: { type: "string" },
+      decision: {
+        type: "string",
+        enum: [...PR_DISCUSSION_MODERATOR_DECISIONS],
+      },
+      failureReason: {
+        type: ["string", "null"],
+      },
+      blockingDependencies: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: [
+      "summary",
+      "resolutionSummary",
+      "replyBody",
+      "decision",
+      "failureReason",
+      "blockingDependencies",
+    ],
+  },
+};
 const BLOCKER_CONTRACT_TESTABLE_FIELDS = [
   "Behavior protected",
   "Suggested test file",
@@ -121,6 +162,12 @@ const DISCUSSION_ROLE_TITLES = {
   product: "Product and scope",
   technical: "Technical and architecture",
   risk: "Risk, security, and operations",
+};
+const DISCUSSION_ROLE_MARKERS = {
+  product: "<!-- ai-pr-discussion-role:product -->",
+  technical: "<!-- ai-pr-discussion-role:technical -->",
+  risk: "<!-- ai-pr-discussion-role:risk -->",
+  synthesis: "<!-- ai-pr-discussion-role:synthesis -->",
 };
 const TEST_FILE_REFERENCE_PATTERN = /(?:^|[^A-Za-z0-9_./-])((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:test|spec)\.[A-Za-z0-9]+)(?=$|[^A-Za-z0-9_./-])/g;
 
@@ -1756,7 +1803,125 @@ function isAutomatedDiscussionCommentBody(body) {
   const trimmedBody = body.trimStart();
 
   return trimmedBody.startsWith(DISCUSSION_COMMENT_MARKER)
-    || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+    || trimmedBody.startsWith(DISCUSSION_FINAL_COMMENT_MARKER)
+    || trimmedBody.startsWith(DISCUSSION_MODERATOR_COMMENT_MARKER);
+}
+
+function isAutomatedDiscussionFinalReply(reply) {
+  const authorLogin = reply?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && typeof reply?.body === "string"
+    && reply.body.trimStart().startsWith(DISCUSSION_FINAL_COMMENT_MARKER);
+}
+
+function isAutomatedDiscussionModeratorReply(reply) {
+  const authorLogin = reply?.author?.login;
+
+  return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+    && typeof reply?.body === "string"
+    && reply.body.trimStart().startsWith(DISCUSSION_MODERATOR_COMMENT_MARKER);
+}
+
+export function countCompletedDiscussionRounds(finalComment) {
+  if (!finalComment || typeof finalComment.body !== "string") {
+    return 0;
+  }
+
+  const rootCountsAsRound = finalComment.body.trimStart().startsWith(DISCUSSION_FINAL_COMMENT_MARKER) ? 1 : 0;
+  const followUpRounds = (finalComment.replies?.nodes ?? []).filter((reply) => isAutomatedDiscussionFinalReply(reply)).length;
+
+  return rootCountsAsRound + followUpRounds;
+}
+
+export function buildPrDiscussionRoundContext(finalComment, maxRounds = MAX_PR_DISCUSSION_ROUNDS) {
+  const completedRounds = countCompletedDiscussionRounds(finalComment);
+  const normalizedMaxRounds = Number.isInteger(maxRounds) && maxRounds > 0 ? maxRounds : MAX_PR_DISCUSSION_ROUNDS;
+  const currentRound = Math.min(completedRounds + 1, normalizedMaxRounds);
+
+  return {
+    completedRounds,
+    currentRound,
+    maxRounds: normalizedMaxRounds,
+    roundsRemaining: Math.max(0, normalizedMaxRounds - currentRound),
+    isLastCommonRound: currentRound >= normalizedMaxRounds,
+  };
+}
+
+function extractStoredDiscussionModeratorDecision(body) {
+  if (typeof body !== "string" || body.trim().length === 0) {
+    return null;
+  }
+
+  const match = body.match(/moderator_decision:\s*`([^`]+)`/i);
+  const decision = match?.[1]?.trim();
+
+  return PR_DISCUSSION_MODERATOR_DECISIONS.has(decision) ? decision : null;
+}
+
+function getLatestAutomatedModeratorEntry(finalComment) {
+  if (!finalComment || typeof finalComment.body !== "string") {
+    return null;
+  }
+
+  const moderatorEntries = (finalComment.replies?.nodes ?? [])
+    .filter((reply) => isAutomatedDiscussionModeratorReply(reply))
+    .map((reply) => ({
+      body: typeof reply?.body === "string" ? reply.body : "",
+      id: reply?.id ?? null,
+      createdAt: reply?.createdAt ?? "unknown time",
+    }));
+
+  return moderatorEntries.at(-1) ?? null;
+}
+
+function resolvePrDiscussionModeratorState(decision) {
+  if (decision === "pr_ready_to_merge") {
+    return {
+      canonicalState: "pr_ready_to_merge",
+      nextActor: "codex",
+      nextAction: "merge_when_required_checks_are_green",
+      readyForMerge: true,
+    };
+  }
+
+  if (decision === "pr_blocked_external_dependency") {
+    return {
+      canonicalState: "pr_blocked_external_dependency",
+      nextActor: "dependency_owner",
+      nextAction: "wait_for_dependencies",
+      readyForMerge: false,
+    };
+  }
+
+  if (decision === "pr_split_required_or_wrong_scope") {
+    return {
+      canonicalState: "pr_split_required_or_wrong_scope",
+      nextActor: "pr_author",
+      nextAction: "split_scope_or_open_successor_pr",
+      readyForMerge: false,
+    };
+  }
+
+  if (decision === "pr_rejected_duplicate_or_invalid") {
+    return {
+      canonicalState: "pr_rejected_duplicate_or_invalid",
+      nextActor: "none",
+      nextAction: "no_further_action",
+      readyForMerge: false,
+    };
+  }
+
+  return {
+    canonicalState: "pr_request_changes_terminal",
+    nextActor: "pr_author",
+    nextAction: "rework_before_new_pr_round",
+    readyForMerge: false,
+  };
+}
+
+function resolvePrDiscussionModeratorRecommendation(decision) {
+  return decision === "pr_ready_to_merge" ? "Approve" : "Request changes";
 }
 
 /**
@@ -3617,6 +3782,7 @@ async function loadAutomationEvidenceContext(files) {
  * @param {string} [failureLogContext] Real failed GitHub Actions logs for the current PR head.
  * @param {string} [followUpEvidenceContext] Deterministic evidence for prior acceptance-test blockers.
  * @param {string[]} [prioritizedPaths] Repository paths that must stay visible in bounded changed-file sections.
+ * @param {ReturnType<typeof buildPrDiscussionRoundContext> | null} [roundContext] Current Discussion round metadata.
  * @returns {string} Final user payload.
  */
 export function buildPullRequestUserPrompt(
@@ -3629,7 +3795,21 @@ export function buildPullRequestUserPrompt(
   failureLogContext = "",
   followUpEvidenceContext = "",
   prioritizedPaths = [],
+  roundContext = null,
 ) {
+  const boundedRoundContext = gate.requiresDiscussion && roundContext
+    ? [
+      "## PR discussion round context",
+      `current_round: \`${roundContext.currentRound}\``,
+      `max_rounds: \`${roundContext.maxRounds}\``,
+      `rounds_remaining: \`${roundContext.roundsRemaining}\``,
+      `is_last_common_round_before_moderator: \`${String(roundContext.isLastCommonRound)}\``,
+      roundContext.isLastCommonRound
+        ? "This is the last common specialist round before the terminal moderator decision. Converge on the smallest safe decision and avoid opening broad new blockers."
+        : "This is not the final common specialist round; keep blockers concrete and avoid expanding scope.",
+      "",
+    ]
+    : [];
   const boundedDiscussionContext = discussionContext.trim()
     ? [
       "## Existing Discussion context",
@@ -3661,6 +3841,7 @@ export function buildPullRequestUserPrompt(
     ...(failureLogContext.trim() ? [failureLogContext.trim(), ""] : []),
     ...(automationEvidence.trim() ? [automationEvidence.trim(), ""] : []),
     ...(followUpEvidenceContext.trim() ? [followUpEvidenceContext.trim(), ""] : []),
+    ...boundedRoundContext,
     ...boundedDiscussionContext,
     "## Changed files digest",
     buildChangedFilesDigest(files, prioritizedPaths) || "[no changed files reported]",
@@ -3917,6 +4098,65 @@ async function generateModelMarkdown(systemPrompt, userPrompt, model, options = 
   return sanitizePublishedMarkdown(reviewText);
 }
 
+async function generateDiscussionModeratorDecision(systemPrompt, userPrompt, model) {
+  const apiKey = readRequiredEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    signal: createOpenAIRequestSignal(),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_output_tokens: MAX_OUTPUT_TOKENS,
+      reasoning: {
+        effort: REASONING_EFFORT,
+      },
+      text: {
+        format: {
+          type: "json_schema",
+          ...PR_DISCUSSION_MODERATOR_JSON_SCHEMA,
+        },
+      },
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: systemPrompt,
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: truncateText(userPrompt, MAX_REVIEW_INPUT_CHARS),
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI PR discussion moderator request failed for model ${model} (${response.status}): ${body}`);
+  }
+
+  const responseJson = await response.json();
+  const responseText = readOpenAIText(responseJson);
+
+  if (!responseText) {
+    throw new Error(`OpenAI returned an empty PR discussion moderator payload. Response summary: ${summarizeOpenAIResponse(responseJson)}`);
+  }
+
+  return responseText;
+}
+
 /**
  * Build the synthesis payload from the three specialist reviewer memos.
  *
@@ -4125,10 +4365,10 @@ export function buildDiscussionReviewComments(debate) {
     {
       key: "product",
       role: "Product and scope",
-      marker: "<!-- ai-pr-discussion-role:product -->",
+      marker: DISCUSSION_ROLE_MARKERS.product,
       body: [
         DISCUSSION_COMMENT_MARKER,
-        "<!-- ai-pr-discussion-role:product -->",
+        DISCUSSION_ROLE_MARKERS.product,
         "## Product and scope review",
         "",
         debate.product,
@@ -4137,10 +4377,10 @@ export function buildDiscussionReviewComments(debate) {
     {
       key: "technical",
       role: "Technical and architecture",
-      marker: "<!-- ai-pr-discussion-role:technical -->",
+      marker: DISCUSSION_ROLE_MARKERS.technical,
       body: [
         DISCUSSION_COMMENT_MARKER,
-        "<!-- ai-pr-discussion-role:technical -->",
+        DISCUSSION_ROLE_MARKERS.technical,
         "## Technical and architecture review",
         "",
         debate.technical,
@@ -4149,10 +4389,10 @@ export function buildDiscussionReviewComments(debate) {
     {
       key: "risk",
       role: "Risk, security, and operations",
-      marker: "<!-- ai-pr-discussion-role:risk -->",
+      marker: DISCUSSION_ROLE_MARKERS.risk,
       body: [
         DISCUSSION_COMMENT_MARKER,
-        "<!-- ai-pr-discussion-role:risk -->",
+        DISCUSSION_ROLE_MARKERS.risk,
         "## Risk, security, and operations review",
         "",
         debate.risk,
@@ -4161,16 +4401,214 @@ export function buildDiscussionReviewComments(debate) {
     {
       key: "synthesis",
       role: "Synthesis",
-      marker: "<!-- ai-pr-discussion-role:synthesis -->",
+      marker: DISCUSSION_ROLE_MARKERS.synthesis,
       body: [
         DISCUSSION_COMMENT_MARKER,
-        "<!-- ai-pr-discussion-role:synthesis -->",
+        DISCUSSION_ROLE_MARKERS.synthesis,
         "## Synthesis",
         "",
         debate.synthesis,
       ].join("\n"),
     },
   ];
+}
+
+function findLatestDiscussionRoleComment(comments, marker) {
+  if (!Array.isArray(comments) || comments.length === 0) {
+    return null;
+  }
+
+  return [...comments].reverse().find((comment) => {
+    const authorLogin = comment?.author?.login;
+
+    return (authorLogin === "github-actions" || authorLogin === "github-actions[bot]")
+      && typeof comment?.body === "string"
+      && comment.body.includes(marker);
+  }) ?? null;
+}
+
+function extractLatestDiscussionReviewerMemos(comments) {
+  return {
+    product: findLatestDiscussionRoleComment(comments, DISCUSSION_ROLE_MARKERS.product)?.body ?? "",
+    technical: findLatestDiscussionRoleComment(comments, DISCUSSION_ROLE_MARKERS.technical)?.body ?? "",
+    risk: findLatestDiscussionRoleComment(comments, DISCUSSION_ROLE_MARKERS.risk)?.body ?? "",
+    synthesis: findLatestDiscussionRoleComment(comments, DISCUSSION_ROLE_MARKERS.synthesis)?.body ?? "",
+  };
+}
+
+function buildDiscussionModeratorUserPrompt(input) {
+  return truncateText([
+    buildPullRequestUserPrompt(
+      input.repository,
+      input.pullRequest,
+      input.files,
+      input.gate,
+      input.discussionContext,
+      input.automationEvidence,
+      input.failureLogContext,
+      input.followUpEvidenceContext,
+      input.prioritizedPaths,
+      input.roundContext,
+    ),
+    "",
+    "## Moderator lane",
+    "The common PR discussion rounds are exhausted. Publish one final terminal decision for this PR discussion and do not reopen the normal specialist loop.",
+    `Completed common rounds: ${input.roundContext.completedRounds}`,
+    "",
+    "## Latest specialist memos",
+    "",
+    "### Product and scope",
+    truncateText(input.reviewerMemos.product || "[missing]", MAX_AGENT_MEMO_CHARS),
+    "",
+    "### Technical and architecture",
+    truncateText(input.reviewerMemos.technical || "[missing]", MAX_AGENT_MEMO_CHARS),
+    "",
+    "### Risk, security, and operations",
+    truncateText(input.reviewerMemos.risk || "[missing]", MAX_AGENT_MEMO_CHARS),
+    "",
+    "### Synthesis",
+    truncateText(input.reviewerMemos.synthesis || "[missing]", MAX_AGENT_MEMO_CHARS),
+    "",
+    "## Latest automated conclusion",
+    truncateText(input.latestConclusionBody || "[missing]", MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+    "",
+    ...(input.latestHumanReplies.length > 0
+      ? [
+        "## Latest human replies in the conclusion thread",
+        ...input.latestHumanReplies.map((reply) => [
+          `### ${reply.author?.login ?? "unknown"} @ ${reply.createdAt ?? "unknown time"}`,
+          truncateText(sanitizePublishedMarkdown(reply.body ?? ""), MAX_DISCUSSION_CONTEXT_COMMENT_CHARS),
+        ].join("\n")),
+        "",
+      ]
+      : []),
+  ].join("\n"), MAX_REVIEW_INPUT_CHARS);
+}
+
+function assertValidDiscussionModeratorDecision(rawDecision) {
+  const parsed = typeof rawDecision === "string" ? JSON.parse(rawDecision) : rawDecision;
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("PR discussion moderator must return a JSON object.");
+  }
+
+  if (!PR_DISCUSSION_MODERATOR_DECISIONS.has(parsed.decision)) {
+    throw new Error(`PR discussion moderator must return a valid decision. Received: ${String(parsed.decision)}`);
+  }
+
+  if (typeof parsed.summary !== "string" || parsed.summary.trim().length === 0) {
+    throw new Error("PR discussion moderator must return a non-empty summary.");
+  }
+
+  if (typeof parsed.resolutionSummary !== "string" || parsed.resolutionSummary.trim().length === 0) {
+    throw new Error("PR discussion moderator must return a non-empty resolutionSummary.");
+  }
+
+  if (typeof parsed.replyBody !== "string" || parsed.replyBody.trim().length === 0) {
+    throw new Error("PR discussion moderator must return a non-empty replyBody.");
+  }
+
+  if (
+    parsed.decision === "pr_blocked_external_dependency"
+    && (!Array.isArray(parsed.blockingDependencies) || parsed.blockingDependencies.length === 0)
+  ) {
+    throw new Error("PR discussion moderator must list blockingDependencies for pr_blocked_external_dependency.");
+  }
+
+  return {
+    ...parsed,
+    summary: parsed.summary.trim(),
+    resolutionSummary: parsed.resolutionSummary.trim(),
+    replyBody: parsed.replyBody.trim(),
+    failureReason: typeof parsed.failureReason === "string" ? parsed.failureReason.trim() : null,
+    blockingDependencies: Array.isArray(parsed.blockingDependencies)
+      ? parsed.blockingDependencies.map((value) => String(value).trim()).filter((value) => value.length > 0)
+      : [],
+  };
+}
+
+export function buildDiscussionModeratorComment(input) {
+  const state = resolvePrDiscussionModeratorState(input.decision);
+  const recommendation = resolvePrDiscussionModeratorRecommendation(input.decision);
+
+  return [
+    DISCUSSION_MODERATOR_COMMENT_MARKER,
+    "## Final PR review moderator decision",
+    "",
+    input.summary,
+    "",
+    input.replyBody,
+    "",
+    "The common PR discussion rounds are exhausted. This terminal moderator decision supersedes further normal review rounds in this Discussion.",
+    input.resolutionSummary,
+    ...(input.blockingDependencies.length > 0 ? ["", `Blocking dependencies: ${input.blockingDependencies.map((dependency) => `\`${dependency}\``).join(", ")}`] : []),
+    "",
+    "## Estado canonico",
+    `canonical_state: \`${state.canonicalState}\``,
+    `moderator_decision: \`${input.decision}\``,
+    `next_actor: \`${state.nextActor}\``,
+    `next_action: \`${state.nextAction}\``,
+    `ready_for_merge: \`${String(state.readyForMerge)}\``,
+    `discussion_round_count: \`${String(input.roundCount)}\``,
+    "round_limit_reached: `true`",
+    "",
+    `Final recommendation: \`${recommendation}\``,
+  ].join("\n");
+}
+
+export function buildDiscussionGateReviewFromModeratorDecision(input) {
+  const recommendation = resolvePrDiscussionModeratorRecommendation(input.decision);
+
+  return [
+    recommendation,
+    "",
+    "## Findings",
+    `- Final PR review moderator decision: \`${input.decision}\`.`,
+    `- ${input.summary}`,
+    `- ${input.resolutionSummary}`,
+    ...(input.blockingDependencies.length > 0
+      ? [`- Blocking dependencies: ${input.blockingDependencies.join(", ")}.`]
+      : []),
+    "",
+    "## Recommendation",
+    recommendation,
+  ].join("\n");
+}
+
+/**
+ * Persist the terminal moderator reply in the latest conclusion thread.
+ *
+ * @param {{ id?: string, url?: string }} discussion Canonical Discussion.
+ * @param {{ id?: string } | null} latestFinalComment Latest final-status root comment.
+ * @param {ReturnType<typeof assertValidDiscussionModeratorDecision>} moderatorDecision Structured moderator output.
+ * @param {ReturnType<typeof buildPrDiscussionRoundContext>} roundContext Round metadata.
+ * @returns {Promise<void>} Resolves after publication and lifecycle sync.
+ */
+async function publishDiscussionModeratorDecision(discussion, latestFinalComment, moderatorDecision, roundContext) {
+  if (!discussion?.id || !latestFinalComment?.id) {
+    throw new Error("PR discussion moderator requires an existing Discussion and latest conclusion thread.");
+  }
+
+  const recommendation = resolvePrDiscussionModeratorRecommendation(moderatorDecision.decision);
+  await addDiscussionComment(
+    discussion.id,
+    buildDiscussionModeratorComment({
+      ...moderatorDecision,
+      roundCount: roundContext.completedRounds,
+    }),
+    latestFinalComment.id,
+  );
+  const lifecycleState = await syncDiscussionLifecycle(discussion.id, recommendation);
+
+  logOperationalEvent("ai_pr_review.discussion_moderator.published", {
+    action: "replied",
+    decision: moderatorDecision.decision,
+    recommendation,
+    lifecycleState,
+    discussionUrl: discussion.url ?? null,
+    completedRounds: roundContext.completedRounds,
+    maxRounds: roundContext.maxRounds,
+  });
 }
 
 /**
@@ -4560,9 +4998,18 @@ async function main() {
   const technicalPromptPath = process.env.AI_PR_DISCUSSION_TECHNICAL_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-technical.md";
   const riskPromptPath = process.env.AI_PR_DISCUSSION_RISK_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-risk.md";
   const synthesisPromptPath = process.env.AI_PR_DISCUSSION_SYNTHESIS_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-synthesis.md";
+  const moderatorPromptPath = process.env.AI_PR_DISCUSSION_MODERATOR_PROMPT_PATH?.trim() || ".github/prompts/ai-pr-discussion-moderator.md";
+  const maxDiscussionRounds = Number.parseInt(
+    process.env.AI_PR_DISCUSSION_MAX_ROUNDS?.trim() || String(MAX_PR_DISCUSSION_ROUNDS),
+    10,
+  );
   const preferredDiscussionCategory = process.env.AI_PR_DISCUSSION_CATEGORY?.trim() || DISCUSSION_CATEGORY_DEFAULT;
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
   const resolvedContext = await resolvePullRequestContext(repository, event);
+
+  if (!Number.isInteger(maxDiscussionRounds) || maxDiscussionRounds <= 0) {
+    throw new Error("Invalid AI_PR_DISCUSSION_MAX_ROUNDS: expected a positive integer.");
+  }
 
   if (!resolvedContext) {
     return;
@@ -4626,6 +5073,9 @@ async function main() {
   let followUpEvidenceContext = "";
   let prioritizedFollowUpPaths = [];
   let followUpRepositoryFileContents = {};
+  let discussionRoundContext = null;
+  let latestModeratorEntry = null;
+  let latestModeratorDecision = null;
   const automationEvidence = await loadAutomationEvidenceContext(files);
   const failureLogContext = await loadFailedActionsLogContext(repository, pullRequest.number);
 
@@ -4649,12 +5099,19 @@ async function main() {
       }
     }
 
+    latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
+    discussionRoundContext = buildPrDiscussionRoundContext(latestFinalComment, maxDiscussionRounds);
+    latestModeratorEntry = getLatestAutomatedModeratorEntry(latestFinalComment);
+    latestModeratorDecision = extractStoredDiscussionModeratorDecision(latestModeratorEntry?.body);
+
     logOperationalEvent("ai_pr_review.discussion_context.loaded", {
       hasExistingDiscussion: Boolean(discussionUrl),
       contextChars: discussionContext.length,
+      completedRounds: discussionRoundContext.completedRounds,
+      maxRounds: discussionRoundContext.maxRounds,
+      hasModeratorDecision: Boolean(latestModeratorDecision),
     });
 
-    latestFinalComment = findLatestAutomatedFinalComment(discussionThread?.comments?.nodes ?? []);
     statusCheckContexts = latestFinalComment
       ? await fetchPullRequestStatusCheckRollup(repository, pullRequest.number)
       : [];
@@ -4709,69 +5166,116 @@ async function main() {
     failureLogContext,
     followUpEvidenceContext,
     prioritizedFollowUpPaths,
+    discussionRoundContext,
   );
 
   if (gate.requiresDiscussion) {
-    const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
-      readPrompt(doctrinePromptPath),
-      readPrompt(productPromptPath),
-      readPrompt(technicalPromptPath),
-      readPrompt(riskPromptPath),
-      readPrompt(synthesisPromptPath),
-    ]);
-    let debate = await generateDiscussionDebate(
-      {
-        doctrine,
-        productPrompt,
-        technicalPrompt,
-        riskPrompt,
-        synthesisPrompt,
-      },
-      userPrompt,
-      model,
-    );
-    if (latestFinalComment) {
-      const unresolvedFollowUpBlockers = reconcileFollowUpTestableBlockers(
-        latestFinalComment,
-        files,
-        statusCheckContexts,
-        followUpRepositoryFileContents,
+    if (latestModeratorDecision) {
+      review = buildDiscussionGateReviewFromModeratorDecision({
+        decision: latestModeratorDecision,
+        summary: "Existing terminal PR moderator decision is already present in the latest conclusion thread.",
+        resolutionSummary: "The discussion round limit has already been resolved by the moderator. This rerun preserves that terminal state.",
+        blockingDependencies: [],
+      });
+    } else if (discussionRoundContext?.completedRounds >= discussionRoundContext.maxRounds) {
+      const [doctrine, moderatorPrompt] = await Promise.all([
+        readPrompt(doctrinePromptPath),
+        readPrompt(moderatorPromptPath),
+      ]);
+      const moderatorDecision = assertValidDiscussionModeratorDecision(await generateDiscussionModeratorDecision(
+        composeSystemPrompt(doctrine, moderatorPrompt),
+        buildDiscussionModeratorUserPrompt({
+          repository,
+          pullRequest,
+          files,
+          gate,
+          discussionContext,
+          automationEvidence,
+          failureLogContext,
+          followUpEvidenceContext,
+          prioritizedPaths: prioritizedFollowUpPaths,
+          roundContext: discussionRoundContext,
+          reviewerMemos: extractLatestDiscussionReviewerMemos(discussionThread?.comments?.nodes ?? []),
+          latestConclusionBody: latestFinalComment?.body ?? "",
+          latestHumanReplies: getLatestHumanConclusionThreadReplies(latestFinalComment?.replies?.nodes ?? []),
+        }),
+        model,
+      ));
+
+      try {
+        await publishDiscussionModeratorDecision(
+          discussionThread,
+          latestFinalComment,
+          moderatorDecision,
+          discussionRoundContext,
+        );
+      } catch (error) {
+        discussionPublicationFailure = error instanceof Error ? error : new Error(String(error));
+      }
+
+      review = buildDiscussionGateReviewFromModeratorDecision(moderatorDecision);
+    } else {
+      const [doctrine, productPrompt, technicalPrompt, riskPrompt, synthesisPrompt] = await Promise.all([
+        readPrompt(doctrinePromptPath),
+        readPrompt(productPromptPath),
+        readPrompt(technicalPromptPath),
+        readPrompt(riskPromptPath),
+        readPrompt(synthesisPromptPath),
+      ]);
+      let debate = await generateDiscussionDebate(
+        {
+          doctrine,
+          productPrompt,
+          technicalPrompt,
+          riskPrompt,
+          synthesisPrompt,
+        },
+        userPrompt,
+        model,
+      );
+      if (latestFinalComment) {
+        const unresolvedFollowUpBlockers = reconcileFollowUpTestableBlockers(
+          latestFinalComment,
+          files,
+          statusCheckContexts,
+          followUpRepositoryFileContents,
+        );
+
+        if (unresolvedFollowUpBlockers.length > 0) {
+          debate = applyFollowUpReconciliationToDebate(debate, unresolvedFollowUpBlockers);
+          logOperationalEvent("ai_pr_review.follow_up_blockers.applied", {
+            count: unresolvedFollowUpBlockers.length,
+            roles: unresolvedFollowUpBlockers.map((blocker) => blocker.role),
+          });
+        } else {
+          logOperationalEvent("ai_pr_review.follow_up_blockers.cleared", {
+            ciTestGreen: isCiTestCheckGreen(statusCheckContexts),
+          });
+        }
+      }
+
+      const discussionEvaluation = evaluateDiscussionRecommendation(debate);
+      const discussionPublication = await publishDiscussionOrFallback(
+        repository,
+        pullRequest,
+        gate,
+        debate,
+        model,
+        preferredDiscussionCategory,
       );
 
-      if (unresolvedFollowUpBlockers.length > 0) {
-        debate = applyFollowUpReconciliationToDebate(debate, unresolvedFollowUpBlockers);
-        logOperationalEvent("ai_pr_review.follow_up_blockers.applied", {
-          count: unresolvedFollowUpBlockers.length,
-          roles: unresolvedFollowUpBlockers.map((blocker) => blocker.role),
-        });
+      discussionUrl = discussionPublication.url;
+
+      if (discussionPublication.failure) {
+        discussionPublicationFailure = discussionPublication.failure;
+        review = [
+          buildDiscussionPublicationFallback(discussionPublication.failure),
+          "",
+          buildDiscussionGateReview(debate, discussionEvaluation),
+        ].join("\n");
       } else {
-        logOperationalEvent("ai_pr_review.follow_up_blockers.cleared", {
-          ciTestGreen: isCiTestCheckGreen(statusCheckContexts),
-        });
+        review = buildDiscussionGateReview(debate, discussionEvaluation);
       }
-    }
-
-    const discussionEvaluation = evaluateDiscussionRecommendation(debate);
-    const discussionPublication = await publishDiscussionOrFallback(
-      repository,
-      pullRequest,
-      gate,
-      debate,
-      model,
-      preferredDiscussionCategory,
-    );
-
-    discussionUrl = discussionPublication.url;
-
-    if (discussionPublication.failure) {
-      discussionPublicationFailure = discussionPublication.failure;
-      review = [
-        buildDiscussionPublicationFallback(discussionPublication.failure),
-        "",
-        buildDiscussionGateReview(debate, discussionEvaluation),
-      ].join("\n");
-    } else {
-      review = buildDiscussionGateReview(debate, discussionEvaluation);
     }
   } else {
     const reviewPrompt = await readPrompt(reviewPromptPath);
