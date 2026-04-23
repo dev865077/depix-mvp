@@ -33,6 +33,14 @@ Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
 O runbook canonico da prova operacional 0.1 esta em [Deploy e Runbooks](Deploy-e-Runbooks#runbook-da-prova-operacional-01).
 
+Antes de qualquer compra real, execute o preflight canonico:
+
+```bash
+npm run release:0.1:check
+```
+
+Esse comando nao faz compra real nem pagamento. Ele valida `production/alpha`, grava um JSON em `artifacts/release-0.1/` e falha antes da prova viva quando faltar token operacional, webhook Telegram, configuracao do tenant ou confirmacao externa do webhook Eulen.
+
 Estado atual do runbook: `validacao limitada`. Ele ja define pre-requisitos, passo a passo, checkpoints, fontes de log, validacao de reconciliacao Eulen e decisoes `pronto`, `recheck`, `fallback` e `falha`. A validacao passa para `completa` somente depois de uma compra real em `Alpha Production` anexar a evidencia obrigatoria.
 
 ## Leitura correta

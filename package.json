@@ -15,6 +15,7 @@
     "db:query:local": "wrangler d1 execute DB --local",
     "telegram:preflight": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-preflight.ts",
     "telegram:real-run": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-runner.ts",
+    "release:0.1:check": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/release-0.1-check.ts",
     "deploy:test": "wrangler deploy --env test",
     "deploy:production": "wrangler deploy --env production"
   },
