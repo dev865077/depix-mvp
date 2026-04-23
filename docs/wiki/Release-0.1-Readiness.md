@@ -2,34 +2,22 @@
 
 ## Objetivo
 
-Esta pagina registra o que ainda precisa estar pronto para a release `0.1` ser considerada segura para corte.
+Esta pagina consolida a leitura operacional da prova 0.1 e os criterios para considerar a release pronta para uso real em `Alpha Production`.
 
-## Critérios de corte
+## Escopo
 
-- o fluxo principal precisa estar validado no ambiente alvo
-- os webhooks operacionais precisam estar documentados e funcionais
-- os segredos e bindings de ambiente precisam estar definidos
-- os runbooks de operacao precisam existir e refletir o comportamento atual
-- qualquer dependência externa critica precisa ter procedimento de validacao e rollback
+A release 0.1 cobre o fluxo operacional minimo do MVP com foco em:
 
-## Itens que podem bloquear o corte
-
-- divergencia entre documento e codigo
-- ausencia de runbook operacional para um fluxo novo
-- falta de evidencia de teste humano ou prova operacional
-- dependencia externa sem instrucao de validacao ou recuperacao
-- mudancas em ambiente, segredo, fluxo de pagamento ou webhook sem atualizacao documental na mesma PR
-
-## Itens que podem ficar para 0.2
+- leitura de readiness
+- runbook canonico
+- validacao operacional antes de compra real
+- evidencia de operacao e acompanhamento
 
 Alguns itens podem ficar para `0.2` se houver runbook e aviso operacional:
 
-- melhorias de ergonomia nao criticas
-- refinamentos de copy que nao alterem o fluxo
-- expandir observabilidade alem do minimo necessario para operar
-- automatizacoes que nao sejam criticas para a liberacao da release
-
-## Runbook operacional
+- refinamentos de copy
+- automatizacoes adicionais de suporte
+- ajustes incrementais de observabilidade
 
 O runbook canonico da prova operacional 0.1 esta em [Deploy e Runbooks](Deploy-e-Runbooks#runbook-da-prova-operacional-01).
 
@@ -45,10 +33,29 @@ Estado atual do runbook: `validacao limitada`. Ele ja define pre-requisitos, pas
 
 ## Leitura correta
 
-Esta pagina nao substitui o runbook nem a documentacao de integracao. Ela so define o que ainda bloqueia o corte de release.
+Esta pagina nao substitui o runbook. Ela aponta o estado de prontidao e as regras de entrada para a prova 0.1.
 
-## Regra de manutencao
+## Criterios de prontidao
 
-- toda mudanca que altere ambiente, segredo, fluxo de pagamento ou webhook precisa atualizar esta pagina na mesma PR
-- se o runbook mudar, esta pagina precisa apontar para a versao canonica atual
-- se a validacao operacional avancar, o estado da validacao precisa ser reescrito aqui
+Para considerar a release pronta, o time deve ter:
+
+- runbook disponivel e coerente
+- ambiente `Alpha Production` acessivel
+- secrets operacionais configurados
+- validacao de integracao concluida
+- evidencia de execucao disponivel
+- preflight canonico aprovado
+
+## Evidencia esperada
+
+A evidencia da release deve incluir, quando aplicavel:
+
+- resultado do preflight canonico
+- logs operacionais relevantes
+- confirmacao de webhook e tenant
+- trilha de validacao Eulen
+- registro da compra real quando ocorrer
+
+## Nota operacional
+
+Nada nesta pagina autoriza compra real sem a execucao previa do preflight canonico e sem o runbook correspondente.
