@@ -42,6 +42,8 @@ flowchart LR
 - o bootstrap do Worker foi migrado para TypeScript em `src/index.ts`
 - a fronteira canonica de tipos do runtime ficou consolidada em `src/types/runtime.ts`
 - webhook principal da Eulen ja existe com validacao, deduplicacao e atualizacao base do agregado
+- as bordas de webhook do Telegram e da Eulen agora aplicam rate limit centralizado por `tenantId` e IP em ambientes nao locais, com janela fixa de 60 requests por minuto
+- em ambiente `local`, o rate limit de webhook e desativado na pratica para nao atrasar retry flows e testes
 - recheck operacional de deposito via `POST /ops/:tenantId/recheck/deposit` ja existe
 - `XState` ja existe no codigo para a progressao inicial de pedidos, isolado de transporte e side effects; o fluxo completo Telegram/Eulen ainda sera ligado em fatia posterior
 - a maquina de progresso de pedidos foi migrada para TypeScript estrito, com contratos explicitos de estado, evento e contexto

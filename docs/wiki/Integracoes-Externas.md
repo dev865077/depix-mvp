@@ -92,12 +92,8 @@ Estado atual:
 - o recheck de deposito e o webhook principal agora propagam o `correlationId` canonico do pedido para logs e telemetria
 - o client Eulen agora emite logs estruturados de inicio, sucesso e falha da request com `correlationId`, `requestId`, `tenantId`, `orderId` e `depositEntryId` quando disponiveis
 - o client Eulen agora aceita um bloco de telemetria opcional por request, sem alterar o contrato funcional da chamada
-- o fallback por janela de recheck de deposito tambem propaga o `correlationId` do pedido ao consultar a verdade remota
-- o webhook da Eulen tambem registra o `correlationId` canonico ao processar depositos e ao reparar duplicidades
-- a conciliacao de pagamento pode disparar notificacao assincrona no Telegram quando o estado visivel do pedido muda para confirmacao
-- a confirmacao assincrona e idempotente por transicao visivel e nao deve ser repetida por webhook, recheck ou fallback
-- o fluxo ainda depende da integracao do tenant com `partnerId`, `depixSplitAddress` e `splitFee` para criar deposito valido
-
-## Leitura correta
-
-Estas integracoes existem para suportar o fluxo do MVP; a documentacao nao deve presumir features externas nao implementadas.
+- o rate limit centralizado do webhook da Eulen compartilha a mesma politica aplicada aos webhooks do Telegram: 60 requests por minuto por IP + tenant em ambientes nao locais
+- em ambiente `local`, o rate limit do webhook nao bloqueia nem adiciona espera
+- o client Eulen no ambiente `local` zera os atrasos de retry para nao segurar suites de teste ou fluxos de desenvolvimento com retry habilitado
+- a confirmacao de pagamento continua podendo disparar notificacao assincrona no Telegram quando a conciliacao do webhook ou do recheck altera o estado visivel do pedido
+- a notificacao assincrona continua idempotente para nao repetir mensagens entre webhook, recheck e fallback

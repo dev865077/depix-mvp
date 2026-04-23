@@ -44,6 +44,9 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o sistema agora persiste `created_request_id` em `deposits` e `request_id` em `deposit_events` para ligar a trilha operacional usada no coletor de evidencia da release 0.1
 - o sistema agora persiste `correlation_id` canonico em `orders`, com backfill de linhas legadas via migracao
 - o `correlation_id` e propagado nos logs de Telegram, no webhook da Eulen, no recheck de deposito e na telemetria do client Eulen
+- a borda de webhook do Telegram e a borda de webhook da Eulen agora aplicam rate limit centralizado por `tenantId` e IP em ambientes nao locais
+- o limite atual e de 60 requests por minuto por `tenantId` + IP, com resposta `429` e `Retry-After` quando excedido
+- em ambiente `local`, o rate limit de webhook nao introduce espera para nao atrapalhar testes e fluxos de desenvolvimento
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`
@@ -72,12 +75,12 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - o ponto de entrada JavaScript da maquina continua carregavel em Node para compatibilidade com consumidores existentes
 - o `/start` agora reaproveita o pedido aberto mais recente e avanca o pedido inicial para `amount` sem duplicar a conversa
 - a etapa `amount` agora aceita valores BRL simples no Telegram e avanca o pedido para `wallet` quando o valor e valido
-- a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normaliza a entrada e avanca para `confirmation`
-- a confirmacao do pedido ainda depende da integracao completa com a Eulen para criar o deposito final
+- a etapa `wallet` agora aceita enderecos DePix/Liquid `lq1` e `ex1`, normalizando e persistindo o endereco antes de seguir para `confirmation`
+- o webhook da Eulen ja valida e idempotentiza o recebimento do pagamento e atualiza o estado local antes de acionar notificacao assincrona
 
-## Onde olhar depois
+## O que ainda nao esta pronto
 
-- se a duvida for sobre produto, leia [Visao Geral do Produto](Visao-Geral-do-Produto)
-- se a duvida for sobre fluxo, leia [Escopo e Fluxo](Escopo-e-Fluxo)
-- se a duvida for sobre estrutura tecnica, leia [Arquitetura Geral](Arquitetura-Geral) e [Estrutura do Repositorio](Estrutura-do-Repositorio)
-- se a duvida for sobre governanca, leia [Contribuicao e PRs](Contribuicao-e-PRs) e [Governanca Tecnica](Governanca-Tecnica)
+- o processamento completo do fluxo do bot ainda nao foi fechado em todas as bordas
+- ainda existem etapas de operacao e conciliacao a amadurecer para o fluxo inteiro
+
+```

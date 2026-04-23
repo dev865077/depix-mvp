@@ -44,6 +44,8 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
 - `POST /webhooks/eulen/:tenantId/deposit` agora grava `deposit_events` antes do batch atomico que atualiza `deposits` + `orders`, para nao perder evidencia se o agregado falhar no meio da escrita
 - `POST /webhooks/eulen/:tenantId/deposit` agora atualiza `deposits` + `orders` em um unico `db.batch()`, reduzindo o risco de estado parcial entre as duas tabelas
+- `POST /webhooks/eulen/:tenantId/deposit` e a borda de webhook do Telegram agora usam rate limit centralizado por `tenantId` e IP em ambiente nao local, com resposta `429` e `Retry-After` quando o limite e excedido
+- `POST /webhooks/eulen/:tenantId/deposit` e `POST /telegram/:tenantId/webhook` nao aplicam espera de rate limit em `local`, para preservar testes e dev flows
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ja consulta `deposits`, persiste eventos `recheck_deposits_list`, reconcilia linhas compactas por `qrId` e pode acionar notificacao assincrona no Telegram por linha reparada
 - o Worker Module expoe `scheduled(controller, env, ctx)` para reconciliação agendada bounded de depositos Telegram pendentes; `test` e `production` rodam a cada 15 minutos com janela maxima de 2 horas e limite de 5 depositos por tenant/rodada
@@ -84,7 +86,4 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - se o agregado local estiver quebrado e o `order` nao existir, responde `409 order_not_found`
 - se `deposit-status` devolver `qrId` ja associado a outro deposito, responde `409 deposit_qr_id_conflict`
 - se `deposit-status` divergir de um `qrId` ja correlacionado no deposito atual, responde `409 deposit_qr_id_mismatch`
-- se o agregado local ja estiver concluido e `deposit-status` voltar com estado inferior nao terminal, responde `409 deposit_status_regression`
-- se a Eulen nao responder com um `status` utilizavel, responde `502 deposit_status_invalid_response`
-- se a consulta remota falhar, responde `502 deposit_status_unavailable`
-- recheck repetido com a mesma verdade remota e idempotente
+- se o agregado
