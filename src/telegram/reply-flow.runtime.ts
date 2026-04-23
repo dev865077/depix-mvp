@@ -11,9 +11,7 @@
 import { b, fmt } from "@grammyjs/parse-mode";
 
 import { log } from "../lib/logger.js";
-import { readTenantSecret } from "../config/tenants.js";
 import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
-import { getOrderById } from "../db/repositories/orders-repository.js";
 import { ORDER_PROGRESS_STATES } from "../order-flow/order-progress-machine.js";
 import {
   cancelTelegramOpenOrder,
@@ -30,10 +28,10 @@ import {
 } from "../services/telegram-conversation-timeout.js";
 import { syncTelegramCanonicalMessage } from "../services/telegram-canonical-message.js";
 import {
-  confirmTelegramOrder,
-  TelegramOrderConfirmationError,
-} from "../services/telegram-order-confirmation.js";
-import { processDepositRecheck } from "../services/eulen-deposit-recheck.js";
+  confirmTelegramPaymentWithBoundary,
+  reconcileTelegramPaymentWithBoundary,
+} from "../services/internal-financial-api.js";
+import { TelegramOrderConfirmationError } from "../services/telegram-order-confirmation.js";
 import { formatBrlAmountInCents } from "./brl-amount.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
@@ -1627,7 +1625,7 @@ async function handleTelegramStatusRequest(ctx, input, source) {
 
 async function handleTelegramConfirmRequest(ctx, input, order, source) {
   try {
-    const confirmationSession = await confirmTelegramOrder({
+    const confirmationSession = await confirmTelegramPaymentWithBoundary({
       env: input.env,
       db: input.db,
       tenant: input.tenant,
@@ -1638,6 +1636,8 @@ async function handleTelegramConfirmRequest(ctx, input, order, source) {
 
     logTelegramConfirmationDecision(ctx, input, "confirm", confirmationSession.order, {
       accepted: confirmationSession.accepted,
+      boundarySource: confirmationSession.boundarySource,
+      usedFallback: confirmationSession.usedFallback,
       conflict: confirmationSession.conflict,
       depositEntryId: confirmationSession.deposit?.depositEntryId,
       source,
@@ -1685,21 +1685,15 @@ async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit,
   }
 
   try {
-    const eulenApiToken = await readTenantSecret(input.env, input.tenant, "eulenApiToken");
-    const result = await processDepositRecheck({
+    const result = await reconcileTelegramPaymentWithBoundary({
+      env: input.env,
       db: input.db,
-      runtimeConfig: input.runtimeConfig,
       tenant: input.tenant,
-      eulenApiToken,
-      rawBody: JSON.stringify({
-        depositEntryId: deposit.depositEntryId,
-      }),
-      requestId: input.requestContext?.requestId,
+      runtimeConfig: input.runtimeConfig,
+      requestContext: input.requestContext,
+      order,
+      deposit,
     });
-    const [updatedOrder, updatedDeposit] = await Promise.all([
-      getOrderById(input.db, input.tenant.tenantId, String(order.orderId)),
-      readLatestDepositForTelegramOrder(input, order),
-    ]);
 
     logTelegramEvent(input, "info", "telegram.deposit_recheck.completed", {
       handlerName: ctx.state?.telegramHandler,
@@ -1707,17 +1701,19 @@ async function reconcileTelegramAwaitingPaymentOrder(ctx, input, order, deposit,
       correlationId: order.correlationId,
       orderId: order.orderId,
       depositEntryId: deposit.depositEntryId,
-      code: result.code,
-      externalStatus: result.details.externalStatus,
-      orderCurrentStep: result.details.orderCurrentStep,
-      orderStatus: result.details.orderStatus,
+      boundarySource: result.boundarySource,
+      usedFallback: result.usedFallback,
+      code: result.result?.code,
+      externalStatus: result.result?.details?.externalStatus,
+      orderCurrentStep: result.result?.details?.orderCurrentStep,
+      orderStatus: result.result?.details?.orderStatus,
     });
 
     return {
-      order: updatedOrder ?? order,
-      deposit: updatedDeposit ?? deposit,
+      order: result.order ?? order,
+      deposit: result.deposit ?? deposit,
       attempted: true,
-      result,
+      result: result.result,
     };
   } catch (error) {
     logTelegramEvent(input, "warn", "telegram.deposit_recheck.failed", {
