@@ -231,6 +231,7 @@ Comece por aqui:
 - [docs/wiki/Integracoes-Externas.md](./docs/wiki/Integracoes-Externas.md)
 - [docs/wiki/Deploy-e-Runbooks.md](./docs/wiki/Deploy-e-Runbooks.md)
 - [docs/wiki/Testes-e-Qualidade.md](./docs/wiki/Testes-e-Qualidade.md)
+- [docs/wiki/Automacoes-e-Prompts.md](./docs/wiki/Automacoes-e-Prompts.md)
 
 ## Regras de interpretacao da documentacao
 
