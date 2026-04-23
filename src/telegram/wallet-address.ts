@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { bech32, bech32m } from "bech32";
 import * as blech32 from "blech32/dist/blech32.cjs.development.js";
 

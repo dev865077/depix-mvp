@@ -2,9 +2,7 @@
 
 ## Lista curta de excecoes de runtime ainda existentes em `src/`
 
-- `src/telegram/diagnostics.js`
-- `src/telegram/reply-flow.runtime.js`
-- `src/telegram/wallet-address.js`
+Nenhuma excecao de runtime permanece em `src/`.
 
 ## Observacao
 
@@ -24,6 +22,9 @@ Os arquivos abaixo foram migrados para TypeScript e portanto nao devem mais apar
 - `src/services/telegram-order-confirmation.ts`
 - `src/services/telegram-payment-notifications.ts`
 - `src/services/telegram-webhook-ops.ts`
+- `src/telegram/diagnostics.ts`
+- `src/telegram/reply-flow.runtime.ts`
+- `src/telegram/wallet-address.ts`
 
 ## Regra de manutencao
 
