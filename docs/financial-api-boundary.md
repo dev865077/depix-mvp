@@ -6,8 +6,8 @@ This document defines the target contract between `debot` and the future financi
 
 Current monolith evidence:
 
-- Bot payment creation and pending-payment reconciliation now flow through the internal financial API boundary in `src/services/internal-financial-api.ts`.
-- The Telegram runtime no longer imports Eulen reconciliation directly; it consumes the boundary and keeps an explicit legacy fallback during the transition.
+- Bot payment creation still calls Eulen directly in `src/services/telegram-order-confirmation.ts`.
+- Bot pending-payment status still triggers direct reconciliation in `src/telegram/reply-flow.runtime.ts`.
 - The financial surface already exists as external webhook plus operational reconciliation routes in `src/routes/webhooks.ts` and `src/routes/ops.ts`.
 
 ## Boundary Rule
