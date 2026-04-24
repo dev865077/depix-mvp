@@ -62,12 +62,12 @@
 - a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel no `pull_request`
 - a Discussion de PR agora tem rounds comuns limitados; quando o payload expuser contexto de round, a revisao deve usar esse numero para calibrar severidade e convergir sem reabrir debate antigo
 - depois do limite configurado de rounds comuns, um moderador terminal emite a decisao final da Discussion de PR; revisores especialistas nao devem tentar contornar esse limite
-- quando a revisÃ£o cair no caminho terminal de moderador, a saida precisa continuar coerente com o contrato canonico da Discussion e com o estado final do check
+- quando a revisao cair no caminho terminal de moderador, a saida precisa continuar coerente com o contrato canonico da Discussion e com o estado final do check
 - o contrato de review nao deve depender de edicao retroativa de comentarios anteriores; cada rodada continua append-only
 - quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`
 - a reconciliacao de follow-up blockers exige ler a ultima conclusao da Discussion, transformar a resposta final em blockers testaveis canonicos e manter os bloqueios anteriores ativos ate haver alinhamento entre diff atual, evidencia explicita de arquivo de teste e `CI / Test`
 - em follow-up, a revisao deve preferir a reconciliacao estavel do conjunto anterior de bloqueios em vez de reabrir um blocker mais amplo sem contradicao concreta
-- approvaÃ§Ãµes de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
+- aprovacoes de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
 - a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
 - contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
 - a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao

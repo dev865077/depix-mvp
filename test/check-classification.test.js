@@ -9,14 +9,14 @@ describe("check classification source of truth", () => {
   it("parses required and informative checks from the canonical yaml", () => {
     const policy = parseCheckClassificationYaml([
       "required:",
-      "  - CI / Test",
+      "  - Test",
       "informative:",
       "  - AI PR Review / discussion-review",
       "  - AI Wiki Update / update-wiki",
     ].join("\n"));
 
     expect(policy).toEqual({
-      required: ["CI / Test"],
+      required: ["Test"],
       informative: [
         "AI PR Review / discussion-review",
         "AI Wiki Update / update-wiki",
@@ -26,15 +26,15 @@ describe("check classification source of truth", () => {
 
   it("classifies blocking and advisory checks deterministically", () => {
     const policy = {
-      required: ["CI / Test"],
+      required: ["Test"],
       informative: [
         "AI PR Review / discussion-review",
         "AI Wiki Update / update-wiki",
       ],
     };
 
-    expect(classifyCheck(policy, "CI / Test")).toEqual({
-      context: "CI / Test",
+    expect(classifyCheck(policy, "Test")).toEqual({
+      context: "Test",
       classification: "required",
       blocking: true,
     });
@@ -47,7 +47,7 @@ describe("check classification source of truth", () => {
 
   it("fails closed for an unclassified check", () => {
     expect(() => classifyCheck({
-      required: ["CI / Test"],
+      required: ["Test"],
       informative: [],
     }, "unknown-check")).toThrow(/not classified/i);
   });

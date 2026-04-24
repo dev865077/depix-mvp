@@ -10,7 +10,7 @@ const mergeDoc = readFileSync("docs/wiki/PR-Checks-e-Merge.md", "utf8");
 describe("pr check classification workflow", () => {
   it("pins the canonical check classification source of truth", () => {
     expect(classificationDoc).toContain("required:");
-    expect(classificationDoc).toContain("- CI / Test");
+    expect(classificationDoc).toContain("- Test");
     expect(classificationDoc).toContain("informative:");
     expect(classificationDoc).toContain("- AI PR Review / discussion-review");
     expect(classificationDoc).toContain("- AI Wiki Update / update-wiki");
@@ -33,7 +33,8 @@ describe("pr check classification workflow", () => {
 
   it("documents the final convention in one wiki page", () => {
     expect(mergeDoc).toContain("A classificacao canonica vive em `docs/check-classification.yml`.");
-    expect(mergeDoc).toContain("- `CI / Test`");
+    expect(mergeDoc).toContain("- `Test`");
+    expect(mergeDoc).toContain("aparece como `CI / Test`");
     expect(mergeDoc).toContain("- `AI PR Review / discussion-review`");
     expect(mergeDoc).toContain("- `AI Wiki Update / update-wiki`");
   });

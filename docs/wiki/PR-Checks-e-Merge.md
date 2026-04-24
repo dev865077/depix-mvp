@@ -17,7 +17,9 @@ O fluxo de PR consome esse arquivo para decidir se um check e:
 
 ### Obrigatorio
 
-- `CI / Test`
+- `Test`
+
+Na UI do GitHub, esse check aparece como `CI / Test`, porque o workflow se chama `CI` e o job se chama `Test`.
 
 ### Informativos
 
@@ -38,7 +40,7 @@ Sem virar bloqueio vermelho enganoso para merge.
 
 ## Efeito esperado no fluxo
 
-- `CI / Test` continua sendo o gate canonico de merge
+- `Test` continua sendo o gate canonico de merge; na PR ele aparece como `CI / Test`
 - `discussion-review` continua produzindo contexto e warnings, mas sem bloquear merge
 - `update-wiki` continua tentando sincronizar a wiki e reportar warnings, mas sem bloquear merge
 
