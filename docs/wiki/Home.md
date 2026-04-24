@@ -21,6 +21,16 @@ O `depix-mvp` e uma plataforma multi-tenant de bot Telegram para o fluxo `DePix`
 - ambientes de `test` e `production` no Cloudflare
 - documentacao tecnica versionada em `docs/`
 
+## Modelo alvo de ownership
+
+Este repositorio ainda concentra o MVP operacional enquanto o split nao termina. Para novas referencias operacionais, use o modelo alvo do track `#674`:
+
+- `debot`: conversa Telegram, comandos, copy, callbacks e UX.
+- `api`: pagamentos, Eulen, D1 financeiro, webhooks, recheck e rotas ops financeiras.
+- `github-automation`: prompts, triagem, planning, refinement, review de PR e publicacao da wiki.
+
+Referencias ao monolito devem ser lidas como transitorias. Quando mantidas em runbooks, elas precisam apontar para o substituto correto no modelo de tres repositorios.
+
 ## Estado atual em uma leitura
 
 - `Hono` ja e a borda HTTP real do Worker

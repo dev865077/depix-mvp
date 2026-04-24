@@ -8,6 +8,16 @@ Em `wrangler.jsonc`, o projeto define:
 - `test`
 - `production`
 
+## Ownership alvo
+
+Enquanto o split nao termina, estes ambientes e segredos ainda sao operados pelo monolito `depix-mvp`. Depois do cutover do track `#674`, a responsabilidade deve ficar separada assim:
+
+- `debot`: secrets e bindings do bot Telegram e da comunicacao bot -> API.
+- `api`: Eulen, split, D1 financeiro, webhooks, recheck e rotas ops financeiras.
+- `github-automation`: tokens e secrets usados por workflows de triagem, planning, review e wiki.
+
+Qualquer instrucao antiga que trate `depix-mvp` como destino permanente de segredos deve ser lida como transitoria ate o cutover.
+
 ## Secrets
 
 O projeto depende de secrets por tenant para:
