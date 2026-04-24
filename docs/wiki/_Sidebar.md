@@ -23,6 +23,7 @@
 
 - [Estrutura do Repositorio](Estrutura-do-Repositorio)
 - [Contribuicao e PRs](Contribuicao-e-PRs)
+- [PR Checks e Merge](PR-Checks-e-Merge)
 - [Automacoes e Prompts](Automacoes-e-Prompts)
 - [Testes e Qualidade](Testes-e-Qualidade)
 - [Migracao TypeScript](Migracao-TypeScript)
