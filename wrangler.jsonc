@@ -17,6 +17,12 @@
       "migrations_dir": "migrations"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "TENANT_REGISTRY_KV",
+      "id": "da9c68eed6a748a3b8cd181550fbd195"
+    }
+  ],
   "vars": {
     "APP_NAME": "depix-mvp",
     "APP_ENV": "local",
@@ -39,6 +45,12 @@
           "database_name": "depix-mvp-test",
           "database_id": "44412622-181f-4eee-b610-4ef20d2387c3",
           "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "TENANT_REGISTRY_KV",
+          "id": "3e0405c5ed824272bb84b5beea298efa"
         }
       ],
       "secrets_store_secrets": [
@@ -132,6 +144,12 @@
           "database_name": "depix-mvp-production",
           "database_id": "e4a13633-8e26-4c1a-aa9e-db8e35360cb4",
           "migrations_dir": "migrations"
+        }
+      ],
+      "kv_namespaces": [
+        {
+          "binding": "TENANT_REGISTRY_KV",
+          "id": "66104d1784c84a3cad8eaaedcecd4caa"
         }
       ],
       "secrets_store_secrets": [
