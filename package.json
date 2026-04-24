@@ -16,6 +16,7 @@
     "telegram:preflight": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-preflight.ts",
     "telegram:real-run": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-runner.ts",
     "release:0.1:check": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/release-0.1-check.ts",
+    "kv:tenant-registry:seed": "node scripts/seed-tenant-registry-kv.mjs",
     "deploy:test": "wrangler deploy --env test",
     "deploy:production": "wrangler deploy --env production"
   },

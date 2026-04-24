@@ -41,6 +41,7 @@ export interface WorkerEnv {
   EULEN_API_TIMEOUT_MS: string;
   ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION?: string;
   TENANT_REGISTRY: string;
+  TENANT_REGISTRY_KV: KVNamespace;
   DB: D1Database;
   [bindingName: string]: unknown;
 }
