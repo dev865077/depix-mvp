@@ -28,7 +28,8 @@
 - merge em `main` exige PR
 - metodo permitido em `main`: `squash`
 - reviews obrigatorios em `required_approving_review_count`: `0`
-- check obrigatorio em `required_status_checks`: `CI / Test`
+- check obrigatorio em `required_status_checks`: `Test`
+- nome exibido na PR: `CI / Test`
 - checks informativos fora de `required_status_checks`: `update-wiki`, `discussion-review`
 
 ## Gate de decisao antes da PR
