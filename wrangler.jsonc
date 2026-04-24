@@ -29,7 +29,8 @@
     "LOG_LEVEL": "debug",
     "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
     "EULEN_API_TIMEOUT_MS": "10000",
-    "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "false"
+    "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "false",
+    "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
   },
   "env": {
     "test": {
@@ -127,7 +128,8 @@
         "EULEN_API_TIMEOUT_MS": "10000",
         "ENABLE_OPS_DEPOSIT_RECHECK": "true",
         "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
-        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true"
+        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
+        "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
       }
     },
     "production": {
@@ -225,7 +227,8 @@
         "EULEN_API_TIMEOUT_MS": "10000",
         "ENABLE_OPS_DEPOSIT_RECHECK": "true",
         "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
-        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true"
+        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
+        "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
       }
     }
   }

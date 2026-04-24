@@ -17,6 +17,9 @@
     "telegram:real-run": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/telegram-real-flow-runner.ts",
     "release:0.1:check": "TMPDIR=/tmp TEMP=/tmp TMP=/tmp tsx scripts/release-0.1-check.ts",
     "kv:tenant-registry:seed": "node scripts/seed-tenant-registry-kv.mjs",
+    "waf:webhook-rate-limit:check": "node scripts/apply-webhook-rate-limit-waf.mjs --check",
+    "waf:webhook-rate-limit:dry-run": "node scripts/apply-webhook-rate-limit-waf.mjs --dry-run",
+    "waf:webhook-rate-limit:apply": "node scripts/apply-webhook-rate-limit-waf.mjs",
     "deploy:test": "wrangler deploy --env test",
     "deploy:production": "wrangler deploy --env production"
   },

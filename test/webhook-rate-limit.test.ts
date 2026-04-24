@@ -29,7 +29,7 @@ const TENANT_REGISTRY = JSON.stringify({
   },
 });
 
-function createWorkerEnv() {
+function createWorkerEnv(overrides: Record<string, unknown> = {}) {
   return {
     DB: env.DB,
     APP_NAME: "depix-mvp",
@@ -38,12 +38,14 @@ function createWorkerEnv() {
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
     TENANT_REGISTRY_KV: createTenantRegistryKv(TENANT_REGISTRY),
+    ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK: "false",
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
     ALPHA_DEPIX_SPLIT_ADDRESS: "split-address-alpha",
     ALPHA_DEPIX_SPLIT_FEE: "12.50%",
+    ...overrides,
   };
 }
 
@@ -131,8 +133,8 @@ describe("webhook rate limiting", () => {
     expect(getWebhookRateLimitBucketCountForTests()).toBe(1);
   });
 
-  it("returns 429 with Retry-After for Telegram webhook overflow by IP and tenant", async function assertTelegramWebhookLimit() {
-    const clientIp = "203.0.113.20";
+  it("does not use isolate memory as the primary webhook protection", async function assertFallbackDisabledByDefault() {
+    const clientIp = "203.0.113.15";
     const app = createApp();
 
     seedBlockedWebhookBucket("telegram_webhook", clientIp);
@@ -160,6 +162,41 @@ describe("webhook rate limiting", () => {
       createWorkerEnv(),
     );
 
+    expect(response.status).not.toBe(429);
+    expect(response.headers.get("Retry-After")).toBeNull();
+  });
+
+  it("returns 429 with Retry-After for Telegram webhook overflow by IP and tenant", async function assertTelegramWebhookLimit() {
+    const clientIp = "203.0.113.20";
+    const app = createApp();
+
+    seedBlockedWebhookBucket("telegram_webhook", clientIp);
+
+    const response = await app.request(
+      "https://example.com/telegram/alpha/webhook",
+      {
+        method: "POST",
+        headers: {
+          "cf-connecting-ip": clientIp,
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "alpha-telegram-secret",
+        },
+        body: JSON.stringify({
+          update_id: 10000,
+          message: {
+            message_id: 1,
+            date: 1710000000,
+            chat: { id: 1, type: "private" },
+            from: { id: 1, is_bot: false, first_name: "Tester" },
+            text: "/start",
+          },
+        }),
+      },
+      createWorkerEnv({
+        ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK: "true",
+      }),
+    );
+
     await expectRateLimitedResponse(response, "telegram_webhook");
   });
 
@@ -184,7 +221,9 @@ describe("webhook rate limiting", () => {
           status: "pending",
         }),
       },
-      createWorkerEnv(),
+      createWorkerEnv({
+        ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK: "true",
+      }),
     );
 
     await expectRateLimitedResponse(response, "eulen_deposit_webhook");
