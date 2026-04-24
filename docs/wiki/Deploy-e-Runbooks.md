@@ -1,15 +1,5 @@
 # Deploy e Runbooks
 
-## Aviso de transicao
-
-Os comandos abaixo ainda descrevem o monolito `depix-mvp`, que segue operacional ate o cutover. No modelo alvo:
-
-- deploy e rollback do bot ficam no repositorio `debot`
-- deploy e rollback da superficie financeira ficam no repositorio `api`
-- workflows e automacoes de GitHub ficam no repositorio `github-automation`
-
-Enquanto o split do track `#674` nao estiver concluido, use este runbook para operar `depix-mvp`. Depois do cutover, qualquer referencia ao monolito deve ser removida ou mantida apenas como historico com link para o repositorio substituto.
-
 ## Scripts relevantes
 
 - `npm run dev`

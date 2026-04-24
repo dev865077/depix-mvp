@@ -34,16 +34,6 @@ Hoje o sistema cobre a vertical principal do MVP:
 
 A direcao de longo prazo fica separada em [docs/wiki/Visao-Futura-da-Plataforma.md](./docs/wiki/Visao-Futura-da-Plataforma.md), para nao misturar o MVP atual com a ambicao futura do produto.
 
-## Transicao para tres repositorios
-
-`depix-mvp` ainda e o repositorio operacional do MVP enquanto o split nao termina. No modelo alvo, as referencias operacionais devem apontar para:
-
-- `debot`: bot Telegram, conversa, comandos e UX.
-- `api`: pagamentos, Eulen, D1 financeiro, webhooks e rotas ops financeiras.
-- `github-automation`: triagem, planning, refinement, review de PR e automacoes de wiki.
-
-Quando uma instrucao deste repositorio falar em deploy, segredos ou suporte usando `depix-mvp`, leia como caminho transitorio ate o cutover registrado no track `#674`.
-
 ## Estado atual do `main`
 
 O `main` ja inclui:
@@ -210,8 +200,6 @@ Deploys canonicos:
 npm run deploy:test
 npm run deploy:production
 ```
-
-Esses comandos continuam validos para o monolito de transicao. Depois do split, o deploy do bot pertence ao repositorio `debot`, o deploy financeiro pertence ao repositorio `api`, e as automacoes GitHub pertencem ao repositorio `github-automation`.
 
 Hosts publicos canonicos:
 
