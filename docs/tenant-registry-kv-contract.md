@@ -30,3 +30,7 @@ when materializing runtime configuration.
 There is no fallback to the inline `TENANT_REGISTRY` var. If the KV binding or
 key is absent, the Worker fails closed with the canonical
 `invalid_tenant_registry` error.
+
+Validation evidence for tenant routing, runtime config, dry-run bindings, and
+the no-inline-registry guard is recorded in
+[`docs/tenant-registry-kv-validation.md`](tenant-registry-kv-validation.md).
