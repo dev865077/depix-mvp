@@ -62,7 +62,8 @@ O `wrangler.jsonc` de `test` e `production` usa estes bindings:
 
 ## Split DePix
 
-O split da cobranca e obrigatorio no MVP. O `TENANT_REGISTRY` versionado guarda apenas nomes de bindings em `splitConfigBindings`.
+O split da cobranca e obrigatorio no MVP. O registry em `TENANT_REGISTRY_KV`
+guarda apenas nomes de bindings em `splitConfigBindings`.
 
 Valores reais ficam no `Secrets Store`:
 
@@ -80,10 +81,12 @@ Continuam como configuracao versionada:
 - `LOG_LEVEL`
 - `EULEN_API_BASE_URL`
 - `EULEN_API_TIMEOUT_MS`
-- `TENANT_REGISTRY`
 - `displayName`
 - `eulenPartnerId`
 - `splitConfigBindings`
+
+O registry de tenants deixa de ficar em `vars`; o Worker le a chave
+`TENANT_REGISTRY` no binding KV `TENANT_REGISTRY_KV`.
 
 ## Rotacao de um secret de test ou production
 

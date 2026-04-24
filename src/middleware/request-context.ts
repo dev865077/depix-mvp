@@ -22,7 +22,7 @@ import type { AppContext } from "../types/runtime.js";
 export async function requestContextMiddleware(c: AppContext, next: Next): Promise<void> {
   const requestId = crypto.randomUUID();
   const requestStartedAt = Date.now();
-  const runtimeConfig = readRuntimeConfig(c.env);
+  const runtimeConfig = await readRuntimeConfig(c.env);
   const db = runtimeConfig.database.bindingConfigured ? getDatabase(c.env) : undefined;
   // Primeiro identificamos se a requisicao aponta para algum tenant conhecido.
   // Isso nos permite devolver 404 cedo para evitar processamento em tenant errado.

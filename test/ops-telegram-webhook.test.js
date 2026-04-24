@@ -17,6 +17,7 @@ import {
   clearTelegramWebhookPublicSurfaceEnsureCache,
   ensureTelegramWebhookPublicSurface,
 } from "../src/services/telegram-webhook-ops.js";
+import { withTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -49,7 +50,6 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY,
     OPS_ROUTE_BEARER_TOKEN: "ops-route-test-token",
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
@@ -57,7 +57,7 @@ function createWorkerEnv(overrides = {}) {
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
     ALPHA_DEPIX_SPLIT_ADDRESS: "split-address-alpha",
     ALPHA_DEPIX_SPLIT_FEE: "1.00%",
-    ...overrides,
+    ...withTenantRegistryKv(overrides, TENANT_REGISTRY),
   };
 }
 

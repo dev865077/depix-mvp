@@ -18,6 +18,7 @@ import { createOrder, getOrderById, updateOrderById } from "../src/db/repositori
 import { reconcileOrderPatch } from "../src/services/eulen-deposit-webhook.js";
 import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./helpers/database-schema.js";
+import { createTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -58,7 +59,7 @@ function createWorkerEnv() {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY,
+    TENANT_REGISTRY_KV: createTenantRegistryKv(TENANT_REGISTRY),
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",

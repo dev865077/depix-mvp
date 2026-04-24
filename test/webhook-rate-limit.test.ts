@@ -10,6 +10,24 @@ import {
   WEBHOOK_RATE_LIMIT_POLICY,
   type WebhookRateLimitScope,
 } from "../src/middleware/webhook-rate-limit.js";
+import { createTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
+
+const TENANT_REGISTRY = JSON.stringify({
+  alpha: {
+    displayName: "Alpha",
+    eulenPartnerId: "partner-alpha",
+    splitConfigBindings: {
+      depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+      splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+    },
+    secretBindings: {
+      telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+      telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+      eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+      eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+    },
+  },
+});
 
 function createWorkerEnv() {
   return {
@@ -19,22 +37,7 @@ function createWorkerEnv() {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY: JSON.stringify({
-      alpha: {
-        displayName: "Alpha",
-        eulenPartnerId: "partner-alpha",
-        splitConfigBindings: {
-          depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-    }),
+    TENANT_REGISTRY_KV: createTenantRegistryKv(TENANT_REGISTRY),
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",

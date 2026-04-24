@@ -46,7 +46,9 @@ Para o fluxo Telegram, existe tambem a configuracao de timeout de conversa abert
 
 ## Como o runtime resolve isso
 
-O registro nao sensivel fica em `TENANT_REGISTRY`. Cada tenant aponta para nomes de bindings secretos, e o runtime materializa esses valores quando necessario.
+O registro nao sensivel fica no Cloudflare KV, no binding `TENANT_REGISTRY_KV`
+e na chave `TENANT_REGISTRY`. Cada tenant aponta para nomes de bindings
+secretos, e o runtime materializa esses valores quando necessario.
 
 Em `test` e `production`, o projeto usa `Cloudflare Secrets Store` via `secrets_store_secrets` no `wrangler.jsonc`.
 
@@ -63,7 +65,7 @@ Os valores reais desses bindings ficam no Cloudflare Secrets Store em `test` e `
 
 O mesmo principio vale para `OPS_ROUTE_BEARER_TOKEN`: ele nao deve entrar em `vars` versionadas nem em codigo. Em ambientes publicados, a recomendacao e materializa-lo como secret do Worker ou via Secrets Store.
 
-Quando o time quiser reduzir blast radius por tenant, o binding tenant-scoped deixa de ser derivado do `tenantId` e passa a ser declarado explicitamente no `TENANT_REGISTRY`:
+Quando o time quiser reduzir blast radius por tenant, o binding tenant-scoped deixa de ser derivado do `tenantId` e passa a ser declarado explicitamente no registry armazenado em `TENANT_REGISTRY_KV`:
 
 ```json
 {
@@ -99,7 +101,7 @@ Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel p
 ## Onboarding de novo tenant
 
 - por padrao, novo tenant continua herdando o token global `OPS_ROUTE_BEARER_TOKEN`
-- quando o time quiser isolar esse tenant, declara `opsBindings.depositRecheckBearerToken` no `TENANT_REGISTRY` e provisiona esse binding secreto no ambiente
+- quando o time quiser isolar esse tenant, declara `opsBindings.depositRecheckBearerToken` no registry em `TENANT_REGISTRY_KV` e provisiona esse binding secreto no ambiente
 - se o binding tenant-scoped estiver declarado e invalido, a rota falha fechada com `503 ops_route_disabled` ate a configuracao ser corrigida
 - a validacao do registry tambem falha fechada em lookup quando encontra contrato malformado, em vez de continuar com dados parcialmente normalizados
 

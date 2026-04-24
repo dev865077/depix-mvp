@@ -12,6 +12,7 @@ import { createDeposit, getDepositByDepositEntryId } from "../src/db/repositorie
 import { createOrder, getOrderById } from "../src/db/repositories/orders-repository.js";
 import * as telegramRuntimeModule from "../src/telegram/runtime.js";
 import { resetDatabaseSchema } from "./helpers/database-schema.js";
+import { withTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 const TENANT_REGISTRY = JSON.stringify({
   alpha: {
@@ -52,7 +53,6 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY,
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -67,7 +67,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_DEPIX_SPLIT_FEE: "15.00%",
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-test-token",
-    ...overrides,
+    ...withTenantRegistryKv(overrides, TENANT_REGISTRY),
   };
 }
 

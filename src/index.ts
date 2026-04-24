@@ -15,7 +15,7 @@ export async function handleScheduledDepositReconciliation(
   controller: ScheduledController,
   env: WorkerEnv,
 ): Promise<void> {
-  const runtimeConfig = readRuntimeConfig(env);
+  const runtimeConfig = await readRuntimeConfig(env);
 
   await runScheduledDepositReconciliation({
     env,
