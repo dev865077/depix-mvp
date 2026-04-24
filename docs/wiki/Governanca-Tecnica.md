@@ -26,7 +26,6 @@
 - ruleset ativo: `main-required-checks`
 - alvo efetivo: `refs/heads/main`
 - merge em `main` exige PR
-- merge em `main` exige `1` review de aprovacao
 - metodo permitido em `main`: `squash`
 - check obrigatorio em `required_status_checks`: `CI / Test`
 - checks informativos fora de `required_status_checks`: `update-wiki`, `discussion-review`
