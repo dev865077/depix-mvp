@@ -30,7 +30,16 @@ jobs:
         with:
           node-version: 20
 
+      - name: Read check classification
+        id: check_classification
+        env:
+          CHECK_CLASSIFICATION_PATH: docs/check-classification.yml
+          CHECK_CONTEXT: AI Wiki Update / update-wiki
+        run: node scripts/read-check-classification.mjs >> "$GITHUB_OUTPUT"
+
       - name: Generate wiki updates
+        id: generate_wiki
+        continue-on-error: ${{ steps.check_classification.outputs.blocking != 'true' }}
         env:
           AI_WIKI_PROMPT_PATH: .github/prompts/ai-wiki-update.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,6 +49,8 @@ jobs:
 
       - name: Commit docs/wiki changes
         id: commit_docs
+        if: steps.generate_wiki.outcome == 'success'
+        continue-on-error: ${{ steps.check_classification.outputs.blocking != 'true' }}
         shell: bash
         run: |
           if git diff --quiet -- docs/wiki; then
@@ -54,8 +65,23 @@ jobs:
           git push
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
+      - name: Report advisory update-wiki outcome
+        if: steps.check_classification.outputs.blocking != 'true' && (steps.generate_wiki.outcome != 'success' || steps.commit_docs.outcome == 'failure' || steps.commit_docs.outcome == 'cancelled')
+        shell: bash
+        run: |
+          {
+            echo "## Advisory PR check"
+            echo ""
+            echo "- Check: \`AI Wiki Update / update-wiki\`"
+            echo "- Classification: \`${{ steps.check_classification.outputs.classification }}\`"
+            echo "- Generate outcome: \`${{ steps.generate_wiki.outcome }}\`"
+            echo "- Commit outcome: \`${{ steps.commit_docs.outcome || 'skipped' }}\`"
+            echo "- Merge effect: none"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Advisory check::AI Wiki Update / update-wiki did not complete successfully, but it is classified as informative and does not block merge."
+
       - name: Detect GitHub Wiki availability
-        if: steps.commit_docs.outputs.changed == 'true'
+        if: steps.generate_wiki.outcome == 'success' && steps.commit_docs.outcome == 'success' && steps.commit_docs.outputs.changed == 'true'
         id: wiki_meta
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,7 +108,7 @@ jobs:
           fi
 
       - name: Publish GitHub Wiki
-        if: steps.commit_docs.outputs.changed == 'true' && steps.wiki_meta.outputs.has_wiki == 'true'
+        if: steps.generate_wiki.outcome == 'success' && steps.commit_docs.outcome == 'success' && steps.commit_docs.outputs.changed == 'true' && steps.wiki_meta.outputs.has_wiki == 'true'
         env:
           WIKI_PUSH_TOKEN: ${{ secrets.WIKI_PUSH_TOKEN }}
         shell: bash

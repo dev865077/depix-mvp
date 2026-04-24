@@ -56,17 +56,18 @@
 - se houver falso positivo ou falha operacional na lane de planning review ou refinement, o mantenedor deve registrar a ocorrencia na propria Discussion e rerodar o workflow apropriado; a automacao normal nao deve depender de comentario humano para evoluir a issue
 - enquanto a issue estiver em planning, a evolucao da issue e da Discussion pertence aos workflows via API; o implementador/Codex so entra depois do estado `ready_for_codex: true`
 - a PR continua sendo a unidade de execucao do trabalho; a Discussion so entra como gate quando o risco justificar
+- a convencao canonica de checks obrigatorios e informativos do fluxo de PR fica em [PR-Checks-e-Merge](PR-Checks-e-Merge)
 - o parser de referencias do planning nao deve tratar mencoes em prosa como `PR #209` ou `pull request #209` como child issues; apenas referencias reais de issues entram na lista de contexto
 - referencias opcionais de child issue que retornem `403` ou `404` devem ser ignoradas com aviso operacional, sem abortar o planning da issue raiz
 - a revisao automatica de PR deve manter o check `AI PR Review / discussion-review` visivel no `pull_request`
 - a Discussion de PR agora tem rounds comuns limitados; quando o payload expuser contexto de round, a revisao deve usar esse numero para calibrar severidade e convergir sem reabrir debate antigo
 - depois do limite configurado de rounds comuns, um moderador terminal emite a decisao final da Discussion de PR; revisores especialistas nao devem tentar contornar esse limite
-- quando a revisão cair no caminho terminal de moderador, a saida precisa continuar coerente com o contrato canonico da Discussion e com o estado final do check
+- quando a revisao cair no caminho terminal de moderador, a saida precisa continuar coerente com o contrato canonico da Discussion e com o estado final do check
 - o contrato de review nao deve depender de edicao retroativa de comentarios anteriores; cada rodada continua append-only
 - quando um review apontar bloqueadores de acceptance tests, a automacao consolida os contratos especialistas em um resumo deterministico e anexa a secao canonica `Acceptance tests requested`
 - a reconciliacao de follow-up blockers exige ler a ultima conclusao da Discussion, transformar a resposta final em blockers testaveis canonicos e manter os bloqueios anteriores ativos ate haver alinhamento entre diff atual, evidencia explicita de arquivo de teste e `CI / Test`
 - em follow-up, a revisao deve preferir a reconciliacao estavel do conjunto anterior de bloqueios em vez de reabrir um blocker mais amplo sem contradicao concreta
-- approvações de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
+- aprovacoes de follow-up nao devem apagar bloqueios ainda nao reconciliados; quando houver divergencia, a resposta final deve sair como memo deterministico de `Request changes`
 - a reply humana da conclusao mais recente pode contar como evidencia complementar quando citar o cenario de validacao ou a resolucao do bloqueio; isso vale especialmente para handoffs de follow-up em que o patch atual nao carrega sozinho toda a linguagem do contrato testado
 - contratos classificados como `Not testable` ficam separados em uma secao humana de resolucao, sem serem misturados com os bloqueadores testaveis
 - a sintese de PR nao deve inventar anexos personalizados de acceptance tests; ela deve seguir o contrato canonico gerado pela automacao

@@ -228,13 +228,25 @@ jobs:
         with:
           node-version: 20
 
+      - name: Read check classification
+        id: check_classification
+        env:
+          CHECK_CLASSIFICATION_PATH: docs/check-classification.yml
+          CHECK_CONTEXT: AI PR Review / discussion-review
+        run: node scripts/read-check-classification.mjs >> "$GITHUB_OUTPUT"
+
       - name: Wait for canonical CI / Test conclusion
+        id: await_ci
+        continue-on-error: ${{ steps.check_classification.outputs.blocking != 'true' }}
         env:
           AI_PR_REVIEW_MODE: await_ci
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/ai-pr-review.mjs
 
       - name: Run multi-bot Discussion PR review
+        id: run_review
+        if: steps.await_ci.outcome == 'success'
+        continue-on-error: ${{ steps.check_classification.outputs.blocking != 'true' }}
         env:
           AI_PR_REVIEW_MODE: discussion
           AI_PR_DISCUSSION_CATEGORY: ${{ vars.AI_PR_DISCUSSION_CATEGORY }}
@@ -249,3 +261,17 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_PR_REVIEW_MODEL: ${{ vars.OPENAI_PR_REVIEW_MODEL || 'gpt-5.4-mini' }}
         run: node scripts/ai-pr-review.mjs
+
+      - name: Report advisory discussion-review outcome
+        if: steps.check_classification.outputs.blocking != 'true' && (steps.await_ci.outcome != 'success' || steps.run_review.outcome != 'success')
+        run: |
+          {
+            echo "## Advisory PR check"
+            echo ""
+            echo "- Check: \`AI PR Review / discussion-review\`"
+            echo "- Classification: \`${{ steps.check_classification.outputs.classification }}\`"
+            echo "- Await CI outcome: \`${{ steps.await_ci.outcome }}\`"
+            echo "- Review outcome: \`${{ steps.run_review.outcome || 'skipped' }}\`"
+            echo "- Merge effect: none"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Advisory check::AI PR Review / discussion-review did not complete successfully, but it is classified as informative and does not block merge."
