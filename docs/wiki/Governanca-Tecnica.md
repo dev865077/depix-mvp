@@ -23,12 +23,13 @@
 
 ## Protecao de main
 
-- existe um ruleset ativo especifico para `refs/heads/main`
+- ruleset ativo: `main-required-checks`
+- alvo efetivo: `refs/heads/main`
 - merge em `main` exige PR
 - merge em `main` exige `1` review de aprovacao
-- merge em `main` exige `CI / Test` verde
-- o metodo permitido em `main` e `squash`
-- checks informativos nao devem bloquear merge
+- metodo permitido em `main`: `squash`
+- check obrigatorio em `required_status_checks`: `CI / Test`
+- checks informativos fora de `required_status_checks`: `update-wiki`, `discussion-review`
 
 ## Gate de decisao antes da PR
 
