@@ -21,6 +21,15 @@
 - governanca da manutencao automatica da wiki apos merge
 - governanca automatizada da entrada de issues antes da PR
 
+## Protecao de main
+
+- existe um ruleset ativo especifico para `refs/heads/main`
+- merge em `main` exige PR
+- merge em `main` exige `1` review de aprovacao
+- merge em `main` exige `CI / Test` verde
+- o metodo permitido em `main` e `squash`
+- checks informativos nao devem bloquear merge
+
 ## Gate de decisao antes da PR
 
 - issue nova pode receber triagem automatica de impacto
