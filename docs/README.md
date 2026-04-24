@@ -18,6 +18,16 @@ Esta pasta e a casa canonica da documentacao tecnica versionada do repositorio.
 
 Quando houver divergencia entre narrativa e implementacao, o repo e a fonte de verdade tecnica.
 
+## Modelo de transicao
+
+Enquanto o split de repositorios nao estiver concluido, `depix-mvp` continua sendo a fonte versionada do MVP. Referencias novas de ownership devem usar o modelo alvo:
+
+- `debot`: runtime Telegram e experiencia do usuario.
+- `api`: superficie financeira, Eulen, D1 financeiro, webhooks e rotas ops.
+- `github-automation`: workflows, prompts e automacoes de GitHub.
+
+Referencias antigas que tratem o monolito como destino permanente devem ser removidas ou marcadas como transitorias, apontando para um desses repositorios-alvo.
+
 ## Regra de uso daqui para frente
 
 - novos documentos tecnicos devem nascer em `docs/`
