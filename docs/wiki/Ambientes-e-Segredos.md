@@ -100,8 +100,14 @@ Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel p
 
 ## Onboarding de novo tenant
 
+O fluxo unico fica em [`docs/tenant-registry-onboarding.md`](../tenant-registry-onboarding.md).
+
+Resumo operacional:
+
+- edite `config/tenant-registry.seed.json`, nao `wrangler.jsonc`
+- o runtime le a chave `TENANT_REGISTRY` no binding KV `TENANT_REGISTRY_KV`
 - por padrao, novo tenant continua herdando o token global `OPS_ROUTE_BEARER_TOKEN`
-- quando o time quiser isolar esse tenant, declara `opsBindings.depositRecheckBearerToken` no registry em `TENANT_REGISTRY_KV` e provisiona esse binding secreto no ambiente
+- quando o time quiser isolar esse tenant, declare `opsBindings.depositRecheckBearerToken` no registry e provisione esse binding secreto no ambiente
 - se o binding tenant-scoped estiver declarado e invalido, a rota falha fechada com `503 ops_route_disabled` ate a configuracao ser corrigida
 - a validacao do registry tambem falha fechada em lookup quando encontra contrato malformado, em vez de continuar com dados parcialmente normalizados
 
