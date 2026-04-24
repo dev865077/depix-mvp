@@ -23,6 +23,8 @@ const OPTIONAL_TENANT_OPS_BINDING_KEYS = [
 ] as const;
 
 const DEFAULT_TENANT_REGISTRY_STAGE = "initial_materialization";
+export const TENANT_REGISTRY_KV_KEY = "TENANT_REGISTRY";
+const TENANT_REGISTRY_KV_BINDING = "TENANT_REGISTRY_KV";
 
 type TenantRegistryValidationReason =
   | "missing_required_key"
@@ -67,6 +69,10 @@ export type TenantRegistry = Record<string, TenantConfig>;
 
 type SecretBindingValue = {
   get: () => Promise<unknown>;
+};
+
+type TenantRegistryKvBinding = {
+  get: (key: string, type: "text") => Promise<string | null>;
 };
 
 /**
@@ -137,11 +143,15 @@ function throwTenantRegistryValidationError(
   });
 }
 
+function isTenantRegistryKvBinding(binding: unknown): binding is TenantRegistryKvBinding {
+  return Boolean(binding && typeof binding === "object" && "get" in binding && typeof binding.get === "function");
+}
+
 /**
  * Garante que um valor do registry seja um objeto JSON simples.
  *
- * O `TENANT_REGISTRY` vem de uma string JSON versionada/configurada no
- * Wrangler. Validar o shape logo na borda de configuracao evita que rotas de
+ * O `TENANT_REGISTRY` vem de uma string JSON guardada em KV. Validar o shape
+ * logo na borda de configuracao evita que rotas de
  * negocio precisem lidar com estados parciais ou campos silenciosamente nulos.
  *
  * @param {unknown} value Valor bruto a validar.
@@ -340,22 +350,16 @@ function normalizeTenantConfig(
   };
 }
 
-/**
- * Le o JSON TENANT_REGISTRY e devolve um mapa normalizado por tenant.
- *
- * @param {Record<string, unknown>} env Bindings do Worker.
- * @returns {Record<string, ReturnType<typeof normalizeTenantConfig>>} Registro de tenants pronto para uso.
- */
-export function readTenantRegistry(
-  env: Record<string, unknown>,
+function parseTenantRegistryJson(
+  rawRegistry: unknown,
   options: Readonly<{ stage?: TenantRegistryValidationStage }> = {},
 ): TenantRegistry {
   const stage = options.stage ?? DEFAULT_TENANT_REGISTRY_STAGE;
   const context = createValidationContext(null, stage);
-  const rawRegistry = env.TENANT_REGISTRY;
 
   if (typeof rawRegistry !== "string" || rawRegistry.trim().length === 0) {
     const reason = typeof rawRegistry === "undefined"
+      || rawRegistry === null
       ? "missing_required_key"
       : typeof rawRegistry !== "string"
         ? "invalid_type"
@@ -387,6 +391,57 @@ export function readTenantRegistry(
   return Object.fromEntries(
     entries.map(([tenantId, tenantConfig]) => [tenantId, normalizeTenantConfig(tenantId, tenantConfig, stage)]),
   );
+}
+
+/**
+ * Le o JSON TENANT_REGISTRY legado e devolve um mapa normalizado por tenant.
+ *
+ * Chamadores de runtime devem usar `readTenantRegistryFromKv`. Esta funcao
+ * continua existindo para testes e ferramentas que validam o contrato JSON
+ * sem passar pelo Worker KV.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @returns {Record<string, ReturnType<typeof normalizeTenantConfig>>} Registro de tenants pronto para uso.
+ */
+export function readTenantRegistry(
+  env: Record<string, unknown>,
+  options: Readonly<{ stage?: TenantRegistryValidationStage }> = {},
+): TenantRegistry {
+  return parseTenantRegistryJson(env.TENANT_REGISTRY, options);
+}
+
+/**
+ * Le o registry de tenants do Cloudflare KV.
+ *
+ * O KV e a fonte de verdade do runtime. Nao ha fallback para `TENANT_REGISTRY`
+ * inline: ausencia do binding ou da chave falha fechado no boot da requisicao.
+ *
+ * @param {Record<string, unknown>} env Bindings do Worker.
+ * @returns {Promise<Record<string, ReturnType<typeof normalizeTenantConfig>>>} Registro de tenants pronto para uso.
+ */
+export async function readTenantRegistryFromKv(
+  env: Record<string, unknown>,
+  options: Readonly<{ stage?: TenantRegistryValidationStage }> = {},
+): Promise<TenantRegistry> {
+  const stage = options.stage ?? DEFAULT_TENANT_REGISTRY_STAGE;
+  const context = createValidationContext(null, stage);
+  const tenantRegistryKv = env[TENANT_REGISTRY_KV_BINDING];
+
+  if (!isTenantRegistryKvBinding(tenantRegistryKv)) {
+    throwTenantRegistryValidationError(
+      context,
+      TENANT_REGISTRY_KV_BINDING,
+      typeof tenantRegistryKv === "undefined" ? "missing_required_key" : "invalid_type",
+    );
+  }
+
+  const rawRegistry = await tenantRegistryKv.get(TENANT_REGISTRY_KV_KEY, "text");
+
+  if (rawRegistry === null) {
+    throwTenantRegistryValidationError(context, `${TENANT_REGISTRY_KV_BINDING}.${TENANT_REGISTRY_KV_KEY}`, "missing_required_key");
+  }
+
+  return parseTenantRegistryJson(rawRegistry, options);
 }
 
 /**
@@ -553,7 +608,7 @@ export async function readTenantSecret(
 /**
  * Materializa a configuracao de split sensivel do tenant atual.
  *
- * O `TENANT_REGISTRY` deve conter apenas os nomes dos bindings. Esta funcao e
+ * O registry de tenants deve conter apenas os nomes dos bindings. Esta funcao e
  * o ponto unico que resolve os valores reais antes de montar o payload da
  * Eulen, evitando vazamento acidental em configuracao versionada ou logs.
  *

@@ -11,12 +11,48 @@ import {
   TenantRegistryValidationError,
 } from "../src/config/tenants.js";
 import { resetDatabaseSchema } from "./helpers/database-schema.js";
+import { createTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 async function fetchJson(url, init = {}) {
+  await env.TENANT_REGISTRY_KV.put("TENANT_REGISTRY", createTenantRegistry());
+
   const response = await SELF.fetch(url, { method: "POST", ...init });
   const body = await response.json();
 
   return { response, body };
+}
+
+function createTenantRegistry() {
+  return JSON.stringify({
+    alpha: {
+      displayName: "Alpha",
+      eulenPartnerId: "partner-alpha",
+      splitConfigBindings: {
+        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+    beta: {
+      displayName: "Beta",
+      eulenPartnerId: "partner-beta",
+      splitConfigBindings: {
+        depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "BETA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "BETA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+  });
 }
 
 function createTelegramUpdate() {
@@ -43,36 +79,7 @@ function createWorkerEnv() {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY: JSON.stringify({
-      alpha: {
-        displayName: "Alpha",
-        eulenPartnerId: "partner-alpha",
-        splitConfigBindings: {
-          depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-      beta: {
-        displayName: "Beta",
-        eulenPartnerId: "partner-beta",
-        splitConfigBindings: {
-          depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "BETA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "BETA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-    }),
+    TENANT_REGISTRY_KV: createTenantRegistryKv(createTenantRegistry()),
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",

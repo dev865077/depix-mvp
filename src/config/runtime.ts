@@ -5,7 +5,7 @@
  * obrigatorios, diferencia local/test/production e devolve apenas um resumo
  * seguro da configuracao, sem nunca expor valores sensiveis.
  */
-import { readTenantRegistry } from "./tenants.js";
+import { readTenantRegistryFromKv } from "./tenants.js";
 import type { TenantRegistry } from "./tenants.js";
 import { readTelegramOpenOrderTimeoutMinutes } from "../services/telegram-conversation-timeout.js";
 
@@ -319,7 +319,7 @@ export function assertPositiveInteger(value: string | undefined, key: string): n
  *   }
  * }} Configuracao consolidada do runtime.
  */
-export function readRuntimeConfig(env: RuntimeEnv) {
+export async function readRuntimeConfig(env: RuntimeEnv) {
   const appName = assertRequiredString(readOptionalStringBinding(env, "APP_NAME"), "APP_NAME");
   const rawEnvironment = assertRequiredString(readOptionalStringBinding(env, "APP_ENV"), "APP_ENV");
   const rawLogLevel = assertRequiredString(readOptionalStringBinding(env, "LOG_LEVEL"), "LOG_LEVEL");
@@ -337,7 +337,7 @@ export function readRuntimeConfig(env: RuntimeEnv) {
     throw new Error(`Invalid LOG_LEVEL value: ${rawLogLevel}`);
   }
 
-  const tenants = readTenantRegistry(env);
+  const tenants = await readTenantRegistryFromKv(env);
   const hasTenantSecretBindings = Object.values(tenants).every((tenant) => (
     Object.values(tenant.secretBindings).every(Boolean)
     && Object.values(tenant.splitConfigBindings).every(Boolean)
@@ -396,7 +396,7 @@ export function readRuntimeConfig(env: RuntimeEnv) {
     },
     tenants,
     secrets: {
-      registryConfigured: Boolean(env.TENANT_REGISTRY),
+      registryConfigured: true,
       tenantSecretBindingsConfigured: hasTenantSecretBindings,
     },
     operations: {

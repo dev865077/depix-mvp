@@ -1,6 +1,7 @@
 # Tenant registry KV contract
 
-This document is the provisioning and data-contract slice for #594.
+This document is the provisioning, runtime read-path, and data-contract slice
+for the tenant registry KV migration.
 
 ## Binding
 
@@ -21,9 +22,11 @@ Each Worker environment binds the tenant registry namespace as `TENANT_REGISTRY_
 The seed payload is versioned in `config/tenant-registry.seed.json`.
 The same payload must be written to `local`, `test`, and `production`.
 
-## Transitional rule
+## Runtime source of truth
 
-The current Worker read path still reads the inline `TENANT_REGISTRY` var until
-the follow-up read-path migration issue switches runtime reads to KV. During
-that transition, `config/tenant-registry.seed.json` is the canonical seed
-source and the inline var is only a compatibility mirror.
+The Worker runtime reads `TENANT_REGISTRY_KV.get("TENANT_REGISTRY", "text")`
+when materializing runtime configuration.
+
+There is no fallback to the inline `TENANT_REGISTRY` var. If the KV binding or
+key is absent, the Worker fails closed with the canonical
+`invalid_tenant_registry` error.

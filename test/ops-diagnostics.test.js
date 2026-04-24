@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { resetDatabaseSchema } from "./helpers/database-schema.js";
+import { withTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 const MOCK_LIQUID_CONFIDENTIAL_SPLIT_ADDRESS = `lq1${"q".repeat(98)}`;
 const MOCK_VISUALLY_GROUPED_LIQUID_SPLIT_ADDRESS = [
@@ -18,6 +19,22 @@ const MOCK_VISUALLY_GROUPED_LIQUID_SPLIT_ADDRESS = [
   MOCK_LIQUID_CONFIDENTIAL_SPLIT_ADDRESS.slice(24, 56),
   MOCK_LIQUID_CONFIDENTIAL_SPLIT_ADDRESS.slice(56),
 ].join(" ");
+const TENANT_REGISTRY = JSON.stringify({
+  alpha: {
+    displayName: "Alpha",
+    eulenPartnerId: "partner-alpha",
+    splitConfigBindings: {
+      depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+      splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+    },
+    secretBindings: {
+      telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+      telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+      eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+      eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+    },
+  },
+});
 
 /**
  * Monta um `env` em memoria para `cloudflare:test`.
@@ -35,29 +52,13 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY: JSON.stringify({
-      alpha: {
-        displayName: "Alpha",
-        eulenPartnerId: "partner-alpha",
-        splitConfigBindings: {
-          depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-    }),
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
     ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
     ALPHA_DEPIX_SPLIT_ADDRESS: "split-address-alpha",
     ALPHA_DEPIX_SPLIT_FEE: "12.50%",
-    ...overrides,
+    ...withTenantRegistryKv(overrides, TENANT_REGISTRY),
   };
 }
 

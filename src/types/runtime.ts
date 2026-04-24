@@ -30,7 +30,7 @@ export interface TenantConfig {
 
 export type TenantRegistry = Record<TenantId, TenantConfig>;
 
-type RuntimeConfig = ReturnType<typeof readRuntimeConfig>;
+type RuntimeConfig = Awaited<ReturnType<typeof readRuntimeConfig>>;
 type ResolvedTenant = ReturnType<typeof resolveTenantFromRequest>;
 
 export interface WorkerEnv {
@@ -40,7 +40,6 @@ export interface WorkerEnv {
   EULEN_API_BASE_URL: string;
   EULEN_API_TIMEOUT_MS: string;
   ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION?: string;
-  TENANT_REGISTRY: string;
   TENANT_REGISTRY_KV: KVNamespace;
   DB: D1Database;
   [bindingName: string]: unknown;

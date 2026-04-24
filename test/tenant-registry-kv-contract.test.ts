@@ -35,13 +35,15 @@ describe("tenant registry KV provisioning contract", () => {
     expectTenantRegistryNamespace(wrangler.env.production, "66104d1784c84a3cad8eaaedcecd4caa");
   });
 
-  it("keeps the versioned seed identical across local, test, and production mirrors", () => {
+  it("keeps the registry out of inline Worker vars", () => {
     const wrangler = readWranglerConfig();
     const seed = readJsonFile(SEED_PATH);
 
-    expect(JSON.parse(wrangler.vars[REGISTRY_KEY])).toEqual(seed);
-    expect(JSON.parse(wrangler.env.test.vars[REGISTRY_KEY])).toEqual(seed);
-    expect(JSON.parse(wrangler.env.production.vars[REGISTRY_KEY])).toEqual(seed);
+    expect(wrangler.vars).not.toHaveProperty(REGISTRY_KEY);
+    expect(wrangler.env.test.vars).not.toHaveProperty(REGISTRY_KEY);
+    expect(wrangler.env.production.vars).not.toHaveProperty(REGISTRY_KEY);
+    expect(seed).toHaveProperty("alpha");
+    expect(seed).toHaveProperty("beta");
   });
 
   it("documents the KV key, binding, and seed path", () => {

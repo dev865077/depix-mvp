@@ -53,7 +53,25 @@ const TENANT_REGISTRY = JSON.stringify({
   },
 });
 
+function createTenantRegistryKv(registry = TENANT_REGISTRY) {
+  return {
+    async get(key) {
+      return key === "TENANT_REGISTRY" ? registry : null;
+    },
+  };
+}
+
 function createWorkerEnv(overrides = {}) {
+  const tenantRegistry = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY")
+    ? overrides.TENANT_REGISTRY
+    : TENANT_REGISTRY;
+  const hasTenantRegistryKvOverride = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY_KV");
+  const {
+    TENANT_REGISTRY: _tenantRegistry,
+    TENANT_REGISTRY_KV: tenantRegistryKv,
+    ...workerOverrides
+  } = overrides;
+
   return {
     DB: env.DB,
     APP_NAME: "depix-mvp",
@@ -62,7 +80,7 @@ function createWorkerEnv(overrides = {}) {
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
     ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
-    TENANT_REGISTRY,
+    TENANT_REGISTRY_KV: hasTenantRegistryKvOverride ? tenantRegistryKv : createTenantRegistryKv(tenantRegistry),
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -75,7 +93,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
     BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
     BETA_DEPIX_SPLIT_FEE: "15.00%",
-    ...overrides,
+    ...workerOverrides,
   };
 }
 
@@ -138,7 +156,7 @@ async function runScheduler(overrides = {}) {
   return runScheduledDepositReconciliation({
     env: workerEnv,
     db: workerEnv.DB,
-    runtimeConfig: readRuntimeConfig(workerEnv),
+    runtimeConfig: await readRuntimeConfig(workerEnv),
     scheduledTime: overrides.scheduledTime ?? BASE_TIME,
     cron: overrides.cron ?? "*/15 * * * *",
     requestId: overrides.requestId ?? "scheduled-test",
@@ -612,8 +630,8 @@ describe("scheduled deposit reconciliation", () => {
 });
 
 describe("scheduled deposit reconciliation runtime readiness", () => {
-  it("exposes ready state only when the scheduled flag and D1 are configured", function assertRuntimeReadyState() {
-    const runtimeConfig = createRuntime();
+  it("exposes ready state only when the scheduled flag and D1 are configured", async function assertRuntimeReadyState() {
+    const runtimeConfig = await createRuntime();
 
     expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("ready");
     expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(true);

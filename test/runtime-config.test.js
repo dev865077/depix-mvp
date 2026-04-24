@@ -50,14 +50,32 @@ const TENANT_REGISTRY = JSON.stringify({
   },
 });
 
+function createTenantRegistryKv(registry = TENANT_REGISTRY) {
+  return {
+    async get(key) {
+      return key === "TENANT_REGISTRY" ? registry : null;
+    },
+  };
+}
+
 function createRuntimeEnv(overrides = {}) {
+  const tenantRegistry = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY")
+    ? overrides.TENANT_REGISTRY
+    : TENANT_REGISTRY;
+  const hasTenantRegistryKvOverride = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY_KV");
+  const {
+    TENANT_REGISTRY: _tenantRegistry,
+    TENANT_REGISTRY_KV: tenantRegistryKv,
+    ...runtimeOverrides
+  } = overrides;
+
   return {
     APP_NAME: "depix-mvp",
     APP_ENV: "local",
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY,
+    TENANT_REGISTRY_KV: hasTenantRegistryKvOverride ? tenantRegistryKv : createTenantRegistryKv(tenantRegistry),
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -73,7 +91,7 @@ function createRuntimeEnv(overrides = {}) {
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
     ENABLE_OPS_DEPOSITS_FALLBACK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-token",
-    ...overrides,
+    ...runtimeOverrides,
   };
 }
 
@@ -137,9 +155,9 @@ function createTenantRegistry(overrides = {}) {
   return JSON.stringify(createTenantRegistryObject(overrides));
 }
 
-function captureTenantRegistryError(callback) {
+async function captureTenantRegistryError(callback) {
   try {
-    callback();
+    await callback();
   } catch (error) {
     expect(error).toBeInstanceOf(TenantRegistryValidationError);
     return error;
@@ -148,9 +166,9 @@ function captureTenantRegistryError(callback) {
   throw new Error("Expected TenantRegistryValidationError to be thrown");
 }
 
-function expectTenantRegistryError(overrides, expectedError) {
-  const error = captureTenantRegistryError(() => {
-    readRuntimeConfig(createRuntimeEnv(overrides));
+async function expectTenantRegistryError(overrides, expectedError) {
+  const error = await captureTenantRegistryError(async () => {
+    await readRuntimeConfig(createRuntimeEnv(overrides));
   });
 
   expect(error.toJSON()).toEqual({
@@ -160,8 +178,8 @@ function expectTenantRegistryError(overrides, expectedError) {
 }
 
 describe("runtime config", () => {
-  it("marks deposit recheck ready when enabled with the global bearer token", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv());
+  it("marks deposit recheck ready when enabled with the global bearer token", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv());
 
     expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
@@ -174,16 +192,16 @@ describe("runtime config", () => {
     expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES);
   });
 
-  it("accepts an explicit Telegram conversation timeout override", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("accepts an explicit Telegram conversation timeout override", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES: "45",
     }));
 
     expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(45);
   });
 
-  it("marks scheduled deposit reconciliation ready only with flag, D1 and tenant secrets", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("marks scheduled deposit reconciliation ready only with flag, D1 and tenant secrets", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       DB: {},
       ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
     }));
@@ -192,8 +210,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(true);
   });
 
-  it("marks scheduled deposit reconciliation invalid when its flag is unknown", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("marks scheduled deposit reconciliation invalid when its flag is unknown", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       DB: {},
       ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "sim",
     }));
@@ -202,8 +220,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
   });
 
-  it("keeps scheduled deposit reconciliation closed when D1 is absent", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("keeps scheduled deposit reconciliation closed when D1 is absent", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
     }));
 
@@ -211,8 +229,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
   });
 
-  it("marks deposit recheck invalid when the feature flag has an unknown value", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("marks deposit recheck invalid when the feature flag has an unknown value", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       ENABLE_OPS_DEPOSIT_RECHECK: "sim",
     }));
 
@@ -220,8 +238,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
   });
 
-  it("keeps deposits fallback disabled unless its explicit flag is enabled", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("keeps deposits fallback disabled unless its explicit flag is enabled", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       ENABLE_OPS_DEPOSITS_FALLBACK: undefined,
     }));
 
@@ -231,8 +249,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
   });
 
-  it("marks deposits fallback invalid when its feature flag has an unknown value", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("marks deposits fallback invalid when its feature flag has an unknown value", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       ENABLE_OPS_DEPOSITS_FALLBACK: "sim",
     }));
 
@@ -240,8 +258,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
   });
 
-  it("marks deposit recheck missing_secret when the global token is empty", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("marks deposit recheck missing_secret when the global token is empty", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       OPS_ROUTE_BEARER_TOKEN: " ",
     }));
 
@@ -249,8 +267,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
   });
 
-  it("keeps global readiness while marking a missing tenant override as invalid", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("keeps global readiness while marking a missing tenant override as invalid", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
       ALPHA_OPS_ROUTE_BEARER_TOKEN: undefined,
     }));
@@ -261,8 +279,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(1);
   });
 
-  it("keeps deposit recheck ready when a declared tenant token is configured", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("keeps deposit recheck ready when a declared tenant token is configured", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
       ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-route-token",
     }));
@@ -278,8 +296,8 @@ describe("runtime config", () => {
     expect(ORDER_STATUSES).toEqual([...new Set(Object.values(ORDER_STATUS_BY_STEP))]);
   });
 
-  it("ignores unknown tenant fields instead of preserving them in the normalized registry", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("ignores unknown tenant fields instead of preserving them in the normalized registry", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       TENANT_REGISTRY: createTenantRegistry({
         futureField: "ignored",
       }),
@@ -288,8 +306,8 @@ describe("runtime config", () => {
     expect(runtimeConfig.tenants.alpha.futureField).toBeUndefined();
   });
 
-  it("keeps legacy tenant registries working when displayName is omitted", () => {
-    const runtimeConfig = readRuntimeConfig(createRuntimeEnv({
+  it("keeps legacy tenant registries working when displayName is omitted", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
       TENANT_REGISTRY: JSON.stringify(createTenantRegistryObject({
         displayName: undefined,
       })),
@@ -298,8 +316,45 @@ describe("runtime config", () => {
     expect(runtimeConfig.tenants.alpha.displayName).toBe("alpha");
   });
 
-  it("fails closed on invalid JSON in TENANT_REGISTRY", () => {
-    expectTenantRegistryError(
+  it("uses the KV registry even when an inline registry var is present", async () => {
+    const runtimeConfig = await readRuntimeConfig({
+      ...createRuntimeEnv(),
+      TENANT_REGISTRY: "{",
+    });
+
+    expect(runtimeConfig.tenants.alpha.displayName).toBe("Alpha");
+  });
+
+  it("fails closed when the KV binding is absent", async () => {
+    await expectTenantRegistryError(
+      {
+        TENANT_REGISTRY_KV: undefined,
+      },
+      {
+        tenantId: null,
+        field: "TENANT_REGISTRY_KV",
+        reason: "missing_required_key",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed when the KV key is absent", async () => {
+    await expectTenantRegistryError(
+      {
+        TENANT_REGISTRY_KV: createTenantRegistryKv(null),
+      },
+      {
+        tenantId: null,
+        field: "TENANT_REGISTRY_KV.TENANT_REGISTRY",
+        reason: "missing_required_key",
+        stage: "initial_materialization",
+      },
+    );
+  });
+
+  it("fails closed on invalid JSON in TENANT_REGISTRY", async () => {
+    await expectTenantRegistryError(
       { TENANT_REGISTRY: "{" },
       {
         tenantId: null,
@@ -310,8 +365,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed on an empty TENANT_REGISTRY", () => {
-    expectTenantRegistryError(
+  it("fails closed on an empty TENANT_REGISTRY", async () => {
+    await expectTenantRegistryError(
       { TENANT_REGISTRY: "{}" },
       {
         tenantId: null,
@@ -322,8 +377,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed on a malformed top-level TENANT_REGISTRY object", () => {
-    expectTenantRegistryError(
+  it("fails closed on a malformed top-level TENANT_REGISTRY object", async () => {
+    await expectTenantRegistryError(
       { TENANT_REGISTRY: "[]" },
       {
         tenantId: null,
@@ -334,8 +389,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed when splitConfigBindings is absent", () => {
-    expectTenantRegistryError(
+  it("fails closed when splitConfigBindings is absent", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: createTenantRegistry({
           splitConfigBindings: undefined,
@@ -350,8 +405,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed when secretBindings is malformed", () => {
-    expectTenantRegistryError(
+  it("fails closed when secretBindings is malformed", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: createTenantRegistry({
           secretBindings: [],
@@ -366,8 +421,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed when a required tenant binding key is absent", () => {
-    expectTenantRegistryError(
+  it("fails closed when a required tenant binding key is absent", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: createTenantRegistry({
           secretBindings: {
@@ -386,8 +441,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed when a required tenant binding has an invalid type", () => {
-    expectTenantRegistryError(
+  it("fails closed when a required tenant binding has an invalid type", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: createTenantRegistry({
           splitConfigBindings: {
@@ -405,8 +460,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("fails closed when a required tenant binding name is empty", () => {
-    expectTenantRegistryError(
+  it("fails closed when a required tenant binding name is empty", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: createTenantRegistry({
           splitConfigBindings: {
@@ -424,8 +479,8 @@ describe("runtime config", () => {
     );
   });
 
-  it("does not return a partially materialized registry when one tenant is invalid", () => {
-    expectTenantRegistryError(
+  it("does not return a partially materialized registry when one tenant is invalid", async () => {
+    await expectTenantRegistryError(
       {
         TENANT_REGISTRY: JSON.stringify({
           ...createTenantRegistryObject(),

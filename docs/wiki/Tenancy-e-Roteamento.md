@@ -18,7 +18,7 @@ O sistema e multi-tenant por `tenantId`, com isolamento logico dentro de um unic
 
 ## Registro de tenants
 
-O binding `TENANT_REGISTRY` descreve:
+O binding KV `TENANT_REGISTRY_KV` armazena a chave `TENANT_REGISTRY`, que descreve:
 
 - `displayName`
 - `eulenPartnerId`

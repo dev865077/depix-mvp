@@ -2,19 +2,22 @@
  * Smoke test do healthcheck do Worker.
  */
 // @vitest-pool cloudflare
-import { SELF } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { withTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
-function createHealthTenantRegistry() {
+function createHealthTenantRegistry(options = {}) {
   return JSON.stringify({
     alpha: {
       displayName: "Alpha",
       eulenPartnerId: "partner-alpha",
-      opsBindings: {
-        depositRecheckBearerToken: "ALPHA_OPS_ROUTE_BEARER_TOKEN",
-      },
+      ...(options.includeOpsBinding === false ? {} : {
+        opsBindings: {
+          depositRecheckBearerToken: "ALPHA_OPS_ROUTE_BEARER_TOKEN",
+        },
+      }),
       splitConfigBindings: {
         depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
         splitFee: "ALPHA_DEPIX_SPLIT_FEE",
@@ -50,7 +53,6 @@ function createHealthEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY: createHealthTenantRegistry(),
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -66,11 +68,15 @@ function createHealthEnv(overrides = {}) {
     ENABLE_OPS_DEPOSIT_RECHECK: "true",
     ENABLE_OPS_DEPOSITS_FALLBACK: "true",
     OPS_ROUTE_BEARER_TOKEN: "ops-route-token",
-    ...overrides,
+    ...withTenantRegistryKv(overrides, createHealthTenantRegistry()),
   };
 }
 
 export async function fetchHealthResponse() {
+  await env.TENANT_REGISTRY_KV.put("TENANT_REGISTRY", createHealthTenantRegistry({
+    includeOpsBinding: false,
+  }));
+
   const response = await SELF.fetch("https://example.com/health");
   const body = await response.json();
 

@@ -30,6 +30,7 @@ import {
   buildTelegramUnsupportedMessageReply,
 } from "../src/telegram/reply-flow.js";
 import { clearTelegramRuntimeCache } from "../src/telegram/runtime.js";
+import { withTenantRegistryKv } from "./helpers/tenant-registry-kv.js";
 
 const SIDESWAP_LQ_ADDRESS = "lq1qqt6tf80s4c8k5n5v88smk40d5cqh6wp63025cwypeemlh3ra84xgfng64m08lv69d9wau62vag5alxyvzv8hq8qqn9sjtr4pd";
 const EX_ADDRESS = "ex1qhuq5u7udzwskhaz45fy80kdaxjytqd99ju5yfn";
@@ -49,6 +50,37 @@ const GROUPED_SIDESWAP_LQ_ADDRESS = [
  * @returns {Record<string, unknown>} `env` final do Worker.
  */
 function createWorkerEnv(overrides = {}) {
+  const tenantRegistry = JSON.stringify({
+    alpha: {
+      displayName: "Alpha",
+      eulenPartnerId: "partner-alpha",
+      splitConfigBindings: {
+        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+    beta: {
+      displayName: "Beta",
+      eulenPartnerId: "partner-beta",
+      splitConfigBindings: {
+        depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
+        splitFee: "BETA_DEPIX_SPLIT_FEE",
+      },
+      secretBindings: {
+        telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
+        telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
+        eulenApiToken: "BETA_EULEN_API_TOKEN",
+        eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
+      },
+    },
+  });
+
   return {
     DB: env.DB,
     APP_NAME: "depix-mvp",
@@ -56,36 +88,6 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
-    TENANT_REGISTRY: JSON.stringify({
-      alpha: {
-        displayName: "Alpha",
-        eulenPartnerId: "partner-alpha",
-        splitConfigBindings: {
-          depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-      beta: {
-        displayName: "Beta",
-        eulenPartnerId: "partner-beta",
-        splitConfigBindings: {
-          depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
-          splitFee: "BETA_DEPIX_SPLIT_FEE",
-        },
-        secretBindings: {
-          telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
-          telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
-          eulenApiToken: "BETA_EULEN_API_TOKEN",
-          eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
-        },
-      },
-    }),
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -98,7 +100,7 @@ function createWorkerEnv(overrides = {}) {
     BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
     BETA_DEPIX_SPLIT_ADDRESS: EX_ADDRESS,
     BETA_DEPIX_SPLIT_FEE: "1.00%",
-    ...overrides,
+    ...withTenantRegistryKv(overrides, tenantRegistry),
   };
 }
 
