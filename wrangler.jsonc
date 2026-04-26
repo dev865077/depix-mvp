@@ -1,7 +1,5 @@
-// Configuracao principal do Cloudflare Worker.
-// O arquivo diferencia local, teste e producao sem colocar segredos em codigo.
-// Em test e production, os segredos por tenant entram via Cloudflare Secrets Store.
-// Cada tenant declara apenas bindings de split; valores financeiros ficam no Secrets Store.
+// Configuracao principal do Cloudflare Worker do produto.
+// DeBot, Sagui e AutoIA-Github carregam seus proprios bindings e deploys.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "depix-mvp",
@@ -10,239 +8,33 @@
   "observability": {
     "enabled": true
   },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "depix-mvp-local",
-      "migrations_dir": "migrations"
-    }
-  ],
-  "kv_namespaces": [
-    {
-      "binding": "TENANT_REGISTRY_KV",
-      "id": "da9c68eed6a748a3b8cd181550fbd195"
-    }
-  ],
   "vars": {
     "APP_NAME": "depix-mvp",
     "APP_ENV": "local",
     "LOG_LEVEL": "debug",
-    "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
-    "EULEN_API_TIMEOUT_MS": "10000",
-    "FINANCIAL_API_BASE_URL": "http://127.0.0.1:8788",
-    "DEBOT_INTERNAL_API_TOKEN": "local-debot-internal-api-token",
-    "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "false",
-    "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
+    "DEBOT_REPOSITORY_URL": "https://github.com/dev865077/DeBot",
+    "SAGUI_REPOSITORY_URL": "https://github.com/dev865077/Sagui",
+    "AUTOIA_REPOSITORY_URL": "https://github.com/dev865077/AutoIA-Github"
   },
   "env": {
     "test": {
-      "triggers": {
-        "crons": [
-          "*/15 * * * *"
-        ]
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "depix-mvp-test",
-          "database_id": "44412622-181f-4eee-b610-4ef20d2387c3",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "kv_namespaces": [
-        {
-          "binding": "TENANT_REGISTRY_KV",
-          "id": "3e0405c5ed824272bb84b5beea298efa"
-        }
-      ],
-      "secrets_store_secrets": [
-        {
-          "binding": "ALPHA_TELEGRAM_BOT_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-telegram-bot-token"
-        },
-        {
-          "binding": "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-telegram-webhook-secret"
-        },
-        {
-          "binding": "ALPHA_EULEN_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-eulen-api-token"
-        },
-        {
-          "binding": "ALPHA_EULEN_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-eulen-webhook-secret"
-        },
-        {
-          "binding": "ALPHA_DEPIX_SPLIT_ADDRESS",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-depix-split-address"
-        },
-        {
-          "binding": "ALPHA_DEPIX_SPLIT_FEE",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-alpha-depix-split-fee"
-        },
-        {
-          "binding": "OPS_ROUTE_BEARER_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-ops-route-bearer-token"
-        },
-        {
-          "binding": "DEBOT_INTERNAL_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-debot-internal-api-token"
-        },
-        {
-          "binding": "BETA_TELEGRAM_BOT_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-telegram-bot-token"
-        },
-        {
-          "binding": "BETA_TELEGRAM_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-telegram-webhook-secret"
-        },
-        {
-          "binding": "BETA_EULEN_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-eulen-api-token"
-        },
-        {
-          "binding": "BETA_EULEN_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-eulen-webhook-secret"
-        },
-        {
-          "binding": "BETA_DEPIX_SPLIT_ADDRESS",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-depix-split-address"
-        },
-        {
-          "binding": "BETA_DEPIX_SPLIT_FEE",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "test-beta-depix-split-fee"
-        }
-      ],
       "vars": {
         "APP_NAME": "depix-mvp",
         "APP_ENV": "test",
         "LOG_LEVEL": "info",
-        "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
-        "EULEN_API_TIMEOUT_MS": "10000",
-        "FINANCIAL_API_BASE_URL": "https://sagui.dev865077.workers.dev",
-        "ENABLE_OPS_DEPOSIT_RECHECK": "true",
-        "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
-        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
-        "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
+        "DEBOT_REPOSITORY_URL": "https://github.com/dev865077/DeBot",
+        "SAGUI_REPOSITORY_URL": "https://github.com/dev865077/Sagui",
+        "AUTOIA_REPOSITORY_URL": "https://github.com/dev865077/AutoIA-Github"
       }
     },
     "production": {
-      "triggers": {
-        "crons": [
-          "*/15 * * * *"
-        ]
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "depix-mvp-production",
-          "database_id": "e4a13633-8e26-4c1a-aa9e-db8e35360cb4",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "kv_namespaces": [
-        {
-          "binding": "TENANT_REGISTRY_KV",
-          "id": "66104d1784c84a3cad8eaaedcecd4caa"
-        }
-      ],
-      "secrets_store_secrets": [
-        {
-          "binding": "ALPHA_TELEGRAM_BOT_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-telegram-bot-token"
-        },
-        {
-          "binding": "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-telegram-webhook-secret"
-        },
-        {
-          "binding": "ALPHA_EULEN_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-eulen-api-token"
-        },
-        {
-          "binding": "ALPHA_EULEN_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-eulen-webhook-secret"
-        },
-        {
-          "binding": "ALPHA_DEPIX_SPLIT_ADDRESS",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-depix-split-address"
-        },
-        {
-          "binding": "ALPHA_DEPIX_SPLIT_FEE",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-alpha-depix-split-fee"
-        },
-        {
-          "binding": "OPS_ROUTE_BEARER_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-ops-route-bearer-token"
-        },
-        {
-          "binding": "DEBOT_INTERNAL_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-debot-internal-api-token"
-        },
-        {
-          "binding": "BETA_TELEGRAM_BOT_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-telegram-bot-token"
-        },
-        {
-          "binding": "BETA_TELEGRAM_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-telegram-webhook-secret"
-        },
-        {
-          "binding": "BETA_EULEN_API_TOKEN",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-eulen-api-token"
-        },
-        {
-          "binding": "BETA_EULEN_WEBHOOK_SECRET",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-eulen-webhook-secret"
-        },
-        {
-          "binding": "BETA_DEPIX_SPLIT_ADDRESS",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-depix-split-address"
-        },
-        {
-          "binding": "BETA_DEPIX_SPLIT_FEE",
-          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
-          "secret_name": "production-beta-depix-split-fee"
-        }
-      ],
       "vars": {
         "APP_NAME": "depix-mvp",
         "APP_ENV": "production",
         "LOG_LEVEL": "info",
-        "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
-        "EULEN_API_TIMEOUT_MS": "10000",
-        "FINANCIAL_API_BASE_URL": "https://sagui.dev865077.workers.dev",
-        "ENABLE_OPS_DEPOSIT_RECHECK": "true",
-        "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
-        "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
-        "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
+        "DEBOT_REPOSITORY_URL": "https://github.com/dev865077/DeBot",
+        "SAGUI_REPOSITORY_URL": "https://github.com/dev865077/Sagui",
+        "AUTOIA_REPOSITORY_URL": "https://github.com/dev865077/AutoIA-Github"
       }
     }
   }

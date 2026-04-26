@@ -1,8 +1,12 @@
 # Financial API Boundary
 
+Status: implementado no repositorio [`dev865077/Sagui`](https://github.com/dev865077/Sagui).
+As referencias a caminhos antigos do monolito sao historicas e servem como
+rastro da separacao.
+
 ## Objective
 
-This document defines the target contract between `debot` and the future financial API before the physical repository split. It is intentionally grounded in the current monolith so `#668`, `#672`, and `#673` can move without redefining ownership during implementation.
+This document defines the contract between `DeBot` and `Sagui`.
 
 Current monolith evidence:
 

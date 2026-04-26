@@ -1,511 +1,58 @@
 /**
- * Testes da leitura de configuracao operacional do Worker.
- *
- * O objetivo aqui e proteger o contrato de rollout: a rota de recheck tem um
- * gate global e overrides tenant-scoped opcionais. Um override quebrado deve
- * aparecer para operadores sem transformar todos os tenants em indisponiveis.
+ * Testes da leitura de configuracao minima do Worker de produto.
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  ORDER_STATUSES,
-  ORDER_STEPS,
-} from "../src/types/domain.ts";
-import {
-  ORDER_PROGRESS_STATES,
-  ORDER_STATUS_BY_STEP,
-} from "../src/order-flow/order-progress-constants.js";
-import { readRuntimeConfig } from "../src/config/runtime.js";
-import { TenantRegistryValidationError } from "../src/config/tenants.js";
-import { DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES } from "../src/services/telegram-conversation-timeout.js";
-
-const TENANT_REGISTRY = JSON.stringify({
-  alpha: {
-    displayName: "Alpha",
-    eulenPartnerId: "partner-alpha",
-    splitConfigBindings: {
-      depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-      splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-    },
-    secretBindings: {
-      telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-      telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-      eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-      eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-    },
-  },
-  beta: {
-    displayName: "Beta",
-    eulenPartnerId: "partner-beta",
-    splitConfigBindings: {
-      depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
-      splitFee: "BETA_DEPIX_SPLIT_FEE",
-    },
-    secretBindings: {
-      telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
-      telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
-      eulenApiToken: "BETA_EULEN_API_TOKEN",
-      eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
-    },
-  },
-});
-
-function createTenantRegistryKv(registry = TENANT_REGISTRY) {
-  return {
-    async get(key) {
-      return key === "TENANT_REGISTRY" ? registry : null;
-    },
-  };
-}
+import { assertRequiredString, readRuntimeConfig } from "../src/config/runtime.js";
 
 function createRuntimeEnv(overrides = {}) {
-  const tenantRegistry = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY")
-    ? overrides.TENANT_REGISTRY
-    : TENANT_REGISTRY;
-  const hasTenantRegistryKvOverride = Object.prototype.hasOwnProperty.call(overrides, "TENANT_REGISTRY_KV");
-  const {
-    TENANT_REGISTRY: _tenantRegistry,
-    TENANT_REGISTRY_KV: tenantRegistryKv,
-    ...runtimeOverrides
-  } = overrides;
-
   return {
     APP_NAME: "depix-mvp",
     APP_ENV: "local",
     LOG_LEVEL: "debug",
-    EULEN_API_BASE_URL: "https://depix.eulen.app/api",
-    EULEN_API_TIMEOUT_MS: "10000",
-    FINANCIAL_API_BASE_URL: "https://sagui.example.test",
-    TENANT_REGISTRY_KV: hasTenantRegistryKvOverride ? tenantRegistryKv : createTenantRegistryKv(tenantRegistry),
-    ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
-    ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
-    ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
-    ALPHA_EULEN_WEBHOOK_SECRET: "alpha-eulen-secret",
-    ALPHA_DEPIX_SPLIT_ADDRESS: "split-address-alpha",
-    ALPHA_DEPIX_SPLIT_FEE: "1.00%",
-    BETA_TELEGRAM_BOT_TOKEN: "beta-bot-token",
-    BETA_TELEGRAM_WEBHOOK_SECRET: "beta-telegram-secret",
-    BETA_EULEN_API_TOKEN: "beta-eulen-token",
-    BETA_EULEN_WEBHOOK_SECRET: "beta-eulen-secret",
-    BETA_DEPIX_SPLIT_ADDRESS: "split-address-beta",
-    BETA_DEPIX_SPLIT_FEE: "1.00%",
-    ENABLE_OPS_DEPOSIT_RECHECK: "true",
-    ENABLE_OPS_DEPOSITS_FALLBACK: "true",
-    OPS_ROUTE_BEARER_TOKEN: "ops-route-token",
-    ...runtimeOverrides,
+    ...overrides,
   };
-}
-
-function createTenantScopedAlphaRegistry() {
-  return JSON.stringify({
-    alpha: {
-      displayName: "Alpha",
-      eulenPartnerId: "partner-alpha",
-      opsBindings: {
-        depositRecheckBearerToken: "ALPHA_OPS_ROUTE_BEARER_TOKEN",
-      },
-      splitConfigBindings: {
-        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-      },
-      secretBindings: {
-        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-      },
-    },
-    beta: {
-      displayName: "Beta",
-      eulenPartnerId: "partner-beta",
-      splitConfigBindings: {
-        depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
-        splitFee: "BETA_DEPIX_SPLIT_FEE",
-      },
-      secretBindings: {
-        telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
-        telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
-        eulenApiToken: "BETA_EULEN_API_TOKEN",
-        eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
-      },
-    },
-  });
-}
-
-function createTenantRegistryObject(overrides = {}) {
-  return {
-    alpha: {
-      displayName: "Alpha",
-      eulenPartnerId: "partner-alpha",
-      splitConfigBindings: {
-        depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-        splitFee: "ALPHA_DEPIX_SPLIT_FEE",
-      },
-      secretBindings: {
-        telegramBotToken: "ALPHA_TELEGRAM_BOT_TOKEN",
-        telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-        eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-        eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-      },
-      ...overrides,
-    },
-  };
-}
-
-function createTenantRegistry(overrides = {}) {
-  return JSON.stringify(createTenantRegistryObject(overrides));
-}
-
-async function captureTenantRegistryError(callback) {
-  try {
-    await callback();
-  } catch (error) {
-    expect(error).toBeInstanceOf(TenantRegistryValidationError);
-    return error;
-  }
-
-  throw new Error("Expected TenantRegistryValidationError to be thrown");
-}
-
-async function expectTenantRegistryError(overrides, expectedError) {
-  const error = await captureTenantRegistryError(async () => {
-    await readRuntimeConfig(createRuntimeEnv(overrides));
-  });
-
-  expect(error.toJSON()).toEqual({
-    code: "invalid_tenant_registry",
-    ...expectedError,
-  });
 }
 
 describe("runtime config", () => {
-  it("marks deposit recheck ready when enabled with the global bearer token", async () => {
+  it("reads the product shell runtime config with repository pointers", async () => {
     const runtimeConfig = await readRuntimeConfig(createRuntimeEnv());
 
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
-    expect(runtimeConfig.operations.depositsFallback.state).toBe("ready");
-    expect(runtimeConfig.operations.depositsFallback.ready).toBe(true);
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("disabled");
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
-    expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(DEFAULT_TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES);
-  });
-
-  it("accepts an explicit Telegram conversation timeout override", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES: "45",
-    }));
-
-    expect(runtimeConfig.telegramOpenOrderTimeoutMinutes).toBe(45);
-  });
-
-  it("marks scheduled deposit reconciliation ready only with flag, D1 and tenant secrets", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      DB: {},
-      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
-    }));
-
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("ready");
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(true);
-  });
-
-  it("marks scheduled deposit reconciliation invalid when its flag is unknown", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      DB: {},
-      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "sim",
-    }));
-
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("invalid_config");
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
-  });
-
-  it("keeps scheduled deposit reconciliation closed when D1 is absent", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
-    }));
-
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.state).toBe("missing_database");
-    expect(runtimeConfig.operations.scheduledDepositReconciliation.ready).toBe(false);
-  });
-
-  it("marks deposit recheck invalid when the feature flag has an unknown value", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      ENABLE_OPS_DEPOSIT_RECHECK: "sim",
-    }));
-
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("invalid_config");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
-  });
-
-  it("keeps deposits fallback disabled unless its explicit flag is enabled", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      ENABLE_OPS_DEPOSITS_FALLBACK: undefined,
-    }));
-
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositsFallback.state).toBe("disabled");
-    expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
-  });
-
-  it("marks deposits fallback invalid when its feature flag has an unknown value", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      ENABLE_OPS_DEPOSITS_FALLBACK: "sim",
-    }));
-
-    expect(runtimeConfig.operations.depositsFallback.state).toBe("invalid_config");
-    expect(runtimeConfig.operations.depositsFallback.ready).toBe(false);
-  });
-
-  it("marks deposit recheck missing_secret when the global token is empty", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      OPS_ROUTE_BEARER_TOKEN: " ",
-    }));
-
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("missing_secret");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(false);
-  });
-
-  it("keeps global readiness while marking a missing tenant override as invalid", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
-      ALPHA_OPS_ROUTE_BEARER_TOKEN: undefined,
-    }));
-
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("invalid_config");
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(1);
-  });
-
-  it("keeps deposit recheck ready when a declared tenant token is configured", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      TENANT_REGISTRY: createTenantScopedAlphaRegistry(),
-      ALPHA_OPS_ROUTE_BEARER_TOKEN: "alpha-ops-route-token",
-    }));
-
-    expect(runtimeConfig.operations.depositRecheck.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.ready).toBe(true);
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.state).toBe("ready");
-    expect(runtimeConfig.operations.depositRecheck.tenantOverrides.invalidCount).toBe(0);
-  });
-
-  it("keeps the domain type constants aligned with the runtime order constants", () => {
-    expect(ORDER_STEPS).toEqual(Object.values(ORDER_PROGRESS_STATES));
-    expect(ORDER_STATUSES).toEqual([...new Set(Object.values(ORDER_STATUS_BY_STEP))]);
-  });
-
-  it("ignores unknown tenant fields instead of preserving them in the normalized registry", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      TENANT_REGISTRY: createTenantRegistry({
-        futureField: "ignored",
-      }),
-    }));
-
-    expect(runtimeConfig.tenants.alpha.futureField).toBeUndefined();
-  });
-
-  it("keeps legacy tenant registries working when displayName is omitted", async () => {
-    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
-      TENANT_REGISTRY: JSON.stringify(createTenantRegistryObject({
-        displayName: undefined,
-      })),
-    }));
-
-    expect(runtimeConfig.tenants.alpha.displayName).toBe("alpha");
-  });
-
-  it("uses the KV registry even when an inline registry var is present", async () => {
-    const runtimeConfig = await readRuntimeConfig({
-      ...createRuntimeEnv(),
-      TENANT_REGISTRY: "{",
+    expect(runtimeConfig).toEqual({
+      appName: "depix-mvp",
+      environment: "local",
+      logLevel: "debug",
+      externalSystems: {
+        debotRepositoryUrl: "https://github.com/dev865077/DeBot",
+        saguiRepositoryUrl: "https://github.com/dev865077/Sagui",
+        autoIaRepositoryUrl: "https://github.com/dev865077/AutoIA-Github",
+      },
     });
-
-    expect(runtimeConfig.tenants.alpha.displayName).toBe("Alpha");
   });
 
-  it("fails closed when the KV binding is absent", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY_KV: undefined,
-      },
-      {
-        tenantId: null,
-        field: "TENANT_REGISTRY_KV",
-        reason: "missing_required_key",
-        stage: "initial_materialization",
-      },
-    );
+  it("accepts explicit repository pointer overrides", async () => {
+    const runtimeConfig = await readRuntimeConfig(createRuntimeEnv({
+      DEBOT_REPOSITORY_URL: "https://example.test/debot",
+      SAGUI_REPOSITORY_URL: "https://example.test/sagui",
+      AUTOIA_REPOSITORY_URL: "https://example.test/autoia",
+    }));
+
+    expect(runtimeConfig.externalSystems).toEqual({
+      debotRepositoryUrl: "https://example.test/debot",
+      saguiRepositoryUrl: "https://example.test/sagui",
+      autoIaRepositoryUrl: "https://example.test/autoia",
+    });
   });
 
-  it("fails closed when the KV key is absent", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY_KV: createTenantRegistryKv(null),
-      },
-      {
-        tenantId: null,
-        field: "TENANT_REGISTRY_KV.TENANT_REGISTRY",
-        reason: "missing_required_key",
-        stage: "initial_materialization",
-      },
-    );
+  it("rejects missing required runtime bindings", () => {
+    expect(() => assertRequiredString(undefined, "APP_NAME")).toThrow("Missing required binding: APP_NAME");
+    expect(() => assertRequiredString(" ", "APP_NAME")).toThrow("Missing required binding: APP_NAME");
   });
 
-  it("fails closed on invalid JSON in TENANT_REGISTRY", async () => {
-    await expectTenantRegistryError(
-      { TENANT_REGISTRY: "{" },
-      {
-        tenantId: null,
-        field: "TENANT_REGISTRY",
-        reason: "invalid_json",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed on an empty TENANT_REGISTRY", async () => {
-    await expectTenantRegistryError(
-      { TENANT_REGISTRY: "{}" },
-      {
-        tenantId: null,
-        field: "TENANT_REGISTRY",
-        reason: "empty_registry",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed on a malformed top-level TENANT_REGISTRY object", async () => {
-    await expectTenantRegistryError(
-      { TENANT_REGISTRY: "[]" },
-      {
-        tenantId: null,
-        field: "TENANT_REGISTRY",
-        reason: "malformed_tenant",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed when splitConfigBindings is absent", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: createTenantRegistry({
-          splitConfigBindings: undefined,
-        }),
-      },
-      {
-        tenantId: "alpha",
-        field: "TENANT_REGISTRY.alpha.splitConfigBindings",
-        reason: "missing_required_key",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed when secretBindings is malformed", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: createTenantRegistry({
-          secretBindings: [],
-        }),
-      },
-      {
-        tenantId: "alpha",
-        field: "TENANT_REGISTRY.alpha.secretBindings",
-        reason: "malformed_tenant",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed when a required tenant binding key is absent", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: createTenantRegistry({
-          secretBindings: {
-            telegramWebhookSecret: "ALPHA_TELEGRAM_WEBHOOK_SECRET",
-            eulenApiToken: "ALPHA_EULEN_API_TOKEN",
-            eulenWebhookSecret: "ALPHA_EULEN_WEBHOOK_SECRET",
-          },
-        }),
-      },
-      {
-        tenantId: "alpha",
-        field: "TENANT_REGISTRY.alpha.secretBindings.telegramBotToken",
-        reason: "missing_required_key",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed when a required tenant binding has an invalid type", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: createTenantRegistry({
-          splitConfigBindings: {
-            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-            splitFee: 10,
-          },
-        }),
-      },
-      {
-        tenantId: "alpha",
-        field: "TENANT_REGISTRY.alpha.splitConfigBindings.splitFee",
-        reason: "invalid_type",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("fails closed when a required tenant binding name is empty", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: createTenantRegistry({
-          splitConfigBindings: {
-            depixSplitAddress: "ALPHA_DEPIX_SPLIT_ADDRESS",
-            splitFee: " ",
-          },
-        }),
-      },
-      {
-        tenantId: "alpha",
-        field: "TENANT_REGISTRY.alpha.splitConfigBindings.splitFee",
-        reason: "empty_binding_name",
-        stage: "initial_materialization",
-      },
-    );
-  });
-
-  it("does not return a partially materialized registry when one tenant is invalid", async () => {
-    await expectTenantRegistryError(
-      {
-        TENANT_REGISTRY: JSON.stringify({
-          ...createTenantRegistryObject(),
-          beta: {
-            displayName: "Beta",
-            splitConfigBindings: {
-              depixSplitAddress: "BETA_DEPIX_SPLIT_ADDRESS",
-              splitFee: "",
-            },
-            secretBindings: {
-              telegramBotToken: "BETA_TELEGRAM_BOT_TOKEN",
-              telegramWebhookSecret: "BETA_TELEGRAM_WEBHOOK_SECRET",
-              eulenApiToken: "BETA_EULEN_API_TOKEN",
-              eulenWebhookSecret: "BETA_EULEN_WEBHOOK_SECRET",
-            },
-          },
-        }),
-      },
-      {
-        tenantId: "beta",
-        field: "TENANT_REGISTRY.beta.splitConfigBindings.splitFee",
-        reason: "empty_binding_name",
-        stage: "initial_materialization",
-      },
-    );
+  it("rejects unsupported environment and log level values", async () => {
+    await expect(readRuntimeConfig(createRuntimeEnv({ APP_ENV: "staging" })))
+      .rejects.toThrow("Invalid APP_ENV value: staging");
+    await expect(readRuntimeConfig(createRuntimeEnv({ LOG_LEVEL: "trace" })))
+      .rejects.toThrow("Invalid LOG_LEVEL value: trace");
   });
 });

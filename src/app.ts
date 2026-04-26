@@ -12,9 +12,6 @@ import { requestContextMiddleware } from "./middleware/request-context.js";
 import { normalizeHttpError, jsonError } from "./lib/http.js";
 import { log } from "./lib/logger.js";
 import { healthRouter } from "./routes/health.js";
-import { telegramRouter } from "./routes/telegram.js";
-import { webhooksRouter } from "./routes/webhooks.js";
-import { opsRouter } from "./routes/ops.js";
 import type { AppBindings, AppContext } from "./types/runtime";
 
 export function logAppError(c: AppContext, httpError: HTTPException): void {
@@ -27,7 +24,6 @@ export function logAppError(c: AppContext, httpError: HTTPException): void {
   log(runtimeConfig, {
     level: "error",
     message: "request.failed",
-    tenantId: c.get("tenant")?.tenantId,
     requestId: c.get("requestId"),
     method: c.req.method,
     path: c.req.path,
@@ -64,9 +60,6 @@ export function createApp(): Hono<AppBindings> {
   app.notFound(handleNotFound);
 
   app.route("/health", healthRouter);
-  app.route("/telegram", telegramRouter);
-  app.route("/webhooks", webhooksRouter);
-  app.route("/ops", opsRouter);
   app.get("/", handleRootRedirect);
 
   return app;
