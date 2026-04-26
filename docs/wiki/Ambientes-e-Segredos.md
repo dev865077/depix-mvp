@@ -35,13 +35,11 @@ O projeto depende de secrets por tenant para:
 
 Tambem existe um segredo operacional transversal:
 
-- `OPS_ROUTE_BEARER_TOKEN` para autenticar chamadas manuais no namespace `/ops`, incluindo recheck, fallback e operacoes de webhook do Telegram
+- `OPS_ROUTE_BEARER_TOKEN` para autenticar chamadas manuais no namespace `/ops`, incluindo recheck e operacoes de webhook do Telegram
 
 Tambem existe uma flag operacional explicita:
 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` para habilitar de fato `POST /ops/:tenantId/recheck/deposit`
-- `ENABLE_OPS_DEPOSITS_FALLBACK=true` para habilitar de fato `POST /ops/:tenantId/reconcile/deposits`
-- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` para habilitar a reconciliação agendada via Cloudflare Cron Trigger
 
 Para o fluxo Telegram, existe tambem a configuracao de timeout de conversa aberta:
 
@@ -88,17 +86,13 @@ Se `depositRecheckBearerToken` existir no tenant, esse binding vale apenas para 
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` sem token configurado: a rota continua desabilitada com `503 ops_route_disabled`
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `OPS_ROUTE_BEARER_TOKEN` configurado: a rota fica operacionalmente pronta
 - `ENABLE_OPS_DEPOSIT_RECHECK=true` com `opsBindings.depositRecheckBearerToken`: o tenant correspondente exige o token proprio e deixa de aceitar o fallback global
-- `ENABLE_OPS_DEPOSITS_FALLBACK=false` ou ausente: o fallback por janela responde `503 ops_deposits_fallback_disabled`, mesmo que o recheck por deposito esteja habilitado
-- `ENABLE_OPS_DEPOSITS_FALLBACK=true` usa o mesmo bearer operacional, mas abre apenas `POST /ops/:tenantId/reconcile/deposits`
-- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=false` ou ausente: o cron faz skip operacional e nao chama Eulen
-- `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true` exige D1 e secrets por tenant configurados; nao exige `OPS_ROUTE_BEARER_TOKEN`, porque nao passa por HTTP
-- `wrangler.jsonc` habilita Cron Trigger em `test` e `production`; `test` usa a mesma cadencia operacional de `production`
+- fallback por janela e cron de reconciliacao agendada nao fazem mais parte do runtime suportado
 
 ## Ambientes de lancamento
 
 - `local`: pode habilitar para desenvolvimento e testes locais
-- `test`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true`, `ENABLE_OPS_DEPOSITS_FALLBACK=true`, `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`, cron `*/15 * * * *` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store
-- `production`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true`, `ENABLE_OPS_DEPOSITS_FALLBACK=true`, `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION=true`, cron `*/15 * * * *` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store
+- `test`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store
+- `production`: recebe `ENABLE_OPS_DEPOSIT_RECHECK=true` e `OPS_ROUTE_BEARER_TOKEN` via Secrets Store
 
 Sem esses bindings, o deploy do codigo nao torna a rota operacional utilizavel por acidente.
 
