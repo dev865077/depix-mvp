@@ -6,6 +6,7 @@ Esta pasta e a casa canonica da documentacao tecnica versionada do repositorio.
 
 - [Cloudflare Secrets Store - Runbook.md](./Cloudflare%20Secrets%20Store%20-%20Runbook.md)
 - [Cloudflare para o MVP - Free Tier e Arquitetura Simples.md](./Cloudflare%20para%20o%20MVP%20-%20Free%20Tier%20e%20Arquitetura%20Simples.md)
+- [debot-extraction-boundary.md](./debot-extraction-boundary.md)
 - [financial-api-boundary.md](./financial-api-boundary.md)
 - [operations/secrets-and-environment-inventory.md](./operations/secrets-and-environment-inventory.md)
 - [Pix2DePix API - Documentacao Completa.md](./Pix2DePix%20API%20-%20Documentacao%20Completa.md)
