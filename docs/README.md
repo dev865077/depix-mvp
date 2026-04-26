@@ -7,6 +7,7 @@ Esta pasta e a casa canonica da documentacao tecnica versionada do repositorio.
 - [Cloudflare Secrets Store - Runbook.md](./Cloudflare%20Secrets%20Store%20-%20Runbook.md)
 - [Cloudflare para o MVP - Free Tier e Arquitetura Simples.md](./Cloudflare%20para%20o%20MVP%20-%20Free%20Tier%20e%20Arquitetura%20Simples.md)
 - [financial-api-boundary.md](./financial-api-boundary.md)
+- [operations/secrets-and-environment-inventory.md](./operations/secrets-and-environment-inventory.md)
 - [Pix2DePix API - Documentacao Completa.md](./Pix2DePix%20API%20-%20Documentacao%20Completa.md)
 - [Wiki 2.0 Review Mirror](./wiki/README.md)
 
@@ -27,6 +28,9 @@ Enquanto o split de repositorios nao estiver concluido, `depix-mvp` continua sen
 - `github-automation`: workflows, prompts e automacoes de GitHub.
 
 Referencias antigas que tratem o monolito como destino permanente devem ser removidas ou marcadas como transitorias, apontando para um desses repositorios-alvo.
+
+O inventario operacional comum de variaveis, bindings e segredos fica em
+[`docs/operations/secrets-and-environment-inventory.md`](./operations/secrets-and-environment-inventory.md).
 
 ## Regra de uso daqui para frente
 

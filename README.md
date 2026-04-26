@@ -44,6 +44,17 @@ A direcao de longo prazo fica separada em [docs/wiki/Visao-Futura-da-Plataforma.
 
 Quando uma instrucao deste repositorio falar em deploy, segredos ou suporte usando `depix-mvp`, leia como caminho transitorio ate o cutover registrado no track `#674`.
 
+Para ownership, setup local, deploy, operacao e segredos, use esta divisao:
+
+| Repositorio alvo | Responsabilidade | Setup local principal |
+| --- | --- | --- |
+| `debot` | Telegram, conversa, comandos, callbacks, UX e chamadas bot -> API | Bot local com secrets Telegram e token interno para API |
+| `api` | Pagamentos, Eulen, D1 financeiro, webhooks, recheck, rotas ops e WAF | Worker/API local com D1/KV, secrets Eulen e ops token |
+| `github-automation` | Workflows, prompts, triagem, planning, refinement, review de PR e wiki | GitHub Actions/shell com `GITHUB_TOKEN`, OpenAI e variaveis de modelo |
+
+O inventario SSOT de variaveis, bindings e segredos fica em
+[`docs/operations/secrets-and-environment-inventory.md`](./docs/operations/secrets-and-environment-inventory.md).
+
 ## Estado atual do `main`
 
 O `main` ja inclui:
@@ -170,6 +181,11 @@ npm install
 ```bash
 npm run dev
 ```
+
+Enquanto este repositorio ainda opera o MVP completo, esse comando sobe o
+monolito de transicao. Depois do split, rode localmente apenas o repositorio que
+voce estiver alterando: `debot` para conversa Telegram, `api` para pagamentos e
+rotas financeiras, ou `github-automation` para workflows/prompts.
 
 ### Comandos essenciais
 

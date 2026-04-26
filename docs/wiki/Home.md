@@ -31,6 +31,9 @@ Este repositorio ainda concentra o MVP operacional enquanto o split nao termina.
 
 Referencias ao monolito devem ser lidas como transitorias. Quando mantidas em runbooks, elas precisam apontar para o substituto correto no modelo de tres repositorios.
 
+O inventario operacional comum de variaveis, bindings e segredos fica em
+[`docs/operations/secrets-and-environment-inventory.md`](../operations/secrets-and-environment-inventory.md).
+
 ## Estado atual em uma leitura
 
 - `Hono` ja e a borda HTTP real do Worker

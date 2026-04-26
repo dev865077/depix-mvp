@@ -10,6 +10,42 @@ Os comandos abaixo ainda descrevem o monolito `depix-mvp`, que segue operacional
 
 Enquanto o split do track `#674` nao estiver concluido, use este runbook para operar `depix-mvp`. Depois do cutover, qualquer referencia ao monolito deve ser removida ou mantida apenas como historico com link para o repositorio substituto.
 
+## Operacao por repositorio alvo
+
+### `debot`
+
+- Deploy: publicar o Worker/bot que recebe `POST /telegram/:tenantId/webhook`.
+- Rollback: reverter a ultima versao do bot sem alterar D1 financeiro nem secrets Eulen.
+- Troubleshooting: verificar webhook Telegram, token do bot, secret do webhook, comandos publicos e chamadas bot -> API.
+- Handoff: registrar tenant, ambiente, webhook Telegram afetado, update ou chat de exemplo e correlacao com a chamada feita para `api`.
+
+### `api`
+
+- Deploy: publicar a superficie financeira que recebe webhooks Eulen, expoe rotas ops e acessa D1/KV financeiro.
+- Rollback: reverter a API financeira mantendo compatibilidade com a versao de `debot` em uso ou ativando fallback operacional documentado.
+- Troubleshooting: verificar `GET /health`, D1, KV tenant registry, secrets Eulen, split, WAF webhook rate limit e `POST /ops/:tenantId/recheck/deposit`.
+- Handoff: registrar `tenantId`, `orderId`, `depositEntryId`, `qrId` quando houver, ambiente, request id e evento `deposit_events` relacionado.
+
+### `github-automation`
+
+- Deploy: alterar workflows, prompts e scripts de automacao por PR no repositorio de automacao.
+- Rollback: reverter a PR de workflow/prompt/script que alterou o comportamento da lane.
+- Troubleshooting: verificar runs de `AI Issue Triage`, `AI Issue Planning Review`, `AI Issue Refinement`, `AI PR Review`, `AI Wiki Update`, secrets OpenAI e permissoes GitHub.
+- Handoff: registrar issue/PR/discussion, run id, job com falha, prompt/script afetado e conclusao canonica esperada.
+
+## Cutover
+
+O cutover para tres repositorios e apenas referencia documental enquanto a nova
+topologia nao estiver pronta. Nao execute cutover parcial a partir deste runbook.
+Quando a topologia estiver pronta, a ordem operacional deve ser:
+
+1. Confirmar que `api` esta publicada em `test` e aceita chamadas de `debot`.
+2. Confirmar que `debot` usa somente o contrato financeiro interno e nao chama Eulen ou D1 financeiro diretamente.
+3. Confirmar que `github-automation` opera issues, PRs, discussions e wiki sem depender de arquivos que ficaram no repositorio de produto.
+4. Atualizar webhooks Telegram e Eulen para os hosts finais por ambiente.
+5. Rodar smoke tests por repositorio e registrar evidencia.
+6. Marcar referencias ao monolito como historicas ou remove-las.
+
 ## Scripts relevantes
 
 - `npm run dev`
