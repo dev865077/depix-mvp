@@ -123,7 +123,6 @@ rotas pertencem ao DeBot:
 As rotas abaixo ficam fora do DeBot:
 
 - `POST /:tenantId/recheck/deposit`
-- `POST /:tenantId/reconcile/deposits`
 - `GET /:tenantId/eulen/ping`
 - `POST /:tenantId/eulen/create-deposit`
 
@@ -179,8 +178,6 @@ imports.
 - `src/routes/webhooks.ts`
 - `src/services/eulen-deposit-recheck.ts`
 - `src/services/eulen-deposit-webhook.ts`
-- `src/services/eulen-deposits-fallback.ts`
-- `src/services/scheduled-deposit-reconciliation.ts`
 - `src/services/telegram-order-confirmation.ts`
 - `src/services/telegram-order-nonce.ts`
 - `src/db/**`
@@ -188,7 +185,6 @@ imports.
 
 ### Rotas ops financeiras
 
-- fallback operacional de depositos
 - recheck operacional de deposito
 - diagnosticos Eulen
 - autorizacao ou regras de lifecycle financeiro

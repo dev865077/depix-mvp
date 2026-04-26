@@ -62,8 +62,6 @@ credential or variable.
 | `BETA_DEPIX_SPLIT_FEE` | Secret binding | Beta split fee value in Eulen format | `.dev.vars` locally; Cloudflare Secrets Store in published envs | `local`, `test`, `production` | API operator |
 | `OPS_ROUTE_BEARER_TOKEN` | Secret binding | Bearer token for manual operational financial routes | `.dev.vars` locally; Cloudflare Secrets Store in published envs | `local`, `test`, `production` | API operator |
 | `ENABLE_OPS_DEPOSIT_RECHECK` | Worker var | Enables manual deposit recheck route | Versioned Worker config | `test`, `production` | API operator |
-| `ENABLE_OPS_DEPOSITS_FALLBACK` | Worker var | Legacy deposits listing fallback; pending removal in `#585` | Versioned Worker config | `test`, `production` until removed | API operator |
-| `ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION` | Worker var | Legacy scheduled reconciliation; pending removal in `#585` | Versioned Worker config and cron trigger | `local`, `test`, `production` until removed | API operator |
 | `ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK` | Worker var | Explicit local fallback for webhook rate limiting when WAF policy is unavailable | Versioned Worker config | `local`, `test`, `production` | API operator |
 | `CLOUDFLARE_ZONE_ID` | Operator env | Target zone for applying WAF webhook rate limit | Operator shell/CI secret for WAF apply script | `test`, `production` operations | API operator |
 | `CLOUDFLARE_API_TOKEN` | Operator secret | Token with Rulesets edit permission for WAF apply script | Operator shell/CI secret, not versioned | `test`, `production` operations | API operator |

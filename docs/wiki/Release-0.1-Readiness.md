@@ -22,13 +22,7 @@ Evidencia historica:
 
 ## Pendencias conhecidas
 
-`#585` segue aberta e e a fonte da remocao planejada das camadas automaticas de recuperacao:
-
-- cron de reconciliacao agendada
-- fallback operacional por listagem `/deposits`
-- artefatos ligados a `scheduled_deposit_reconciliation_claims`
-
-Enquanto `#585` estiver aberta, a documentacao deve tratar essas camadas como existentes e pendentes de remocao, nao como removidas. O caminho operacional preferido para pagamento nao confirmado pelo webhook e o recheck manual por `depositEntryId`.
+As camadas automaticas de recuperacao por listagem `/deposits` e cron de reconciliacao agendada foram removidas do runtime suportado. O caminho operacional para pagamento nao confirmado pelo webhook e o recheck manual por `depositEntryId`.
 
 ## Escopo da 0.1
 

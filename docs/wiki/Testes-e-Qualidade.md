@@ -22,7 +22,6 @@
 - `test/db-repositories-runtime-import.test.js`
 - `test/db.repositories.test.js`
 - `test/deposit-recheck.test.js`
-- `test/deposits-fallback.test.js`
 - `test/eulen-client.test.js`
 - `test/eulen-webhook.test.js`
 - `test/health.test.js`
@@ -33,7 +32,6 @@
 - `test/order-registration.test.js`
 - `test/qr-flow-evidence.test.js`
 - `test/runtime-config.test.js`
-- `test/scheduled-deposit-reconciliation.test.js`
 - `test/scripts/cloudflare-pool-markers.test.js`
 - `test/scripts/run-vitest-sequential.test.ts`
 - `test/telegram-brl-amount.test.js`

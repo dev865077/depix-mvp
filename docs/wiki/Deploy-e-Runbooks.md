@@ -75,7 +75,6 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `HEAD /webhooks/eulen/:tenantId/deposit`
 - `POST /webhooks/eulen/:tenantId/deposit`
 - `POST /ops/:tenantId/recheck/deposit`
-- `POST /ops/:tenantId/reconcile/deposits` (legado; pendente de remocao em `#585`)
 - `GET /ops/:tenantId/telegram/webhook-info`
 - `POST /ops/:tenantId/telegram/register-webhook`
 - `GET /ops/:tenantId/eulen/ping`
@@ -96,14 +95,13 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `docs/wiki/Webhook-Rate-Limit-WAF.md` registra onde revisar, aplicar, ajustar e reverter a politica
 - o limiter em memoria do Worker nao e primario; ele fica desligado por padrao e so deve ser ativado por `ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK=true` durante fallback operacional
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
-- `POST /ops/:tenantId/reconcile/deposits` ainda existe e consulta `deposits`, mas e legado e esta pendente de remocao em `#585`; o operador nao deve usar esse caminho como recuperacao primaria da 0.1
-- o Worker Module ainda expoe `scheduled(controller, env, ctx)` para reconciliacao agendada bounded de depositos Telegram pendentes; esse cron esta pendente de remocao em `#585`
-- `test` e `production` habilitam `ENABLE_OPS_DEPOSIT_RECHECK=true` e `ENABLE_OPS_DEPOSITS_FALLBACK=true`; ambas as rotas continuam inacessiveis sem `OPS_ROUTE_BEARER_TOKEN`, e `ENABLE_OPS_DEPOSITS_FALLBACK` segue pendente de remocao em `#585`
+- o fallback automatico por listagem `/deposits` e a reconciliacao agendada foram removidos; quando o webhook nao confirmar, o caminho operacional suportado e o recheck manual por `depositEntryId`
+- `test` e `production` habilitam `ENABLE_OPS_DEPOSIT_RECHECK=true`; a rota continua inacessivel sem `OPS_ROUTE_BEARER_TOKEN`
 - as rotas de diagnostico operacional existem, mas ficam fechadas por padrao e dependem de `ENABLE_LOCAL_DIAGNOSTICS=true`
 - as rotas de webhook do Telegram em `/ops/:tenantId/telegram/*` sao operacionais de verdade: exigem `Authorization: Bearer <OPS_ROUTE_BEARER_TOKEN>` e podem ser usadas em `test` e `production`
 - o coletor de evidencia pos-QR agora aceita filtros combinaveis por `--order-id` e `--deposit-entry-id`
 - o relatorio de evidencia agora inclui `deposit_events` sem `raw_payload`
-- o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `health.configuration.operations.depositRecheck` e, enquanto `#585` estiver aberta, tambem de `health.configuration.operations.depositsFallback`; para compatibilidade, o formato legado em `health.operations` continua aceito
+- o relatorio de evidencia agora expõe uma secao `Ops readiness` derivada de `health.configuration.operations.depositRecheck`; para compatibilidade, o formato legado em `health.operations` continua aceito
 - o relatorio de evidencia agora expõe uma secao `splitProof` para explicitar lacunas de split-audit e distinguir estados como `missing_split_config`, `pending_settlement`, `missing_onchain_tx` e `proved`
 - o coletor de evidencia tambem inclui os campos persistidos de split nas ordens consultadas para sustentar esse resumo auditavel
 - o coletor de evidencia da release 0.1 agora tambem expõe `telegram_user_id`, `created_request_id` e `request_id` quando esses campos estiverem persistidos no fluxo consultado
@@ -185,4 +183,4 @@ curl -X POST "$BASE_URL/ops/alpha/recheck/deposit" \
   -d '{ "depositEntryId": "<DEPOSIT_ENTRY_ID>" }'
 ```
 
-Nao use o fallback por listagem `/deposits` como caminho primario da 0.1. Ele ainda existe no `main`, mas esta marcado para remocao em `#585`, junto com o cron de reconciliacao agendada.
+Nao use fallback por listagem `/deposits`: esse caminho e o cron de reconciliacao agendada foram removidos. A recuperacao operacional suportada e o recheck manual por `depositEntryId`.
