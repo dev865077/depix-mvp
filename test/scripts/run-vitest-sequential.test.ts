@@ -126,10 +126,10 @@ describe("run-vitest-sequential", () => {
 
   it("separates passthrough args from test file args", () => {
     expect(
-      splitCliArguments(["--reporter=dot", "--testNamePattern=tenant", "test/runtime-config.test.js"]),
+      splitCliArguments(["--reporter=dot", "--testNamePattern=runtime", "test/runtime-config.test.js"]),
     ).toEqual({
       testFiles: ["test/runtime-config.test.js"],
-      passthroughArgs: ["--reporter=dot", "--testNamePattern=tenant"],
+      passthroughArgs: ["--reporter=dot", "--testNamePattern=runtime"],
     });
   });
 

@@ -18,7 +18,6 @@ export type JsonErrorBody = {
     details?: JsonErrorDetails;
   };
   requestId: string;
-  tenantId?: string;
 };
 
 export function jsonError(
@@ -36,7 +35,6 @@ export function jsonError(
         details,
       },
       requestId: c.get("requestId"),
-      tenantId: c.get("tenant")?.tenantId,
     },
     status as ContentfulStatusCode,
   );

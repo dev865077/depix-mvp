@@ -1,5 +1,9 @@
 # DeBot Extraction Boundary
 
+Status: concluido. O destino fisico e [`dev865077/DeBot`](https://github.com/dev865077/DeBot).
+As referencias abaixo descrevem o inventario historico usado para a extracao; o
+runtime ativo nao mora mais em `depix-mvp`.
+
 ## Objetivo
 
 Este documento fecha o inventario concreto exigido por `#696` para que `#673`

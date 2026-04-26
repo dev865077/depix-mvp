@@ -22,13 +22,15 @@ Quando houver divergencia entre narrativa e implementacao, o repo e a fonte de v
 
 ## Modelo de transicao
 
-Enquanto o split de repositorios nao estiver concluido, `depix-mvp` continua sendo a fonte versionada do MVP. Referencias novas de ownership devem usar o modelo alvo:
+O split operacional foi concluido para os destinos principais. Referencias novas
+de ownership devem usar estes repositorios:
 
-- `debot`: runtime Telegram e experiencia do usuario.
-- `api`: superficie financeira, Eulen, D1 financeiro, webhooks e rotas ops.
-- `github-automation`: workflows, prompts e automacoes de GitHub.
+- `dev865077/DeBot`: runtime Telegram e experiencia do usuario.
+- `dev865077/Sagui`: superficie financeira, Eulen, D1 financeiro, webhooks e rotas ops.
+- `dev865077/AutoIA-Github`: workflows, prompts e automacoes de GitHub.
 
-Referencias antigas que tratem o monolito como destino permanente devem ser removidas ou marcadas como transitorias, apontando para um desses repositorios-alvo.
+Referencias antigas que tratem o monolito como destino permanente sao historicas
+e devem ser atualizadas quando o documento for tocado por uma mudanca de produto.
 
 O inventario operacional comum de variaveis, bindings e segredos fica em
 [`docs/operations/secrets-and-environment-inventory.md`](./operations/secrets-and-environment-inventory.md).
