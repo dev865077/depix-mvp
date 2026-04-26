@@ -17,10 +17,6 @@
 
 ## Suite atual no repositorio
 
-- `test/ai-issue-planning-review.test.js`
-- `test/ai-issue-triage.test.js`
-- `test/ai-pr-review.test.js`
-- `test/ai-wiki-update.test.js`
 - `test/bootstrap-boundary.test.js`
 - `test/db-repositories-contract.test.js`
 - `test/db-repositories-runtime-import.test.js`
@@ -48,6 +44,9 @@
 - `test/telegram-webhook-reply.test.js`
 - `test/tenant-routing.test.js`
 - `test/typescript-runtime-cleanup.test.js`
+
+Os testes de automacao GitHub foram movidos para
+`dev865077/AutoIA-Github/test/`.
 
 ## Estado atual do CI
 
