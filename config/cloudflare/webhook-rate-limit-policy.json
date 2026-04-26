@@ -1,0 +1,21 @@
+{
+  "policyName": "depix-mvp-public-webhook-rate-limit",
+  "rulesetName": "depix-mvp public webhook rate limiting",
+  "phase": "http_ratelimit",
+  "rule": {
+    "ref": "depix_mvp_public_webhook_rate_limit",
+    "description": "depix-mvp public webhook rate limit",
+    "enabled": true,
+    "expression": "(http.request.method eq \"POST\" and (http.request.uri.path matches \"^/telegram/[^/]+/webhook$\" or http.request.uri.path matches \"^/webhooks/eulen/[^/]+/deposit$\"))",
+    "action": "block",
+    "ratelimit": {
+      "characteristics": [
+        "cf.colo.id",
+        "ip.src"
+      ],
+      "period": 60,
+      "requests_per_period": 60,
+      "mitigation_timeout": 60
+    }
+  }
+}

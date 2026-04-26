@@ -11,6 +11,8 @@ export const WEBHOOK_RATE_LIMIT_POLICY = {
   windowMs: 60_000,
 } as const;
 
+const ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK = "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK";
+
 type RateLimitBucket = {
   count: number;
   resetAtMs: number;
@@ -108,9 +110,13 @@ export function getWebhookRateLimitBucketCountForTests(): number {
   return webhookRateLimitBuckets.size;
 }
 
+function isLocalWebhookRateLimitFallbackEnabled(c: AppContext): boolean {
+  return c.env[ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK] === "true";
+}
+
 export function createWebhookRateLimitMiddleware(scope: WebhookRateLimitScope): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
-    if (c.get("runtimeConfig")?.environment === "local") {
+    if (!isLocalWebhookRateLimitFallbackEnabled(c)) {
       await next();
       return;
     }

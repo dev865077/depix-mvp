@@ -92,8 +92,8 @@ Estado atual:
 - o recheck de deposito e o webhook principal agora propagam o `correlationId` canonico do pedido para logs e telemetria
 - o client Eulen agora emite logs estruturados de inicio, sucesso e falha da request com `correlationId`, `requestId`, `tenantId`, `orderId` e `depositEntryId` quando disponiveis
 - o client Eulen agora aceita um bloco de telemetria opcional por request, sem alterar o contrato funcional da chamada
-- o rate limit centralizado do webhook da Eulen compartilha a mesma politica aplicada aos webhooks do Telegram: 60 requests por minuto por IP + tenant em ambientes nao locais
-- em ambiente `local`, o rate limit do webhook nao bloqueia nem adiciona espera
+- o rate limit do webhook da Eulen compartilha a mesma politica Cloudflare WAF aplicada ao webhook do Telegram: 60 requests por minuto por IP fora do isolate do Worker
+- o limiter local em memoria existe apenas como fallback operacional explicito via `ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK=true`
 - o client Eulen no ambiente `local` zera os atrasos de retry para nao segurar suites de teste ou fluxos de desenvolvimento com retry habilitado
 - a confirmacao de pagamento continua podendo disparar notificacao assincrona no Telegram quando a conciliacao do webhook ou do recheck altera o estado visivel do pedido
 - a notificacao assincrona continua idempotente para nao repetir mensagens entre webhook, recheck e fallback

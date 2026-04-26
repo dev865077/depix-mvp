@@ -40,6 +40,7 @@ export interface WorkerEnv {
   EULEN_API_BASE_URL: string;
   EULEN_API_TIMEOUT_MS: string;
   ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION?: string;
+  ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK?: string;
   TENANT_REGISTRY_KV: KVNamespace;
   DB: D1Database;
   [bindingName: string]: unknown;

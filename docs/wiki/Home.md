@@ -54,9 +54,9 @@ Referencias ao monolito devem ser lidas como transitorias. Quando mantidas em ru
 - o sistema agora persiste `created_request_id` em `deposits` e `request_id` em `deposit_events` para ligar a trilha operacional usada no coletor de evidencia da release 0.1
 - o sistema agora persiste `correlation_id` canonico em `orders`, com backfill de linhas legadas via migracao
 - o `correlation_id` e propagado nos logs de Telegram, no webhook da Eulen, no recheck de deposito e na telemetria do client Eulen
-- a borda de webhook do Telegram e a borda de webhook da Eulen agora aplicam rate limit centralizado por `tenantId` e IP em ambientes nao locais
-- o limite atual e de 60 requests por minuto por `tenantId` + IP, com resposta `429` e `Retry-After` quando excedido
-- em ambiente `local`, o rate limit de webhook nao introduce espera para nao atrapalhar testes e fluxos de desenvolvimento
+- a borda de webhook do Telegram e a borda de webhook da Eulen agora usam Cloudflare WAF custom rate limiting como controle primario fora do isolate
+- o limite operacional atual e 60 requests por minuto por IP na politica WAF compartilhada, com resposta `429` e `Retry-After` quando excedido
+- o limiter em memoria do Worker permanece apenas como fallback explicito via `ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK=true`
 - `D1` ja guarda `orders`, `deposits` e `deposit_events`
 - os repositories centrais de `orders`, `deposits` e `deposit_events` agora usam contratos de persistencia explicitados em TypeScript
 - o bootstrap do Worker foi movido para `src/index.ts`

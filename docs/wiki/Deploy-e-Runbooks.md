@@ -56,8 +56,9 @@ O host `https://depix-mvp.dev865077.workers.dev` nao e o endpoint publico canoni
 - `POST /webhooks/eulen/:tenantId/deposit` ja processa o webhook principal da Eulen e pode acionar notificacao assincrona no Telegram quando o pagamento for conciliado
 - `POST /webhooks/eulen/:tenantId/deposit` agora grava `deposit_events` antes do batch atomico que atualiza `deposits` + `orders`, para nao perder evidencia se o agregado falhar no meio da escrita
 - `POST /webhooks/eulen/:tenantId/deposit` agora atualiza `deposits` + `orders` em um unico `db.batch()`, reduzindo o risco de estado parcial entre as duas tabelas
-- `POST /webhooks/eulen/:tenantId/deposit` e a borda de webhook do Telegram agora usam rate limit centralizado por `tenantId` e IP em ambiente nao local, com resposta `429` e `Retry-After` quando o limite e excedido
-- `POST /webhooks/eulen/:tenantId/deposit` e `POST /telegram/:tenantId/webhook` nao aplicam espera de rate limit em `local`, para preservar testes e dev flows
+- `POST /webhooks/eulen/:tenantId/deposit` e a borda de webhook do Telegram agora usam Cloudflare WAF custom rate limiting como controle primario, com resposta `429` e `Retry-After` quando o limite e excedido
+- `docs/wiki/Webhook-Rate-Limit-WAF.md` registra onde revisar, aplicar, ajustar e reverter a politica
+- o limiter em memoria do Worker nao e primario; ele fica desligado por padrao e so deve ser ativado por `ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK=true` durante fallback operacional
 - `POST /ops/:tenantId/recheck/deposit` ja consulta `deposit-status`, persiste o evento `recheck_deposit_status`, reconcilia `deposits` + `orders` e pode acionar notificacao assincrona no Telegram sem bloquear a resposta da rota
 - `POST /ops/:tenantId/reconcile/deposits` ainda existe e consulta `deposits`, mas e legado e esta pendente de remocao em `#585`; o operador nao deve usar esse caminho como recuperacao primaria da 0.1
 - o Worker Module ainda expoe `scheduled(controller, env, ctx)` para reconciliacao agendada bounded de depositos Telegram pendentes; esse cron esta pendente de remocao em `#585`
