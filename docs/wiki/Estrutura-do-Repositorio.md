@@ -20,12 +20,16 @@ fica assim:
 | --- | --- | --- |
 | `debot` | `src/telegram/`, partes bot-facing de `src/routes/telegram.ts`, testes Telegram e docs de UX | Conversa Telegram, comandos, callbacks, copy, retomada de pedido e chamadas bot -> API |
 | `api` | `src/routes/webhooks.ts`, `src/routes/ops.ts`, `src/clients/eulen-client.ts`, `src/db/`, `migrations/`, config financeira e runbooks operacionais | Eulen, D1 financeiro, webhooks, recheck, WAF, persistencia e rotas ops financeiras |
-| `github-automation` | `.github/workflows/`, `.github/prompts/`, scripts `ai-*` e testes de automacao | Triage, planning, refinement, PR review, wiki update e governanca automatizada |
+| `github-automation` | `dev865077/AutoIA-Github` | Triage, planning, refinement, PR review, wiki update e governanca automatizada |
 
 Setup local tambem deve seguir esse ownership: alteracoes de bot devem preparar
 secrets Telegram e token interno da API; alteracoes financeiras devem preparar
 D1/KV, Eulen e ops token; alteracoes de automacao devem preparar GitHub token,
 OpenAI e variaveis de modelo.
+
+Os antigos caminhos locais de automacao GitHub foram extraidos para
+`dev865077/AutoIA-Github`: workflows, prompts, scripts `ai-*` e testes de
+automacao nao pertencem mais ao produto.
 
 ## Leitura por area
 

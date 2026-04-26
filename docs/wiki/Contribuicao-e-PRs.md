@@ -23,7 +23,7 @@ repositorio alvo do split:
 | --- | --- | --- |
 | `debot` | Conversa Telegram, comandos, callbacks, copy, retomada de pedido e integracao bot -> API | Secrets Telegram do tenant, webhook secret e token interno para chamar `api` |
 | `api` | Eulen, D1 financeiro, webhooks, recheck, WAF, migrations, rotas ops financeiras e tenant registry financeiro | D1/KV local ou remoto de teste, secrets Eulen, split e `OPS_ROUTE_BEARER_TOKEN` |
-| `github-automation` | Workflows, prompts, scripts `ai-*`, regras de checks, review de PR, triagem/planning/refinement e wiki update | `GITHUB_TOKEN`, `OPENAI_API_KEY`, variaveis de modelo e categoria de Discussion quando aplicavel |
+| `github-automation` | `dev865077/AutoIA-Github`: workflows, prompts, scripts `ai-*`, regras de checks, review de PR, triagem/planning/refinement e wiki update | `GITHUB_TOKEN`, `OPENAI_API_KEY`, variaveis de modelo e categoria de Discussion quando aplicavel |
 
 Nao misture esses escopos sem motivo operacional claro. Se uma PR tocar mais de
 um repositorio alvo, explique no corpo da PR por que a fronteira precisa mudar

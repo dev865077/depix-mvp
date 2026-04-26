@@ -6,9 +6,10 @@ Registrar em um unico lugar quais checks bloqueiam merge em `main` e quais check
 
 ## Fonte de verdade
 
-A classificacao canonica vive em `docs/check-classification.yml`.
+A classificacao canonica dos checks de automacao GitHub foi movida para
+`dev865077/AutoIA-Github/docs/check-classification.yml`.
 
-O fluxo de PR consome esse arquivo para decidir se um check e:
+O fluxo de PR da automacao consome esse arquivo para decidir se um check e:
 
 - `required`
 - `informative`
@@ -46,7 +47,6 @@ Sem virar bloqueio vermelho enganoso para merge.
 
 ## Regra de manutencao
 
-Se um check mudar de classe, a mudanca precisa acontecer em dois lugares na mesma PR:
-
-1. `docs/check-classification.yml`
-2. esta pagina
+Se um check mudar de classe, a mudanca pertence ao repositorio
+`dev865077/AutoIA-Github`. Esta pagina permanece apenas como ponteiro do produto
+para o destino operacional da automacao.
