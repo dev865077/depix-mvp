@@ -29,9 +29,9 @@ import {
 import { syncTelegramCanonicalMessage } from "../services/telegram-canonical-message.js";
 import {
   confirmTelegramPaymentWithBoundary,
+  FinancialApiBoundaryError,
   reconcileTelegramPaymentWithBoundary,
 } from "../services/internal-financial-api.js";
-import { TelegramOrderConfirmationError } from "../services/telegram-order-confirmation.js";
 import { formatBrlAmountInCents } from "./brl-amount.js";
 import { TelegramWebhookError, normalizeTelegramBotError } from "./errors.js";
 import { summarizeTelegramApiPayload, summarizeTelegramUpdate } from "./diagnostics.js";
@@ -1650,7 +1650,7 @@ async function handleTelegramConfirmRequest(ctx, input, order, source) {
 
     await replyTelegramOrderStep(ctx, input, confirmationSession.order, confirmationSession.deposit);
   } catch (error) {
-    if (error instanceof TelegramOrderConfirmationError) {
+    if (error instanceof FinancialApiBoundaryError) {
       logTelegramConfirmationFailure(ctx, input, order, error);
       await replyTelegramText(ctx, error.userMessage);
       return;

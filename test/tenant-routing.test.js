@@ -79,6 +79,7 @@ function createWorkerEnv() {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
+    FINANCIAL_API_BASE_URL: "https://sagui.example.test",
     TENANT_REGISTRY_KV: createTenantRegistryKv(createTenantRegistry()),
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",

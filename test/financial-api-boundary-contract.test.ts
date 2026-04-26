@@ -18,17 +18,20 @@ describe("financial API boundary contract", () => {
     expect(contract).toContain("## Ownership Matrix");
   });
 
-  it("stays grounded in the current monolith surface and direct coupling points", function assertCurrentRuntimeEvidence() {
+  it("stays grounded in the current financial surface and proves the bot client uses the external API", function assertCurrentRuntimeEvidence() {
     expect(webhooksRoute).toContain('webhooksRouter.post("/eulen/:tenantId/deposit"');
     expect(opsRoute).toContain('opsRouter.post("/:tenantId/recheck/deposit"');
     expect(opsRoute).toContain('opsRouter.post("/:tenantId/reconcile/deposits"');
     expect(telegramRuntime).toContain("confirmTelegramPaymentWithBoundary");
     expect(telegramRuntime).toContain("reconcileTelegramPaymentWithBoundary");
-    expect(internalFinancialApi).toContain("confirmTelegramOrder");
-    expect(internalFinancialApi).toContain("processDepositRecheck");
+    expect(internalFinancialApi).toContain("financialApiBaseUrl");
+    expect(internalFinancialApi).toContain("DEBOT_INTERNAL_API_TOKEN");
+    expect(internalFinancialApi).toContain("fetch(");
+    expect(internalFinancialApi).not.toContain("confirmTelegramOrder");
+    expect(internalFinancialApi).not.toContain("processDepositRecheck");
 
-    expect(contract).toContain("Bot payment creation and pending-payment reconciliation now flow through the internal financial API boundary");
-    expect(contract).toContain("legacy fallback");
+    expect(contract).toContain("Bot payment creation and pending-payment reconciliation now flow through the external Cloudflare financial API");
+    expect(contract).toContain("No local legacy payment fallback is allowed");
     expect(contract).toContain("financial surface already exists as external webhook plus operational reconciliation routes");
   });
 });

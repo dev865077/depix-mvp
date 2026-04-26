@@ -1,18 +1,12 @@
-import { readTenantSecret } from "../config/tenants.js";
-import { getLatestDepositByOrderId } from "../db/repositories/deposits-repository.js";
-import { getOrderById } from "../db/repositories/orders-repository.js";
+import { readSecretBindingValue } from "../config/tenants.js";
 import { log, type RuntimeLogConfig } from "../lib/logger.js";
-import {
-  confirmTelegramOrder,
-  TelegramOrderConfirmationError,
-} from "./telegram-order-confirmation.js";
-import { processDepositRecheck } from "./eulen-deposit-recheck.js";
 
 import type { DepositRecord, OrderRecord } from "../types/persistence.js";
 import type { TenantConfig, WorkerEnv } from "../types/runtime.js";
-import type { EulenRuntimeConfig } from "../clients/eulen-client.js";
 
-type FinancialRuntimeConfig = EulenRuntimeConfig & RuntimeLogConfig;
+type FinancialRuntimeConfig = RuntimeLogConfig & {
+  financialApiBaseUrl: string;
+};
 
 type RequestContext = {
   requestId?: string;
@@ -22,7 +16,6 @@ type RequestContext = {
 
 type TelegramPaymentBoundaryInput = {
   env: WorkerEnv;
-  db: D1Database;
   tenant: TenantConfig;
   runtimeConfig: FinancialRuntimeConfig;
   requestContext?: RequestContext;
@@ -37,166 +30,325 @@ type TelegramPaymentReconcileInput = TelegramPaymentBoundaryInput & {
   deposit: DepositRecord;
 };
 
+type PaymentProjection = {
+  ok: true;
+  tenantId: string;
+  orderId: string | null;
+  correlationId: string | null;
+  depositEntryId: string | null;
+  qrId: string | null;
+  qrCopyPaste: string | null;
+  qrImageUrl: string | null;
+  externalStatus: string | null;
+  orderStatus: string | null;
+  orderCurrentStep: string | null;
+  expiration: string | null;
+  duplicate: boolean;
+  source?: string;
+  requestId?: string;
+};
+
+type FinancialApiErrorBody = {
+  error?: {
+    code?: string;
+    message?: string;
+    details?: Record<string, unknown>;
+  };
+};
+
 type TelegramPaymentReconcileResult = {
   order: OrderRecord;
   deposit: DepositRecord;
   attempted: true;
-  result: Awaited<ReturnType<typeof processDepositRecheck>> | null;
-  boundarySource: "internal_financial_api" | "legacy_recheck_path";
-  usedFallback: boolean;
+  result: {
+    code: string;
+    details: {
+      externalStatus: string | null;
+      orderCurrentStep: string | null;
+      orderStatus: string | null;
+    };
+  } | null;
+  boundarySource: "external_financial_api";
+  usedFallback: false;
 };
 
-type BoundaryDependencies = {
-  confirmThroughBoundary: (input: TelegramPaymentConfirmationInput) => ReturnType<typeof confirmTelegramOrder>;
-  confirmLegacyFallback: (input: TelegramPaymentConfirmationInput) => ReturnType<typeof confirmTelegramOrder>;
-  reconcileThroughBoundary: (input: TelegramPaymentReconcileInput) => Promise<TelegramPaymentReconcileResult>;
-  reconcileLegacyFallback: (input: TelegramPaymentReconcileInput) => Promise<TelegramPaymentReconcileResult>;
+type TelegramConfirmationSession = {
+  order: OrderRecord;
+  deposit: DepositRecord | null;
+  accepted: boolean;
+  conflict: boolean;
+  parseResult: null;
+  boundarySource: "external_financial_api";
+  usedFallback: false;
 };
 
-type TelegramConfirmationSession = Awaited<ReturnType<typeof confirmTelegramOrder>> & {
-  boundarySource: "internal_financial_api" | "legacy_confirmation_path";
-  usedFallback: boolean;
-};
+const DEBOT_INTERNAL_API_TOKEN_BINDING = "DEBOT_INTERNAL_API_TOKEN";
+const TELEGRAM_CONFIRMATION_FAILURE_MESSAGE = [
+  "Não consegui criar seu Pix agora.",
+  "Seu pedido foi encerrado com falha para evitar duplicidade silenciosa.",
+  "Envie /start para recomecar com segurança.",
+].join("\n\n");
 
-async function confirmTelegramPaymentThroughBoundary(
-  input: TelegramPaymentConfirmationInput,
-): Promise<Awaited<ReturnType<typeof confirmTelegramOrder>>> {
-  return confirmTelegramOrder(input);
+export class FinancialApiBoundaryError extends Error {
+  code: string;
+  status: number;
+  userMessage: string;
+  details: Record<string, unknown>;
+
+  constructor(
+    code: string,
+    message: string,
+    options: Readonly<{
+      status?: number;
+      userMessage?: string;
+      details?: Record<string, unknown>;
+      cause?: unknown;
+    }> = {},
+  ) {
+    super(message, {
+      cause: options.cause,
+    });
+
+    this.name = "FinancialApiBoundaryError";
+    this.code = code;
+    this.status = options.status ?? 502;
+    this.userMessage = options.userMessage ?? TELEGRAM_CONFIRMATION_FAILURE_MESSAGE;
+    this.details = options.details ?? {};
+  }
 }
 
-async function reconcileTelegramPaymentThroughBoundary(
-  input: TelegramPaymentReconcileInput,
-): Promise<TelegramPaymentReconcileResult> {
-  const eulenApiToken = await readTenantSecret(input.env, input.tenant, "eulenApiToken");
-  const result = await processDepositRecheck({
-    db: input.db,
-    runtimeConfig: input.runtimeConfig,
-    tenant: input.tenant,
-    eulenApiToken,
-    rawBody: JSON.stringify({
-      depositEntryId: input.deposit.depositEntryId,
-    }),
-    requestId: input.requestContext?.requestId,
-  });
-  const [updatedOrder, updatedDeposit] = await Promise.all([
-    getOrderById(input.db, input.tenant.tenantId, String(input.order.orderId)),
-    getLatestDepositByOrderId(input.db, input.tenant.tenantId, String(input.order.orderId)),
-  ]);
+function buildFinancialApiUrl(baseUrl: string, path: string): string {
+  const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/u, "");
+
+  if (normalizedBaseUrl.length === 0) {
+    throw new FinancialApiBoundaryError(
+      "financial_api_base_url_missing",
+      "Financial API base URL is not configured.",
+      { status: 500 },
+    );
+  }
+
+  return `${normalizedBaseUrl}${path}`;
+}
+
+async function readFinancialApiToken(env: WorkerEnv): Promise<string> {
+  return readSecretBindingValue(env, DEBOT_INTERNAL_API_TOKEN_BINDING);
+}
+
+function buildProjectionOrder(projection: PaymentProjection, fallbackOrder: OrderRecord): OrderRecord {
+  return {
+    ...fallbackOrder,
+    tenantId: projection.tenantId || fallbackOrder.tenantId,
+    orderId: projection.orderId ?? fallbackOrder.orderId,
+    correlationId: projection.correlationId ?? fallbackOrder.correlationId,
+    currentStep: projection.orderCurrentStep ?? fallbackOrder.currentStep,
+    status: projection.orderStatus ?? fallbackOrder.status,
+  } as OrderRecord;
+}
+
+function buildProjectionDeposit(
+  projection: PaymentProjection,
+  order: OrderRecord,
+  fallbackDeposit?: DepositRecord | null,
+): DepositRecord | null {
+  const depositEntryId = projection.depositEntryId ?? fallbackDeposit?.depositEntryId ?? null;
+
+  if (!depositEntryId) {
+    return null;
+  }
 
   return {
-    order: (updatedOrder ?? input.order) as OrderRecord,
-    deposit: (updatedDeposit ?? input.deposit) as DepositRecord,
-    attempted: true,
-    result,
-    boundarySource: "internal_financial_api",
-    usedFallback: false,
-  };
+    tenantId: projection.tenantId || fallbackDeposit?.tenantId || order.tenantId,
+    depositEntryId,
+    qrId: projection.qrId ?? fallbackDeposit?.qrId ?? null,
+    orderId: projection.orderId ?? fallbackDeposit?.orderId ?? order.orderId,
+    nonce: fallbackDeposit?.nonce ?? "external_financial_api",
+    createdRequestId: fallbackDeposit?.createdRequestId ?? projection.requestId ?? null,
+    qrCopyPaste: projection.qrCopyPaste ?? fallbackDeposit?.qrCopyPaste ?? "",
+    qrImageUrl: projection.qrImageUrl ?? fallbackDeposit?.qrImageUrl ?? "",
+    externalStatus: projection.externalStatus ?? fallbackDeposit?.externalStatus ?? "",
+    expiration: projection.expiration ?? fallbackDeposit?.expiration ?? null,
+    createdAt: fallbackDeposit?.createdAt ?? "",
+    updatedAt: fallbackDeposit?.updatedAt ?? "",
+  } as DepositRecord;
 }
 
-async function reconcileTelegramPaymentThroughLegacyFallback(
-  input: TelegramPaymentReconcileInput,
-): Promise<TelegramPaymentReconcileResult> {
-  const eulenApiToken = await readTenantSecret(input.env, input.tenant, "eulenApiToken");
-  const result = await processDepositRecheck({
-    db: input.db,
-    runtimeConfig: input.runtimeConfig,
-    tenant: input.tenant,
-    eulenApiToken,
-    rawBody: JSON.stringify({
-      depositEntryId: input.deposit.depositEntryId,
-    }),
-    requestId: input.requestContext?.requestId,
+async function readErrorBody(response: Response): Promise<FinancialApiErrorBody> {
+  try {
+    return await response.json() as FinancialApiErrorBody;
+  } catch {
+    return {};
+  }
+}
+
+async function requestPaymentProjection(
+  input: TelegramPaymentBoundaryInput,
+  request: Readonly<{
+    method: "POST" | "GET";
+    path: string;
+    body?: Record<string, unknown>;
+    idempotencyKey?: string;
+    correlationId?: string;
+  }>,
+): Promise<PaymentProjection> {
+  const token = await readFinancialApiToken(input.env);
+  const response = await fetch(buildFinancialApiUrl(input.runtimeConfig.financialApiBaseUrl, request.path), {
+    method: request.method,
+    headers: {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${token}`,
+      ...(request.body ? { "Content-Type": "application/json" } : {}),
+      ...(request.idempotencyKey ? { "Idempotency-Key": request.idempotencyKey } : {}),
+      ...(request.correlationId ? { "X-Correlation-Id": request.correlationId } : {}),
+      ...(input.requestContext?.requestId ? { "X-Request-Id": input.requestContext.requestId } : {}),
+    },
+    body: request.body ? JSON.stringify(request.body) : undefined,
   });
-  const [updatedOrder, updatedDeposit] = await Promise.all([
-    getOrderById(input.db, input.tenant.tenantId, String(input.order.orderId)),
-    getLatestDepositByOrderId(input.db, input.tenant.tenantId, String(input.order.orderId)),
-  ]);
 
-  return {
-    order: (updatedOrder ?? input.order) as OrderRecord,
-    deposit: (updatedDeposit ?? input.deposit) as DepositRecord,
-    attempted: true,
-    result,
-    boundarySource: "legacy_recheck_path",
-    usedFallback: true,
-  };
+  if (!response.ok) {
+    const errorBody = await readErrorBody(response);
+    const code = errorBody.error?.code ?? "financial_api_request_failed";
+
+    throw new FinancialApiBoundaryError(
+      code,
+      errorBody.error?.message ?? `Financial API request failed with status ${response.status}.`,
+      {
+        status: response.status,
+        details: errorBody.error?.details ?? {
+          path: request.path,
+          status: response.status,
+        },
+      },
+    );
+  }
+
+  const projection = await response.json() as PaymentProjection;
+
+  if (projection?.ok !== true) {
+    throw new FinancialApiBoundaryError(
+      "financial_api_projection_invalid",
+      "Financial API returned an invalid payment projection.",
+      {
+        status: 502,
+        details: {
+          path: request.path,
+        },
+      },
+    );
+  }
+
+  return projection;
 }
 
-const DEFAULT_BOUNDARY_DEPENDENCIES: BoundaryDependencies = {
-  confirmThroughBoundary: confirmTelegramPaymentThroughBoundary,
-  confirmLegacyFallback: confirmTelegramOrder,
-  reconcileThroughBoundary: reconcileTelegramPaymentThroughBoundary,
-  reconcileLegacyFallback: reconcileTelegramPaymentThroughLegacyFallback,
-};
-
-function logBoundaryFallback(
+function logBoundarySuccess(
   runtimeConfig: FinancialRuntimeConfig,
   tenantId: string,
   requestId: string | undefined,
   operation: "confirm" | "reconcile",
-  error: unknown,
+  projection: PaymentProjection,
 ): void {
   log(runtimeConfig, {
-    level: "warn",
-    message: `telegram.payment_boundary.${operation}_fallback`,
+    level: "info",
+    message: `telegram.payment_boundary.${operation}_external_api_completed`,
     tenantId,
     requestId,
     details: {
-      cause: error instanceof Error ? error.message : String(error),
+      orderId: projection.orderId,
+      depositEntryId: projection.depositEntryId,
+      source: projection.source,
     },
   });
 }
 
 export async function confirmTelegramPaymentWithBoundary(
   input: TelegramPaymentConfirmationInput,
-  dependencies: BoundaryDependencies = DEFAULT_BOUNDARY_DEPENDENCIES,
 ): Promise<TelegramConfirmationSession> {
-  try {
-    const session = await dependencies.confirmThroughBoundary(input);
+  const projection = await requestPaymentProjection(input, {
+    method: "POST",
+    path: `/financial-api/v1/tenants/${encodeURIComponent(input.tenant.tenantId)}/payments`,
+    idempotencyKey: `telegram:${input.tenant.tenantId}:${input.order.orderId}`,
+    correlationId: input.order.correlationId,
+    body: {
+      orderId: input.order.orderId,
+      correlationId: input.order.correlationId,
+      amountInCents: input.order.amountInCents,
+      walletAddress: input.order.walletAddress,
+      channel: input.order.channel,
+      resumeIfExists: true,
+    },
+  });
+  const order = buildProjectionOrder(projection, input.order);
+  const deposit = buildProjectionDeposit(projection, order);
 
-    return {
-      ...session,
-      boundarySource: "internal_financial_api",
-      usedFallback: false,
-    };
-  } catch (error) {
-    if (error instanceof TelegramOrderConfirmationError) {
-      throw error;
-    }
+  logBoundarySuccess(
+    input.runtimeConfig,
+    input.tenant.tenantId,
+    input.requestContext?.requestId,
+    "confirm",
+    projection,
+  );
 
-    logBoundaryFallback(
-      input.runtimeConfig,
-      input.tenant.tenantId,
-      input.requestContext?.requestId,
-      "confirm",
-      error,
-    );
-
-    const session = await dependencies.confirmLegacyFallback(input);
-
-    return {
-      ...session,
-      boundarySource: "legacy_confirmation_path",
-      usedFallback: true,
-    };
-  }
+  return {
+    order,
+    deposit,
+    accepted: !projection.duplicate,
+    conflict: projection.duplicate,
+    parseResult: null,
+    boundarySource: "external_financial_api",
+    usedFallback: false,
+  };
 }
 
 export async function reconcileTelegramPaymentWithBoundary(
   input: TelegramPaymentReconcileInput,
-  dependencies: BoundaryDependencies = DEFAULT_BOUNDARY_DEPENDENCIES,
 ): Promise<TelegramPaymentReconcileResult> {
-  try {
-    return await dependencies.reconcileThroughBoundary(input);
-  } catch (error) {
-    logBoundaryFallback(
-      input.runtimeConfig,
-      input.tenant.tenantId,
-      input.requestContext?.requestId,
-      "reconcile",
-      error,
-    );
+  const projection = await requestPaymentProjection(input, {
+    method: "POST",
+    path: `/financial-api/v1/tenants/${encodeURIComponent(input.tenant.tenantId)}/payments/${encodeURIComponent(input.deposit.depositEntryId)}/reconcile`,
+    correlationId: input.order.correlationId,
+    body: {
+      orderId: input.order.orderId,
+      reason: "status_poll",
+    },
+  });
+  const order = buildProjectionOrder(projection, input.order);
+  const deposit = buildProjectionDeposit(projection, order, input.deposit);
 
-    return dependencies.reconcileLegacyFallback(input);
+  if (!deposit) {
+    throw new FinancialApiBoundaryError(
+      "financial_api_projection_missing_deposit",
+      "Financial API reconcile response did not include a deposit projection.",
+      {
+        status: 502,
+        details: {
+          orderId: input.order.orderId,
+          depositEntryId: input.deposit.depositEntryId,
+        },
+      },
+    );
   }
+
+  logBoundarySuccess(
+    input.runtimeConfig,
+    input.tenant.tenantId,
+    input.requestContext?.requestId,
+    "reconcile",
+    projection,
+  );
+
+  return {
+    order,
+    deposit,
+    attempted: true,
+    result: {
+      code: "financial_api_reconcile_completed",
+      details: {
+        externalStatus: projection.externalStatus,
+        orderCurrentStep: projection.orderCurrentStep,
+        orderStatus: projection.orderStatus,
+      },
+    },
+    boundarySource: "external_financial_api",
+    usedFallback: false,
+  };
 }

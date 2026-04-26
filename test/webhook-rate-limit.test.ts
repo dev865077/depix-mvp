@@ -37,6 +37,7 @@ function createWorkerEnv(overrides: Record<string, unknown> = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
+    FINANCIAL_API_BASE_URL: "https://sagui.example.test",
     TENANT_REGISTRY_KV: createTenantRegistryKv(TENANT_REGISTRY),
     ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK: "false",
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",

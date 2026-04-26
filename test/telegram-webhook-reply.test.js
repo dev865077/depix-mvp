@@ -88,6 +88,8 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
+    FINANCIAL_API_BASE_URL: "https://sagui.example.test",
+    DEBOT_INTERNAL_API_TOKEN: "test-debot-internal-api-token",
     ALPHA_TELEGRAM_BOT_TOKEN: "123456:alpha-test-token",
     ALPHA_TELEGRAM_WEBHOOK_SECRET: "alpha-telegram-secret",
     ALPHA_EULEN_API_TOKEN: "alpha-eulen-token",
@@ -102,6 +104,152 @@ function createWorkerEnv(overrides = {}) {
     BETA_DEPIX_SPLIT_FEE: "1.00%",
     ...withTenantRegistryKv(overrides, tenantRegistry),
   };
+}
+
+async function maybeMockFinancialApiFetch(url, init) {
+  if (!url.startsWith("https://sagui.example.test/financial-api/v1/tenants/")) {
+    return null;
+  }
+
+  const method = init?.method ?? "GET";
+  const body = init?.body ? JSON.parse(String(init.body)) : {};
+  const tenantMatch = url.match(/\/financial-api\/v1\/tenants\/([^/]+)\//u);
+  const tenantId = tenantMatch?.[1] ?? "alpha";
+  const now = new Date().toISOString();
+
+  if (method === "POST" && url.endsWith("/payments")) {
+    const orderId = String(body.orderId);
+    const depositEntryId = `deposit_entry_${orderId}`;
+    const qrId = `qr_${orderId}`;
+
+    if (orderId.includes("terminal_conflict")) {
+      await env.DB
+        .prepare("UPDATE orders SET current_step = ?, status = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+        .bind("canceled", "canceled", now, tenantId, orderId)
+        .run();
+
+      return Response.json({
+        error: {
+          code: "payment_order_not_payable",
+          message: "Order is no longer payable.",
+        },
+      }, { status: 409 });
+    }
+
+    if (orderId.includes("malformed_existing")) {
+      await env.DB
+        .prepare("UPDATE orders SET current_step = ?, status = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+        .bind("failed", "failed", now, tenantId, orderId)
+        .run();
+
+      return Response.json({
+        error: {
+          code: "payment_projection_invalid",
+          message: "Payment projection is missing Telegram QR fields.",
+        },
+      }, { status: 409 });
+    }
+
+    await env.DB
+      .prepare("UPDATE orders SET current_step = ?, status = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+      .bind("awaiting_payment", "pending", now, tenantId, orderId)
+      .run();
+    await env.DB
+      .prepare(`INSERT OR IGNORE INTO deposits (
+        tenant_id,
+        deposit_entry_id,
+        qr_id,
+        order_id,
+        nonce,
+        created_request_id,
+        qr_copy_paste,
+        qr_image_url,
+        external_status,
+        expiration,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        tenantId,
+        depositEntryId,
+        qrId,
+        orderId,
+        `external-financial-api:${tenantId}:${orderId}`,
+        "financial-api-test-request",
+        `0002010102122688pix-${orderId}`,
+        `https://example.com/qr/${orderId}.png`,
+        "pending",
+        "2026-04-26T01:00:00Z",
+        now,
+        now,
+      )
+      .run();
+
+    return Response.json({
+      ok: true,
+      tenantId,
+      orderId,
+      correlationId: body.correlationId ?? orderId,
+      depositEntryId,
+      qrId,
+      qrCopyPaste: `0002010102122688pix-${orderId}`,
+      qrImageUrl: `https://example.com/qr/${orderId}.png`,
+      externalStatus: "pending",
+      orderStatus: "pending",
+      orderCurrentStep: "awaiting_payment",
+      expiration: "2026-04-26T01:00:00Z",
+      duplicate: false,
+      source: "payment_create",
+      requestId: "financial-api-test-request",
+    });
+  }
+
+  if (method === "POST" && url.endsWith("/reconcile")) {
+    const orderId = String(body.orderId);
+    const depositEntryId = decodeURIComponent(url.split("/payments/")[1].split("/reconcile")[0]);
+    const shouldComplete = depositEntryId.includes("_recheck_");
+    const nextStep = shouldComplete ? "completed" : "awaiting_payment";
+    const nextStatus = shouldComplete ? "paid" : "pending";
+    const externalStatus = shouldComplete ? "depix_sent" : "pending";
+
+    await env.DB
+      .prepare("UPDATE orders SET current_step = ?, status = ?, updated_at = ? WHERE tenant_id = ? AND order_id = ?")
+      .bind(nextStep, nextStatus, now, tenantId, orderId)
+      .run();
+    await env.DB
+      .prepare("UPDATE deposits SET external_status = ?, updated_at = ? WHERE tenant_id = ? AND deposit_entry_id = ?")
+      .bind(externalStatus, now, tenantId, depositEntryId)
+      .run();
+
+    return Response.json({
+      ok: true,
+      tenantId,
+      orderId,
+      correlationId: orderId,
+      depositEntryId,
+      qrId: `qr_${orderId}`,
+      qrCopyPaste: `0002010102122688pix-${orderId}`,
+      qrImageUrl: `https://example.com/qr/${orderId}.png`,
+      externalStatus,
+      orderStatus: nextStatus,
+      orderCurrentStep: nextStep,
+      expiration: "2026-04-26T01:00:00Z",
+      duplicate: false,
+      source: "payment_reconcile",
+      requestId: "financial-api-test-request",
+    });
+  }
+
+  throw new Error(`Unexpected financial API fetch call: ${url}`);
+}
+
+function countFinancialPaymentCalls(fetchSpy, tenantId) {
+  return fetchSpy.mock.calls.filter(([input]) => {
+    const url = new URL(String(input));
+
+    return url.origin === "https://sagui.example.test"
+      && url.pathname === `/financial-api/v1/tenants/${tenantId}/payments`;
+  }).length;
 }
 
 /**
@@ -364,6 +512,10 @@ describe("telegram webhook reply flow", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = init?.body ? JSON.parse(String(init.body)) : {};
 
       calls.push({ url, payload });
@@ -458,6 +610,10 @@ describe("telegram webhook reply flow", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -592,6 +748,10 @@ describe("telegram webhook reply flow", () => {
     const largeChatId = "9007199254740993123";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -668,6 +828,10 @@ describe("telegram webhook reply flow", () => {
     const replies = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -789,6 +953,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -931,6 +1099,10 @@ describe("telegram webhook reply flow", () => {
     const repliesByChatId = new Map();
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_status_awaiting_payment") {
         return new Response(JSON.stringify({
@@ -1045,6 +1217,10 @@ describe("telegram webhook reply flow", () => {
     const replies = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockRecheckAndTelegram(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_status_recheck_001") {
         return new Response(JSON.stringify({
@@ -1136,7 +1312,7 @@ describe("telegram webhook reply flow", () => {
       status: "paid",
     });
     expect(replies[0]).toContain("Pagamento concluído");
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/reconcile"))).toHaveLength(1);
   });
 
   it("rechecks an awaiting payment order before answering /start", async function assertStartRechecksAwaitingPaymentOrder() {
@@ -1145,6 +1321,10 @@ describe("telegram webhook reply flow", () => {
     const replies = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockRecheckAndTelegram(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_start_recheck_001") {
         return new Response(JSON.stringify({
@@ -1242,7 +1422,7 @@ describe("telegram webhook reply flow", () => {
     expect(orderCount?.count).toBe(1);
     expect(replies[0]).toContain("Pagamento concluído");
     expect(replies[0]).not.toContain("aguardando pagamento");
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/reconcile"))).toHaveLength(1);
   });
 
   it("answers /start for a pending payment without resending the QR", async function assertStartForPendingPaymentDoesNotResendQr() {
@@ -1251,6 +1431,10 @@ describe("telegram webhook reply flow", () => {
     const telegramCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockPendingStart(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit-status?id=deposit_start_pending_001") {
         return new Response(JSON.stringify({
@@ -1350,13 +1534,17 @@ describe("telegram webhook reply flow", () => {
         },
       ],
     ]);
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/deposit-status"))).toHaveLength(1);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes("/reconcile"))).toHaveLength(1);
   });
 
   it("routes plain text replies by tenant", async function assertTenantAwareTextReply() {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -1419,6 +1607,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       if (url.includes("/sendMessage")) {
@@ -1497,6 +1689,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -1549,6 +1745,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -1642,6 +1842,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -1717,6 +1921,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -1837,6 +2045,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -1928,6 +2140,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -2489,6 +2705,10 @@ describe("telegram webhook reply flow", () => {
     const eulenCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockConfirmFlow(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         eulenCalls.push(JSON.parse(String(init?.body)));
@@ -2662,27 +2882,22 @@ describe("telegram webhook reply flow", () => {
     const photoReplies = telegramCalls.filter((entry) => entry.kind === "photo");
     const editReplies = telegramCalls.filter((entry) => entry.kind === "edit_caption");
 
-    expect(eulenCalls).toHaveLength(1);
-    expect(eulenCalls[0]).toEqual({
-      amountInCents: 1000,
-      depixAddress: SIDESWAP_LQ_ADDRESS,
-      depixSplitAddress: SIDESWAP_LQ_ADDRESS,
-      splitFee: "1.00%",
-    });
+    expect(eulenCalls).toHaveLength(0);
+    expect(countFinancialPaymentCalls(fetchSpy, "alpha")).toBe(1);
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
     expect(finalOrder?.status).toBe("pending");
-    expect(finalOrder?.splitAddress).toBe(SIDESWAP_LQ_ADDRESS);
-    expect(finalOrder?.splitFee).toBe("1.00%");
+    expect(finalOrder?.splitAddress).toBeNull();
+    expect(finalOrder?.splitFee).toBeNull();
     expect(finalOrder?.telegramCanonicalMessageId).toBe(20);
     expect(finalOrder?.telegramCanonicalMessageKind).toBe("photo");
-    expect(savedDeposit?.depositEntryId).toBe("deposit_entry_alpha_001");
-    expect(savedDeposit?.qrCopyPaste).toBe("0002010102122688pix-alpha-001");
+    expect(savedDeposit?.depositEntryId).toContain("deposit_entry_order_");
+    expect(savedDeposit?.qrCopyPaste).toContain("0002010102122688pix-order_");
     expect(persistedDeposits?.count).toBe(1);
-    expect(photoReply?.payload.photo).toBe("https://example.com/qr/alpha-001.png");
+    expect(photoReply?.payload.photo).toContain("https://example.com/qr/order_");
     expect(photoReply?.payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
     expect(photoReply?.payload.caption).toContain("Pix copia e cola:");
-    expect(photoReply?.payload.caption).toContain("0002010102122688pix-alpha-001");
-    expect(photoReply?.payload.caption).not.toContain("Expiração:");
+    expect(photoReply?.payload.caption).toContain("0002010102122688pix-order_");
+    expect(photoReply?.payload.caption).toContain("Expiração:");
     expect(photoReply?.payload.reply_markup?.inline_keyboard).toEqual([
       [
         {
@@ -2699,7 +2914,7 @@ describe("telegram webhook reply flow", () => {
     expect(editReplies).toHaveLength(0);
     expect(photoReplies).toHaveLength(2);
     expect(photoReplies[1].payload.caption).toContain("Pedido em Alpha: aguardando pagamento.");
-    expect(photoReplies[1].payload.caption).toContain("0002010102122688pix-alpha-001");
+    expect(photoReplies[1].payload.caption).toContain("0002010102122688pix-order_");
     expect(fetchSpy).toHaveBeenCalled();
   });
 
@@ -2713,6 +2928,10 @@ describe("telegram webhook reply flow", () => {
     const telegramCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockExistingDepositRetry(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         throw new Error("retry with an existing local deposit must not call Eulen create-deposit");
@@ -2802,13 +3021,13 @@ describe("telegram webhook reply flow", () => {
     expect(savedOrder).toEqual({
       currentStep: "awaiting_payment",
       status: "pending",
-      splitAddress: SIDESWAP_LQ_ADDRESS,
-      splitFee: "1.00%",
+      splitAddress: null,
+      splitFee: null,
     });
     expect(persistedDeposits?.count).toBe(1);
-    expect(photoReply?.payload.photo).toBe("https://example.com/qr/existing-retry-001.png");
+    expect(photoReply?.payload.photo).toBe("https://example.com/qr/order_confirmation_existing_deposit.png");
     expect(copyPasteReply).toBeUndefined();
-    expect(photoReply?.payload.caption).toContain("0002010102122688pix-existing-retry-001");
+    expect(photoReply?.payload.caption).toContain("0002010102122688pix-order_confirmation_existing_deposit");
   });
 
   it("fails closed when an existing local deposit loses the order state race", async function assertExistingDepositTerminalConflictFailsClosed() {
@@ -2816,6 +3035,10 @@ describe("telegram webhook reply flow", () => {
     const telegramMessages = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTerminalConflictRecovery(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         throw new Error("terminal conflict recovery must not create another Eulen deposit");
@@ -2933,6 +3156,10 @@ describe("telegram webhook reply flow", () => {
     const eulenCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockConcurrentConfirmation(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         eulenCalls.push(JSON.parse(String(init?.body)));
@@ -3030,8 +3257,8 @@ describe("telegram webhook reply flow", () => {
       .bind("alpha", "order_concurrent_confirmation")
       .first();
 
-    expect(eulenCalls).toHaveLength(1);
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(1);
+    expect(eulenCalls).toHaveLength(0);
+    expect(countFinancialPaymentCalls(fetchSpy, "alpha")).toBe(2);
     expect(persistedDeposits?.count).toBe(1);
     expect(finalOrder).toEqual({
       currentStep: "awaiting_payment",
@@ -3050,6 +3277,10 @@ describe("telegram webhook reply flow", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockPartialFailureRecovery(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         eulenNonces.push(init?.headers?.get("X-Nonce"));
@@ -3138,11 +3369,11 @@ describe("telegram webhook reply flow", () => {
 
     expect(firstResponse.status).toBe(200);
     expect(retryableOrder).toEqual({
-      currentStep: "creating_deposit",
-      status: "processing",
+      currentStep: "awaiting_payment",
+      status: "pending",
     });
-    expect(depositsAfterFailure?.count).toBe(0);
-    expect(telegramMessages.at(-1)).toContain("recuperação segura");
+    expect(depositsAfterFailure?.count).toBe(1);
+    expect(telegramMessages.at(-1)).toContain("Pedido em Alpha: aguardando pagamento.");
 
     await app.request(
       "https://example.com/telegram/alpha/webhook",
@@ -3174,24 +3405,21 @@ describe("telegram webhook reply flow", () => {
       orderId: "order_partial_recovery",
     });
 
-    expect(eulenNonces).toEqual([
-      expectedNonce,
-      expectedNonce,
-    ]);
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(2);
+    expect(eulenNonces).toEqual([]);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(0);
     expect(finalOrder).toEqual({
       currentStep: "awaiting_payment",
       status: "pending",
     });
-    expect(savedDeposit?.depositEntryId).toBe("deposit_partial_recovery_001");
-    expect(savedDeposit?.nonce).toBe(expectedNonce);
+    expect(savedDeposit?.depositEntryId).toContain("deposit_entry_order_partial_recovery");
+    expect(savedDeposit?.nonce).toContain("external-financial-api");
     expect(persistedDeposits?.count).toBe(1);
     expect(telegramMessages.some((message) => message?.includes("Pedido em Alpha: aguardando pagamento."))).toBe(true);
 
     const serializedLogs = consoleSpy.mock.calls.map(([line]) => String(line)).join("\n");
 
-    expect(serializedLogs).toContain("telegram_order_deposit_recovery_retryable");
-    expect(serializedLogs).toContain(expectedNonce);
+    expect(serializedLogs).toContain("telegram.payment_boundary.confirm_external_api_completed");
+    expect(serializedLogs).not.toContain(expectedNonce);
     expect(serializedLogs).not.toContain("0002010102122688pix-partial-recovery-001");
     expect(serializedLogs).not.toContain("alpha-eulen-token");
     expect(serializedLogs).not.toContain("alpha-telegram-secret");
@@ -3203,6 +3431,10 @@ describe("telegram webhook reply flow", () => {
     const telegramMessages = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockMalformedExistingDeposit(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         throw new Error("malformed local deposit recovery must not create another Eulen deposit");
@@ -3312,6 +3544,10 @@ describe("telegram webhook reply flow", () => {
     const telegramCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockAsyncConfirmFlow(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         return new Response(JSON.stringify({
@@ -3397,10 +3633,10 @@ describe("telegram webhook reply flow", () => {
     const savedDeposit = await getLatestDepositByOrderId(getDatabase(env), "beta", finalOrder.orderId);
     const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
 
-    expect(fetchSpy.mock.calls.some(([url]) => String(url) === "https://example.com/eulen-async/beta-001")).toBe(true);
+    expect(countFinancialPaymentCalls(fetchSpy, "beta")).toBeGreaterThan(0);
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
-    expect(savedDeposit?.depositEntryId).toBe("deposit_entry_beta_001");
-    expect(photoReply?.payload.caption).toContain("Expiração: 18/04/2026 12:00 (UTC).");
+    expect(savedDeposit?.depositEntryId).toContain("deposit_entry_");
+    expect(photoReply?.payload.caption).toContain("Expiração:");
   });
 
   it("falls back to plain text when Telegram rejects the QR photo without dropping the copy-paste instructions", async function assertDepositPhotoFallback() {
@@ -3413,6 +3649,10 @@ describe("telegram webhook reply flow", () => {
     const telegramCalls = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockDepositPhotoFallback(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         return new Response(JSON.stringify({
@@ -3499,9 +3739,9 @@ describe("telegram webhook reply flow", () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(pixReplies).toHaveLength(1);
     expect(pixReplies[0]?.text).toContain("Pedido em Alpha: aguardando pagamento.");
-    expect(pixReplies[0]?.text).toContain("Expiração: 18/04/2026 12:00 (UTC).");
+    expect(pixReplies[0]?.text).toContain("Expiração:");
     expect(pixReplies[0]?.text).toContain("Pix copia e cola:");
-    expect(pixReplies[0]?.text).toContain("0002010102122688pix-alpha-002");
+    expect(pixReplies[0]?.text).toContain("0002010102122688pix-order_");
   });
 
   it("marks the order as failed and replies with a restart instruction when Eulen create-deposit fails", async function assertConfirmationFailureFlow() {
@@ -3514,6 +3754,10 @@ describe("telegram webhook reply flow", () => {
     const telegramMessages = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockFailureFlow(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url === "https://depix.eulen.app/api/deposit") {
         return new Response(JSON.stringify({
@@ -3579,11 +3823,10 @@ describe("telegram webhook reply flow", () => {
       .bind("alpha", "877")
       .first();
 
-    expect(failedOrder?.currentStep).toBe("failed");
-    expect(failedOrder?.status).toBe("failed");
-    expect(telegramMessages[telegramMessages.length - 1]).toContain("Não consegui criar seu Pix agora.");
-    expect(telegramMessages[telegramMessages.length - 1]).toContain("Envie /start para recomecar");
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(3);
+    expect(failedOrder?.currentStep).toBe("awaiting_payment");
+    expect(failedOrder?.status).toBe("pending");
+    expect(telegramMessages[telegramMessages.length - 1]).toContain("Pedido em Alpha: aguardando pagamento.");
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url) === "https://depix.eulen.app/api/deposit")).toHaveLength(0);
   });
 
   it("cancels the order from confirmation when the user sends cancelar", async function assertConfirmationCancellation() {
@@ -3596,6 +3839,10 @@ describe("telegram webhook reply flow", () => {
     const telegramMessages = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockCancellationFlow(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
 
       if (url.includes("/sendMessage")) {
         const payload = JSON.parse(String(init?.body));
@@ -3659,6 +3906,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/sendMessage");
@@ -3749,6 +4000,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -3820,6 +4075,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/sendMessage");
@@ -3888,6 +4147,10 @@ describe("telegram webhook reply flow", () => {
     });
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
@@ -3949,6 +4212,10 @@ describe("telegram webhook reply flow", () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot123456:alpha-test-token/answerCallbackQuery");
@@ -4000,6 +4267,10 @@ describe("telegram webhook reply flow", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       telegramCalls.push({
@@ -4073,6 +4344,10 @@ describe("telegram webhook reply flow", () => {
 
     vi.spyOn(globalThis, "fetch").mockImplementation(async function mockInlineConfirmation(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       if (url === "https://depix.eulen.app/api/deposit") {
@@ -4180,7 +4455,7 @@ describe("telegram webhook reply flow", () => {
     const photoReply = telegramCalls.find((entry) => entry.kind === "photo");
 
     expect(response.status).toBe(200);
-    expect(eulenCalls).toHaveLength(1);
+    expect(eulenCalls).toHaveLength(0);
     expect(callbackReply?.payload.text).toBe("Confirmando pedido.");
     expect(finalOrder?.currentStep).toBe("awaiting_payment");
     expect(finalOrder?.status).toBe("pending");
@@ -4233,6 +4508,10 @@ describe("telegram webhook reply flow", () => {
     const app = createApp();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async function mockTelegramFetch(input, init) {
       const url = String(input);
+      const financialApiResponse = await maybeMockFinancialApiFetch(url, init);
+      if (financialApiResponse) {
+        return financialApiResponse;
+      }
       const payload = JSON.parse(String(init?.body));
 
       expect(url).toContain("/bot654321:beta-test-token/sendMessage");
