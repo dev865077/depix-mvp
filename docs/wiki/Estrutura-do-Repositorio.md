@@ -10,6 +10,23 @@ docs/
 .github/workflows/
 ```
 
+## Ownership no modelo de tres repositorios
+
+Enquanto o split nao termina, `depix-mvp` continua carregando todos os
+diretorios abaixo. Depois do cutover do track `#674`, a leitura de ownership
+fica assim:
+
+| Repositorio alvo | Area atual usada como fonte | Responsabilidade |
+| --- | --- | --- |
+| `debot` | `src/telegram/`, partes bot-facing de `src/routes/telegram.ts`, testes Telegram e docs de UX | Conversa Telegram, comandos, callbacks, copy, retomada de pedido e chamadas bot -> API |
+| `api` | `src/routes/webhooks.ts`, `src/routes/ops.ts`, `src/clients/eulen-client.ts`, `src/db/`, `migrations/`, config financeira e runbooks operacionais | Eulen, D1 financeiro, webhooks, recheck, WAF, persistencia e rotas ops financeiras |
+| `github-automation` | `.github/workflows/`, `.github/prompts/`, scripts `ai-*` e testes de automacao | Triage, planning, refinement, PR review, wiki update e governanca automatizada |
+
+Setup local tambem deve seguir esse ownership: alteracoes de bot devem preparar
+secrets Telegram e token interno da API; alteracoes financeiras devem preparar
+D1/KV, Eulen e ops token; alteracoes de automacao devem preparar GitHub token,
+OpenAI e variaveis de modelo.
+
 ## Leitura por area
 
 ### `src/app.ts`

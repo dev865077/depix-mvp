@@ -2,6 +2,11 @@
 
 Este documento registra o contrato operacional atual do `Cloudflare Secrets Store` no `depix-mvp`.
 
+Para a matriz consolidada por `debot`, `api` e `github-automation`, use
+[`docs/operations/secrets-and-environment-inventory.md`](./operations/secrets-and-environment-inventory.md).
+Este runbook permanece como detalhe especifico do Secrets Store usado pelo
+monolito de transicao e pela futura superficie `api`.
+
 ## Estado atual
 
 - `test` usa `Cloudflare Secrets Store`

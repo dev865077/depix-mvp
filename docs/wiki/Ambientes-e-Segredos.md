@@ -18,6 +18,10 @@ Enquanto o split nao termina, estes ambientes e segredos ainda sao operados pelo
 
 Qualquer instrucao antiga que trate `depix-mvp` como destino permanente de segredos deve ser lida como transitoria ate o cutover.
 
+O inventario operacional consolidado de variaveis, bindings e segredos fica em
+[`docs/operations/secrets-and-environment-inventory.md`](../operations/secrets-and-environment-inventory.md).
+Essa pagina e a SSOT comum para `debot`, `api` e `github-automation`.
+
 ## Secrets
 
 O projeto depende de secrets por tenant para:
