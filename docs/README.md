@@ -9,6 +9,7 @@ Esta pasta e a casa canonica da documentacao tecnica versionada do repositorio.
 - [debot-extraction-boundary.md](./debot-extraction-boundary.md)
 - [financial-api-boundary.md](./financial-api-boundary.md)
 - [operations/secrets-and-environment-inventory.md](./operations/secrets-and-environment-inventory.md)
+- [operations/split-repo-deploy-verification.md](./operations/split-repo-deploy-verification.md)
 - [Pix2DePix API - Documentacao Completa.md](./Pix2DePix%20API%20-%20Documentacao%20Completa.md)
 - [Wiki 2.0 Review Mirror](./wiki/README.md)
 
