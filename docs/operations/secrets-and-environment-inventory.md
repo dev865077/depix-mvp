@@ -38,6 +38,7 @@ credential or variable.
 | `ALPHA_TELEGRAM_WEBHOOK_SECRET` | Secret binding | Alpha Telegram webhook verification secret | `.dev.vars` locally; Cloudflare Secrets Store in published envs | `local`, `test`, `production` | Bot operator |
 | `BETA_TELEGRAM_BOT_TOKEN` | Secret binding | Beta Telegram bot API token | `.dev.vars` locally; Cloudflare Secrets Store in published envs | `local`, `test`, `production` | Bot operator |
 | `BETA_TELEGRAM_WEBHOOK_SECRET` | Secret binding | Beta Telegram webhook verification secret | `.dev.vars` locally; Cloudflare Secrets Store in published envs | `local`, `test`, `production` | Bot operator |
+| `FINANCIAL_API_BASE_URL` | Worker var | Base URL for bot -> Sagui financial API calls | Versioned Worker config | `local`, `test`, `production` | Bot operator and API operator |
 | `DEBOT_INTERNAL_API_TOKEN` | Secret | Target service token for `debot` -> `api` calls after split | New secret in `debot` and accepted by `api` | `test`, `production` after cutover | Bot operator and API operator |
 
 ## `api`

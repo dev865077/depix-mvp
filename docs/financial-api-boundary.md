@@ -6,8 +6,8 @@ This document defines the target contract between `debot` and the future financi
 
 Current monolith evidence:
 
-- Bot payment creation and pending-payment reconciliation now flow through the internal financial API boundary in `src/services/internal-financial-api.ts`.
-- The Telegram runtime no longer imports Eulen reconciliation directly; it consumes the boundary and keeps an explicit legacy fallback during the transition.
+- Bot payment creation and pending-payment reconciliation now flow through the external Cloudflare financial API from `src/services/internal-financial-api.ts`.
+- The Telegram runtime no longer imports Eulen reconciliation directly; it consumes the boundary client and has no local legacy payment fallback in that path.
 - The financial surface already exists as external webhook plus operational reconciliation routes in `src/routes/webhooks.ts` and `src/routes/ops.ts`.
 
 ## Boundary Rule
@@ -191,16 +191,20 @@ Expected semantics:
 
 The contract above is not speculative. It is anchored to the current runtime:
 
-1. Bot-side payment creation currently lives in `confirmTelegramOrder`, which still reads tenant Eulen secrets and calls `createEulenDeposit`.
-2. Bot-side pending payment refresh currently reuses `processDepositRecheck` directly from the Telegram runtime.
+1. Bot-side payment creation calls the external financial API endpoint through `src/services/internal-financial-api.ts`.
+2. Bot-side pending payment refresh calls the external financial API reconcile endpoint through `src/services/internal-financial-api.ts`.
 3. Financial truth already enters through the canonical Eulen webhook route and operational reconciliation routes.
 4. The acceptance path for the split is therefore:
    - define this contract,
    - move the bot to this boundary,
    - then extract the physical API and DeBot repositories.
 
+No local legacy payment fallback is allowed in the bot payment boundary. If the
+financial API is unavailable, the bot surfaces a controlled failure instead of
+creating or reconciling a charge locally.
+
 ## Implementation Notes For #668 And #672
 
-- `#668` should replace direct calls from `debot` to `confirmTelegramOrder` and `processDepositRecheck` with calls to the contract endpoints in this document.
+- `#668` replaces direct calls from `debot` to `confirmTelegramOrder` and `processDepositRecheck` with calls to the contract endpoints in this document.
 - `#672` should preserve the externally visible webhook and ops semantics while moving the implementation into the dedicated API repository.
-- During transition, fallback to the current path is acceptable only where the issue explicitly requires it and only behind the boundary cutover logic.
+- During transition, fallback to the current local payment path is not acceptable for the bot payment boundary.

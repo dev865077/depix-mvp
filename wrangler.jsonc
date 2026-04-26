@@ -29,6 +29,8 @@
     "LOG_LEVEL": "debug",
     "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
     "EULEN_API_TIMEOUT_MS": "10000",
+    "FINANCIAL_API_BASE_URL": "http://127.0.0.1:8788",
+    "DEBOT_INTERNAL_API_TOKEN": "local-debot-internal-api-token",
     "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "false",
     "ENABLE_LOCAL_WEBHOOK_RATE_LIMIT_FALLBACK": "false"
   },
@@ -90,6 +92,11 @@
           "secret_name": "test-ops-route-bearer-token"
         },
         {
+          "binding": "DEBOT_INTERNAL_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "test-debot-internal-api-token"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "test-beta-telegram-bot-token"
@@ -126,6 +133,7 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
+        "FINANCIAL_API_BASE_URL": "https://sagui.dev865077.workers.dev",
         "ENABLE_OPS_DEPOSIT_RECHECK": "true",
         "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
         "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",
@@ -189,6 +197,11 @@
           "secret_name": "production-ops-route-bearer-token"
         },
         {
+          "binding": "DEBOT_INTERNAL_API_TOKEN",
+          "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
+          "secret_name": "production-debot-internal-api-token"
+        },
+        {
           "binding": "BETA_TELEGRAM_BOT_TOKEN",
           "store_id": "741675cd40cf4ce4885faf1c0e9ccc5b",
           "secret_name": "production-beta-telegram-bot-token"
@@ -225,6 +238,7 @@
         "LOG_LEVEL": "info",
         "EULEN_API_BASE_URL": "https://depix.eulen.app/api",
         "EULEN_API_TIMEOUT_MS": "10000",
+        "FINANCIAL_API_BASE_URL": "https://sagui.dev865077.workers.dev",
         "ENABLE_OPS_DEPOSIT_RECHECK": "true",
         "ENABLE_OPS_DEPOSITS_FALLBACK": "true",
         "ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION": "true",

@@ -74,6 +74,7 @@ export function handleHealth(c: AppContext): Response {
     timestamp: new Date().toISOString(),
     configuration: {
       eulenApiBaseUrl: runtimeConfig.eulenApiBaseUrl,
+      financialApiBaseUrl: runtimeConfig.financialApiBaseUrl,
       database: runtimeConfig.database,
       tenants: redactTenantsForHealth(runtimeConfig.tenants),
       tenantSummary: {

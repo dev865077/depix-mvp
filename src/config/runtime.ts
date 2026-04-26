@@ -254,6 +254,7 @@ export function assertPositiveInteger(value: string | undefined, key: string): n
  *   logLevel: "debug" | "info" | "warn" | "error",
  *   eulenApiBaseUrl: string,
  *   eulenApiTimeoutMs: number,
+ *   financialApiBaseUrl: string,
  *   telegramOpenOrderTimeoutMinutes: number,
  *   database: {
  *     bindingConfigured: boolean
@@ -325,6 +326,10 @@ export async function readRuntimeConfig(env: RuntimeEnv) {
   const rawLogLevel = assertRequiredString(readOptionalStringBinding(env, "LOG_LEVEL"), "LOG_LEVEL");
   const eulenApiBaseUrl = assertRequiredString(readOptionalStringBinding(env, "EULEN_API_BASE_URL"), "EULEN_API_BASE_URL");
   const eulenApiTimeoutMs = assertPositiveInteger(readOptionalStringBinding(env, "EULEN_API_TIMEOUT_MS"), "EULEN_API_TIMEOUT_MS");
+  const financialApiBaseUrl = assertRequiredString(
+    readOptionalStringBinding(env, "FINANCIAL_API_BASE_URL"),
+    "FINANCIAL_API_BASE_URL",
+  );
   const telegramOpenOrderTimeoutMinutes = readTelegramOpenOrderTimeoutMinutes(
     readOptionalStringBinding(env, "TELEGRAM_OPEN_ORDER_TIMEOUT_MINUTES"),
   );
@@ -390,6 +395,7 @@ export async function readRuntimeConfig(env: RuntimeEnv) {
     logLevel,
     eulenApiBaseUrl,
     eulenApiTimeoutMs,
+    financialApiBaseUrl,
     telegramOpenOrderTimeoutMinutes,
     database: {
       bindingConfigured: databaseBindingConfigured,

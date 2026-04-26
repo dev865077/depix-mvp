@@ -79,6 +79,7 @@ function createWorkerEnv(overrides = {}) {
     LOG_LEVEL: "debug",
     EULEN_API_BASE_URL: "https://depix.eulen.app/api",
     EULEN_API_TIMEOUT_MS: "10000",
+    FINANCIAL_API_BASE_URL: "https://sagui.example.test",
     ENABLE_SCHEDULED_DEPOSIT_RECONCILIATION: "true",
     TENANT_REGISTRY_KV: hasTenantRegistryKvOverride ? tenantRegistryKv : createTenantRegistryKv(tenantRegistry),
     ALPHA_TELEGRAM_BOT_TOKEN: "alpha-bot-token",
